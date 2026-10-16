@@ -19,6 +19,7 @@ import { EventEmitter } from 'node:events';
 import type { FastifyReply } from 'fastify';
 import { addAssistantMessage, type ToolCallPart, type TurnPart, type TurnStatus } from '../repositories/chat-conversations.js';
 import { vaultRunSecrets } from './chat-secrets.js';
+import { chunkText } from './chat-sse.js';
 
 export type RunFrame = Record<string, unknown> & { type: string };
 export interface RunEvent { seq: number; frame: RunFrame }
@@ -34,7 +35,11 @@ export const MAX_EVENTS = 20_000;
 export const MAX_ANSWER_CHARS = 1_000_000;
 
 export class ChatRun {
+  /** Only checked frames are visible to SSE readers. */
   readonly events: RunEvent[] = [];
+  private readonly pendingEvents: RunEvent[] = [];
+  private bufferedChars = 0;
+  private published = false;
   readonly parts: TurnPart[] = [];
   /** CHAT-PRO-02 I: the agent writing this reply (null = the conversation's agent). */
   agentId: string | null = null;
@@ -62,13 +67,16 @@ export class ChatRun {
 
   /** Adds one frame from the turn; frames after the end are ignored. */
   push(frame: RunFrame) {
-    if (this.status !== 'running') return;
+    if (this.status !== 'running' || this.published || this.error === 'content_limit') return;
+    const size = JSON.stringify(frame).length;
+    if (this.bufferedChars + size > MAX_ANSWER_CHARS * 4) { this.error = 'content_limit'; this.requestStop(); return; }
+    this.bufferedChars += size;
     const type = frame.type === undefined && typeof frame.content === 'string' ? 'text' : String(frame.type);
     if (type === 'done' || (frame.done === true && type === 'text')) {
       if (type === 'text' && frame.content) this.addText('text', String(frame.content));
       return; // the run's own 'end' event closes the stream
     }
-    if (type === 'error') { this.error = typeof frame.code === 'string' ? frame.code : 'failed'; return; }
+    if (type === 'error') { this.error = ['model_unavailable', 'lmstudio_not_running'].includes(String(frame.code)) ? String(frame.code) : 'failed'; return; }
     if (type === 'text' || type === 'reasoning') {
       const content = typeof frame.content === 'string' ? frame.content : '';
       if (!content) return;
@@ -86,9 +94,8 @@ export class ChatRun {
     const at = Math.max(0, this.clock() - this.startedAt);
     if (frame.type !== 'reasoning') this.closeReasoning(at);
     const event = { seq: ++this.seq, frame: { ...frame, at } };
-    this.events.push(event);
-    if (this.events.length > MAX_EVENTS) this.compact();
-    this.emitter.emit('event', event);
+    this.pendingEvents.push(event);
+    if (this.pendingEvents.length > MAX_EVENTS) this.compact();
   }
 
   private closeReasoning(at: number) {
@@ -104,7 +111,7 @@ export class ChatRun {
       if (part.kind === 'reasoning') { this.reasoningFrom = Math.max(0, this.clock() - this.startedAt); this.openReasoning = part; }
       this.parts.push(part);
     }
-    if (kind === 'text' && this.answer.length + content.length <= MAX_ANSWER_CHARS) this.answer += content;
+    if (kind === 'text') this.answer += content;
     this.emit({ type: kind, content });
   }
 
@@ -137,13 +144,41 @@ export class ChatRun {
 
   /** Over the event cap: merge adjacent text/reasoning deltas (sequence numbers stay). */
   private compact() {
-    for (let i = this.events.length - 2; i >= 0 && this.events.length > MAX_EVENTS * 0.8; i--) {
-      const a = this.events[i], b = this.events[i + 1];
+    for (let i = this.pendingEvents.length - 2; i >= 0 && this.pendingEvents.length > MAX_EVENTS * 0.8; i--) {
+      const a = this.pendingEvents[i], b = this.pendingEvents[i + 1];
       if ((a.frame.type === 'text' || a.frame.type === 'reasoning') && a.frame.type === b.frame.type) {
         b.frame = { ...b.frame, content: String(a.frame.content) + String(b.frame.content) };
-        this.events.splice(i, 1);
+        this.pendingEvents.splice(i, 1);
       }
     }
+  }
+
+  /** Check the complete turn before exposing model-controlled bytes. This
+   * also catches secrets split across chunks. Unexpected failure drops all.
+   */
+  async publishChecked(check: typeof vaultRunSecrets = vaultRunSecrets) {
+    if (this.published) return;
+    try {
+      const target = { userId: this.userId, sessionId: this.sessionId, answer: this.answer, parts: this.parts, events: this.pendingEvents };
+      await check(target);
+      this.answer = target.answer.slice(0, MAX_ANSWER_CHARS);
+    } catch {
+      this.answer = ''; this.parts.length = 0; this.pendingEvents.length = 0;
+      this.error = 'secret_check_failed';
+    }
+    this.published = true;
+    this.seq = 0;
+    for (const event of this.pendingEvents) {
+      const frames = event.frame.type === 'text' || event.frame.type === 'reasoning'
+        ? chunkText(String(event.frame.content ?? ''), 16_000).map(content => ({ ...event.frame, content }))
+        : [event.frame];
+      for (const frame of frames) {
+        const checked = { seq: ++this.seq, frame };
+        this.events.push(checked);
+        this.emitter.emit('event', checked);
+      }
+    }
+    this.pendingEvents.length = 0;
   }
 
   /** Ends the run once: emits the closing event and resolves the final status. */
@@ -232,6 +267,7 @@ export interface StartRunInput {
   /** CHAT-PRO-02 I: the agent writing this reply (stored with it). */
   agentId?: string | null;
   execute: (reply: FastifyReply) => Promise<unknown>;
+  onPersisted?: (status: TurnStatus) => Promise<void>;
 }
 
 export class ChatRunRegistry {
@@ -261,14 +297,12 @@ export class ChatRunRegistry {
     void (async () => {
       try { await input.execute(runReply(run)); }
       catch (err) { if (!run.error) run.error = 'failed'; console.error('[ChatRuns] Turn failed', { runId: run.id, name: (err as Error)?.name ?? 'Error' }); }
-      const status: TurnStatus = run.stopping ? 'stopped' : run.error ? 'error' : 'complete';
       run.settle(this.now());
-      // CHAT-SECRETS-02: secrets in the reply or its work go to the key store before the turn is stored or replayed.
-      try { await vaultRunSecrets(run); } catch (err) {
-        console.error('[ChatRuns] Could not check the turn for secrets', { runId: run.id, name: (err as Error)?.name ?? 'Error' });
-      }
+      await run.publishChecked();
+      const status: TurnStatus = run.error ? 'error' : run.stopping ? 'stopped' : 'complete';
       try {
         await this.persist(run.sessionId, { runId: run.id, content: run.answer, parts: run.parts, status, durationMs: this.now() - run.startedAt, agentId: input.agentId ?? null });
+        await input.onPersisted?.(status);
       } catch (err) {
         console.error('[ChatRuns] Could not store the turn', { runId: run.id, name: (err as Error)?.name ?? 'Error' });
       }

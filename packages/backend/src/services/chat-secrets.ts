@@ -35,10 +35,9 @@
  *    Outside the owner's own chat conversation (channel turns, tasks, no
  *    conversation) there is no chat to link to: the value is redacted.
  *  - The reply: when a run ends, before the turn is stored, the answer, the
- *    stored work and the run's event log are vaulted (vaultRunSecrets). Text
- *    deltas already streamed live to an open page are not taken back; every
- *    later read (events replay, messages, search, export, the next turn's
- *    model history) sees the reference.
+ *    stored work and the private event buffer are vaulted (vaultRunSecrets).
+ *    ChatRun publishes only after this check, so live and replay readers
+ *    receive checked content, including keys split across provider chunks.
  */
 
 import { randomBytes } from 'node:crypto';
@@ -273,6 +272,20 @@ export async function vaultToolResult<R extends { content?: Array<{ type: string
   return next;
 }
 
+/** Complete legacy SSE frames, checked before their first publication. */
+export async function vaultChatFrames(userId: string, sessionId: string, frames: Array<Record<string, unknown>>, channel = false): Promise<Array<Record<string, unknown>>> {
+  for (const kind of ['text', 'reasoning']) {
+    const group = frames.filter(f => (f.type === 'reasoning' ? 'reasoning' : 'text') === kind && typeof f.content === 'string');
+    const joined = group.map(f => String(f.content)).join('');
+    if (hasSecret(joined) && group.length) {
+      for (const f of group) f.content = '';
+      group[group.length - 1].content = joined;
+    }
+  }
+  try { return (await vaultStrings({ userId, conversationId: sessionId, channel }, frames)).value; }
+  catch { return (await vaultStrings({ channel: true }, frames)).value; }
+}
+
 /** The parts of a run that vaultRunSecrets rewrites (a ChatRun). */
 export interface RunSecretsTarget {
   userId: string;
@@ -289,6 +302,22 @@ export interface RunSecretsTarget {
  * Returns the number of rewritten strings (0 = nothing found).
  */
 export async function vaultRunSecrets(run: RunSecretsTarget): Promise<number> {
+  // A provider can split one value across text parts separated by tools.
+  // Normalize only secret-bearing groups; ordinary chunk timing is preserved.
+  for (const kind of ['text', 'reasoning']) {
+    const parts = run.parts.filter((p: any) => p?.kind === kind) as Array<{ text: string }>;
+    const joined = parts.map(p => p.text).join('');
+    if (hasSecret(joined) && parts.length) {
+      for (const p of parts) p.text = '';
+      parts[parts.length - 1].text = joined;
+    }
+    const events = run.events.filter(e => e.frame.type === kind);
+    const content = events.map(e => String(e.frame.content ?? '')).join('');
+    if (hasSecret(content) && events.length) {
+      for (const e of events) e.frame = { ...e.frame, content: '' };
+      events[events.length - 1].frame = { ...events[events.length - 1].frame, content };
+    }
+  }
   const scan = { answer: run.answer, parts: run.parts };
   let known = new Map<string, SavedSecret>();
   let out: Awaited<ReturnType<typeof vaultStrings<typeof scan>>>;

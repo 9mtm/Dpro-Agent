@@ -1,3 +1,6 @@
+import { FakeRaw } from '../../services/chat-runs.js';
+import { vaultChatFrames } from '../../services/chat-secrets.js';
+import { currentChatRun } from '../../services/chat-run-context.js';
 /**
  * Chat API Routes
  * Handles chat completions with streaming support
@@ -272,10 +275,47 @@ export async function chatRoutes(fastify: FastifyInstance) {
     // Ids and sizes only: no chat context, prompts or message content in logs.
     console.log('[Chat] Turn accepted', { runId: turn.ids.runId, agentId: agentId ?? null, messages: messages.length, stream });
 
-    return executeChatTurn(reply, {
-      agentId, messages, stream, model, temperature, maxTokens, sessionId, systemPrompt, systemPromptAppend,
-      memoryContext: bodyMemoryContext, memoryScope, chatContext, userId, channelTurn,
+    const input = { agentId, messages, stream, model, temperature, maxTokens, sessionId, systemPrompt, systemPromptAppend,
+      memoryContext: bodyMemoryContext, memoryScope, chatContext, userId, channelTurn };
+    if (!stream) return executeChatTurn(reply, input);
+    // Legacy direct SSE uses the same privacy boundary as saved chat runs.
+    // Its idempotency recorder sees checked frames only.
+    openSseStream(reply.raw);
+    const frames: Array<Record<string, unknown>> = [];
+    let size = 0, overflow = false;
+    const buffered = new FakeRaw(frame => {
+      size += JSON.stringify(frame).length;
+      if (size > 4_000_000) { overflow = true; buffered.close(); return; }
+      frames.push(frame);
     });
+    const close = () => buffered.close();
+    reply.raw.once('close', close);
+    let status = 200;
+    const checkedReply: any = {
+      raw: buffered, header() { return checkedReply; }, headers() { return checkedReply; },
+      code(c: number) { status = c; return checkedReply; }, status(c: number) { return checkedReply.code(c); },
+      send(body: unknown) { buffered.write(`data: ${JSON.stringify({ type: status >= 400 ? 'error' : 'text', ...(body as object) })}\n\n`); return checkedReply; },
+    };
+    try {
+      await executeChatTurn(checkedReply, input);
+      const safe = overflow ? [{ type: 'error', error: 'Reply exceeded the safe buffer limit' }]
+        : await vaultChatFrames(userId, sessionId ?? '', frames, !!channelTurn);
+      for (const frame of safe) {
+        const chunks = typeof frame.content === 'string' ? chunkText(frame.content, 16_000) : [];
+        if (chunks.length > 1) {
+          for (const content of chunks.slice(0, -1)) reply.raw.write(`data: ${JSON.stringify({ ...frame, content, done: false })}\n\n`);
+          frame.content = chunks.at(-1);
+        }
+        reply.raw.write(`data: ${JSON.stringify(frame)}\n\n`);
+      }
+    } catch {
+      reply.raw.write(`data: ${JSON.stringify({ type: 'error', error: 'Reply could not be checked' })}\n\n`);
+    } finally {
+      buffered.end();
+      reply.raw.off('close', close);
+      reply.raw.end();
+    }
+    return reply;
   });
 }
 
@@ -414,7 +454,7 @@ export async function executeChatTurn(reply: FastifyReply, input: ChatTurnInput)
     if (memoryContext) console.log('[Chat] Memory context injected', { chars: String(memoryContext).length });
 
     // CLI bridge providers run a separate local agent with its own tools; never for channel turns.
-    if (toolPolicy && (resolvedProvider === 'gemini-cli' || resolvedProvider === 'claude-cli')) {
+    if ((toolPolicy || currentChatRun()?.reviewTools) && (resolvedProvider === 'gemini-cli' || resolvedProvider === 'claude-cli')) {
       return reply.status(403).send({ error: 'This agent provider is not available for channel messages' });
     }
 

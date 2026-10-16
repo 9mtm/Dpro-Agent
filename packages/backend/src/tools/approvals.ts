@@ -1,3 +1,4 @@
+import { redactImportText } from '../memory/import/redact.js';
 /**
  * One-time approvals for risky agent tool calls (S1.3).
  *
@@ -378,8 +379,23 @@ export async function getApprovalDetail(id: string): Promise<ApprovalDetail | nu
     params = null;
     maskedFields = [];
   }
+  const hideEmbedded = (value: unknown, path = ''): unknown => {
+    if (typeof value === 'string') {
+      const redacted = redactImportText(value);
+      if (redacted.total) maskedFields.push(path);
+      return redacted.text;
+    }
+    if (Array.isArray(value)) return value.map((v, i) => hideEmbedded(v, `${path}[${i}]`));
+    if (value && typeof value === 'object') return Object.fromEntries(Object.entries(value).map(([k, v]) => [k, hideEmbedded(v, path ? `${path}.${k}` : k)]));
+    return value;
+  };
+  params = hideEmbedded(params);
   const scope = parseRunScope(row.run_scope);
-  return { ...toRecord(row), params, maskedFields, paramsHash: row.params_hash ?? null, runScope: scope === 'invalid' ? null : scope };
+  const record = toRecord(row);
+  return { ...record, paramsPreview: hideEmbedded(record.paramsPreview) as Record<string, unknown> | null,
+    resultPreview: record.resultPreview ? redactImportText(record.resultPreview).text : null,
+    error: record.error ? redactImportText(record.error).text : null,
+    params, maskedFields, paramsHash: row.params_hash ?? null, runScope: scope === 'invalid' ? null : scope };
 }
 
 export class ApprovalStateError extends Error {

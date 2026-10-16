@@ -1,3 +1,4 @@
+import { approvalPath, allowedApproval, approvalResponse } from './recovery-approvals-contract.js';
 // CHAT-REBUILD-01 wire contract: saved conversations and resumable chat runs.
 // Shared by the browser boundary and the local bridge: a strict allow-list of
 // requests, a projection of every response to the reviewed fields (never error
@@ -36,6 +37,7 @@ export const MAX_AUDIO_CHARS = Math.ceil((6 * 1024 * 1024) / 3) * 4;
 export const STT_LANGUAGES = ['auto', 'ar', 'en', 'de'];
 
 export function conversationPath(path) {
+  if (approvalPath(path)) return { kind: 'approval' };
   if (path === CONVERSATIONS_PATH) return { kind: 'list' };
   if (path === TRANSCRIBE_PATH) return { kind: 'transcribe' };
   if (path === PROJECTS_PATH) return { kind: 'projects' };
@@ -73,6 +75,7 @@ export function panePath(id, kind, rel = '') { return `/api/chat/projects/${id}/
 export function conversationRoute(path) { return conversationPath(path) !== null; }
 
 export function allowedConversation(method, path, body) {
+  if (approvalPath(path)) return allowedApproval(method, path, body);
   const p = conversationPath(path);
   if (!p) return false;
   if (method === 'GET') return body === undefined && ['list', 'messages', 'events', 'projects', 'project-git', 'project-changes', 'project-diff', 'project-tree', 'project-file', 'transcribe'].includes(p.kind);
@@ -118,6 +121,7 @@ function message(x) {
   return { id: str(x.id, 64), role: x.role, content: x.content.slice(0, 1000000), parts,
     status: ['complete', 'stopped', 'error'].includes(x.status) ? x.status : 'complete',
     runId: validRunId(x.runId) ? x.runId : null, durationMs: num(x.durationMs) ?? null, createdAt: str(x.createdAt, 40),
+    ...(x.code === 'run_interrupted' ? { code: 'run_interrupted' } : {}),
     ...(agentId(x.agentId) ? { agentId: x.agentId } : {}) };
 }
 
@@ -126,13 +130,14 @@ function project(x) {
   return { id: x.id, name: x.name.slice(0, 80), slug: str(x.slug, 64), folder: typeof x.folder === 'string' ? x.folder.slice(0, 1024) : null, repoUrl: typeof x.repoUrl === 'string' ? x.repoUrl.slice(0, 300) : null };
 }
 
-const ERROR_CODES = { 503: ['stt_unavailable'], 500: ['stt_failed'], 400: ['invalid_request', 'invalid_project', 'bad_path', 'no_folder', 'stt_invalid'], 404: ['not_found'], 409: ['conversation_busy', 'run_id_reused'], 429: ['rate_limited', 'stt_busy'] };
+const ERROR_CODES = { 503: ['stt_unavailable', 'checkpoint_unavailable'], 500: ['stt_failed'], 400: ['invalid_request', 'invalid_project', 'bad_path', 'no_folder', 'stt_invalid'], 404: ['not_found'], 409: ['conversation_busy', 'run_id_reused'], 429: ['rate_limited', 'stt_busy'] };
 
 /** A link on github.com only (repository, branch or compare page). */
 const githubUrl = x => typeof x === 'string' && x.length <= 600 && /^https:\/\/github\.com\/[A-Za-z0-9-]{1,39}\/[A-Za-z0-9._-]{1,100}(\/[A-Za-z0-9._~%\/-]*(\.\.\.[A-Za-z0-9._~%\/-]+)?(\?expand=1)?)?$/.test(x);
 
 /** Reviewed fields only. Throws on a malformed success body. */
 export function conversationResponse(path, status, body) {
+  if (approvalPath(path)) return approvalResponse(path, status, body);
   const p = conversationPath(path);
   if (!p) throw Error('protocol');
   if (status !== 200 && status !== 201 && status !== 202) {

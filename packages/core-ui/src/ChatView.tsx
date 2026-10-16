@@ -1,3 +1,4 @@
+import { RecoveryApprovals } from './RecoveryApprovals';
 import { useEffect, useLayoutEffect, useRef, useState, useSyncExternalStore } from 'react';
 import type { KeyboardEvent, ReactNode } from 'react';
 import type { ConversationsController } from './conversations';
@@ -207,7 +208,7 @@ export function ChatView({ controller, mode, productName = 'Dpro', client, onAdd
       </div> : <div className="chat-column" role="log" aria-live="polite" aria-relevant="additions">
         {s.turns.map((t, i) => t.role === 'user'
           ? <UserMessage key={t.key} turn={t} highlight={flash === t.key} onKey={client ? setKeysOpen : undefined} onRemember={canRemember && messageRef(t) ? () => openRemember(t, t.content) : undefined}/>
-          : <AssistantTurn key={t.key} turn={t} highlight={flash === t.key} writer={teamChat ? nameOf(t.agentId ?? convAgentId) : undefined} last={i === s.turns.length - 1} onRetry={lastUser ? () => void controller.send(lastUser.content) : undefined}
+          : <AssistantTurn recovery={t.code === 'run_interrupted' && client && s.activeId ? <RecoveryApprovals key={`${s.activeId}:${client.getSnapshot().epoch}`} client={client} conversationId={s.activeId}/> : undefined} key={t.key} turn={t} highlight={flash === t.key} writer={teamChat ? nameOf(t.agentId ?? convAgentId) : undefined} last={i === s.turns.length - 1} onRetry={lastUser ? () => void controller.send(t.code === 'run_interrupted' ? 'Continue the interrupted work from the saved checkpoints. Review what is already done and inspect unknown outcomes before repeating any action. Ask me to approve each tool call.' : lastUser.content) : undefined}
             onSuggest={owner && cardsCtl && s.activeId ? openCardForm : undefined} onRemember={canRemember && messageRef(t) ? text => openRemember(t, text) : undefined}
             proposals={t.runId && memCtl ? <MemoryProposals controller={memCtl} items={byRun.get(t.runId) ?? []}/> : null}/>)}
         {cardsCtl && <ChatCards controller={cardsCtl} nameOf={id => s.agents.find(a => a.id === id)?.name ?? 'Former agent'} onOpen={onOpenCard}/>}
@@ -452,7 +453,7 @@ function SecretChip({ type, id, onOpen }: { type: string; id: string; onOpen?: (
 }
 
 /** One assistant turn: live parts in order while running; work folded once finished. */
-function AssistantTurn({ turn, last, onRetry, writer, onSuggest, onRemember, proposals, highlight }: { turn: Turn; last: boolean; onRetry?: () => void; writer?: string; onSuggest?: (s: CardSuggestion) => void; onRemember?: (text: string) => void; proposals?: ReactNode; highlight?: boolean }) {
+function AssistantTurn({ turn, last, onRetry, writer, recovery, onSuggest, onRemember, proposals, highlight }: { turn: Turn; last: boolean; onRetry?: () => void; writer?: string; recovery?: ReactNode; onSuggest?: (s: CardSuggestion) => void; onRemember?: (text: string) => void; proposals?: ReactNode; highlight?: boolean }) {
   const live = turn.status === 'running';
   const plan = turnPlan(turn.parts);
   const suggestions = turnSuggestions(turn.parts);
@@ -473,12 +474,13 @@ function AssistantTurn({ turn, last, onRetry, writer, onSuggest, onRemember, pro
           : work.map((p, i) => <PartView key={i} part={p}/>)}
         {answer.map((p, i) => <PartView key={`a${i}`} part={p}/>)}
         {turn.status === 'error' && <div className="chat-error" role="alert">
-          <strong>{turn.code === 'lmstudio_not_running' ? 'LM Studio is not running' : turn.code === 'model_unavailable' ? 'The model could not be reached' : 'This reply failed'}</strong>
-          <span>{turn.code === 'lmstudio_not_running' ? 'Open LM Studio, load the model and start its local server (port 1234), then try again.' : turn.code === 'model_unavailable' ? 'Check that the model is running, then try again.' : 'Anything above was written before the failure.'}</span>
-          {last && onRetry && <button type="button" className="chat-error-action" onClick={onRetry}><UiIcon name="refresh" size={12}/>Try again</button>}
+          <strong>{turn.code === 'run_interrupted' ? 'Work interrupted by restart' : turn.code === 'lmstudio_not_running' ? 'LM Studio is not running' : turn.code === 'model_unavailable' ? 'The model could not be reached' : 'This reply failed'}</strong>
+          <span>{turn.code === 'run_interrupted' ? 'Your request and tool checkpoints are saved. Continue safely after reviewing them; previous actions are not replayed automatically.' : turn.code === 'lmstudio_not_running' ? 'Open LM Studio, load the model and start its local server (port 1234), then try again.' : turn.code === 'model_unavailable' ? 'Check that the model is running, then try again.' : 'Anything above was written before the failure.'}</span>
+          {last && onRetry && <button type="button" className="chat-error-action" onClick={onRetry}><UiIcon name="refresh" size={12}/>{turn.code === 'run_interrupted' ? 'Continue safely' : 'Try again'}</button>}
         </div>}
         {suggestions.map((g, i) => <CardSuggestionView key={i} suggestion={g} onCreate={onSuggest}/>)}
         {proposals}
+        {recovery}
         <TurnFooter text={answerText || turn.content} ms={turn.durationMs} stopped={turn.status === 'stopped'} onRemember={onRemember}/>
       </>}
   </article>;

@@ -12,7 +12,7 @@ export type Part =
 export type TurnStatus = 'running' | 'complete' | 'stopped' | 'error';
 export type Turn = Readonly<{
   key: string; role: 'user' | 'assistant'; content: string; parts: readonly Part[]; status: TurnStatus;
-  runId: string | null; durationMs: number | null; startedAt?: number; code?: 'model_unavailable' | 'lmstudio_not_running'; lastSeq: number; pending?: boolean;
+  runId: string | null; durationMs: number | null; startedAt?: number; code?: 'model_unavailable' | 'lmstudio_not_running' | 'run_interrupted'; lastSeq: number; pending?: boolean;
   /** Client clock time of the run's start, from the first event's `at` (keeps durations right after a re-attach). */
   base?: number;
   /** CHAT-PRO-02 I: the agent that wrote this reply (absent = the conversation's agent). */
@@ -36,7 +36,7 @@ function fromWirePart(p: WirePart): Part {
 /** A stored message as a transcript turn. */
 export function fromWire(m: WireMessage): Turn {
   const parts = m.role === 'assistant' ? (m.parts?.length ? m.parts.map(fromWirePart) : m.content ? [{ kind: 'text' as const, text: m.content }] : []) : [];
-  return Object.freeze({ key: m.id, role: m.role === 'user' ? 'user' : 'assistant', content: m.content, parts, status: m.status, runId: m.runId, durationMs: m.durationMs, lastSeq: 0, ...(m.agentId ? { agentId: m.agentId } : {}) });
+  return Object.freeze({ key: m.id, role: m.role === 'user' ? 'user' : 'assistant', content: m.content, parts, status: m.status, runId: m.runId, durationMs: m.durationMs, lastSeq: 0, ...(m.code ? { code: m.code } : {}), ...(m.agentId ? { agentId: m.agentId } : {}) });
 }
 
 /** Applies one run event to the live assistant turn (events at or below lastSeq are ignored). */

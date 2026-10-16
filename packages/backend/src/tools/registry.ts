@@ -5,6 +5,7 @@
  * Tools can be registered and executed through this registry.
  */
 
+import { currentChatRun } from '../services/chat-run-context.js';
 import { modeFor, permissionCategory } from './agent-permissions.js';
 import type { Tool, ToolResult, ToolExecutionContext } from './types.js';
 import { execToolRefusal, isToolAllowedByExecPolicy, isToolObjectAllowedByExecPolicy } from './exec-policy.js';
@@ -96,6 +97,7 @@ export class ToolsRegistry {
     options: { approvalTicket?: unknown } = {}
   ): Promise<ToolResult> {
     const tool = this.tools.get(toolName);
+    if (currentChatRun()?.failed) return { content: [{ type: 'text', text: 'Checkpoint failed. No further tools will run; review the unknown outcome before continuing.' }], error: 'Checkpoint unavailable' };
 
     // SECURITY: exec-class tools are refused unless enabled by server env (S0-Q.5)
     if (!isToolAllowedByExecPolicy(toolName) || (tool && !isToolObjectAllowedByExecPolicy(tool))) {
@@ -158,6 +160,7 @@ export class ToolsRegistry {
       };
     }
     if (usesSecret && !category) category = modeCategory ?? 'other';
+    if (currentChatRun()?.reviewTools) category = category ?? 'other';
     if (category && !isConfinedChannelReply(policy, toolName) && !consumeApprovalTicket(options.approvalTicket, toolName)) {
       try {
         return await requestApproval(tool, params, this.context, category);
@@ -179,16 +182,19 @@ export class ToolsRegistry {
       // B1-core: one actor per tool call, from the trusted run context only.
       // CHAT-SECRETS-01: references become the stored values only here, and go back into the result.
       secrets = usesSecret ? await resolveSecretRefs(this.context.userId!, params) : { value: params, used: [] };
+      const checkpoint = currentChatRun();
+      const intent = checkpoint ? await checkpoint.beforeTool(toolName, params) : undefined;
       const scrubbed = scrubSecretValues(await tool.execute(secrets.value, { ...this.context, actor: await actorFromToolContextAsync(this.context) }), secrets.used);
       // CHAT-SECRETS-02: other secrets in the result (a read .env, a printed token) go to the key store too.
       const result = await vaultToolResult(this.context, scrubbed);
+      if (checkpoint && intent) await checkpoint.afterTool(intent, result);
 
       console.log(`[ToolsRegistry] ✅ Tool executed successfully`);
       return result;
     } catch (error: any) {
       // A call that used a saved secret never logs or returns the raw error (it may echo the value).
       const message = scrubSecretValues(String(error?.message ?? error), secrets.used);
-      console.error(`[ToolsRegistry] ❌ Tool execution failed:`, secrets.used.length ? message : error);
+      console.error('[ToolsRegistry] Tool execution failed', { tool: toolName });
       return await vaultToolResult(this.context, {
         content: [
           {

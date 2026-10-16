@@ -339,3 +339,73 @@ test('cleanup also moves secrets in stored tool work of older replies', async ()
   assert.ok(!row.content.includes(fakeKey) && !row.parts.includes(fakeKey));
   assert.equal(new Set(`${row.content} ${row.parts}`.match(/\[SECRET:github_token:[a-z0-9]+\]/g)).size, 1, 'one reference per value');
 });
+
+
+test('live subscribers and reconnects receive no unchecked bytes, including secrets split around tools', async () => {
+  const { ChatRun } = await import(join(backendDir, 'src/services/chat-runs.ts'));
+  const c = (await call('s-owner', 'POST', '/api/chat/conversations', {})).json().conversation;
+  const run = new ChatRun(rid(), 's-owner', c.id, Date.now());
+  const live = [];
+  run.emitter.on('event', e => live.push(e));
+  run.push({ type: 'text', content: `Key: ${fakeToken.slice(0, 12)}` });
+  run.push({ type: 'tool_start', step: 1, tools: [{ id: 'x', name: 'read', input: `password=${fakePassword}` }] });
+  run.push({ type: 'tool_result', step: 1, results: [{ id: 'x', output: `token=${fakeToken}` }] });
+  run.push({ type: 'text', content: fakeToken.slice(12) + ' done' });
+  run.push({ type: 'reasoning', content: 'password=' });
+  run.push({ type: 'reasoning', content: fakePassword });
+  assert.deepEqual(live, []);
+  assert.deepEqual(run.since(0), [], 'late reader also sees no unchecked frames');
+  await run.publishChecked();
+  run.finish('complete', Date.now());
+  const wire = JSON.stringify(live);
+  for (const value of [fakeToken, fakeToken.slice(0, 12), fakePassword]) assert.ok(!wire.includes(value));
+  assert.match(wire, /SECRET:/);
+  assert.deepEqual(run.since(0), live);
+  assert.deepEqual(live.map(e => e.seq), live.map((_, i) => i + 1));
+});
+
+test('unexpected secret check failure discards all output; stop and provider failure still check partial text', async () => {
+  const { ChatRun } = await import(join(backendDir, 'src/services/chat-runs.ts'));
+  for (const status of ['stopped', 'error']) {
+    const c = (await call('s-owner', 'POST', '/api/chat/conversations', {})).json().conversation;
+    const run = new ChatRun(rid(), 's-owner', c.id, Date.now());
+    run.push({ type: 'text', content: fakeToken.slice(0, 10) });
+    run.push({ type: 'text', content: fakeToken.slice(10) });
+    if (status === 'stopped') run.requestStop();
+    await run.publishChecked(); run.finish(status, Date.now());
+    assert.ok(!JSON.stringify(run.since(0)).includes(fakeToken.slice(0, 10)));
+  }
+  const failed = new ChatRun(rid(), 's-owner', 'unused', Date.now());
+  failed.push({ type: 'text', content: fakeToken });
+  await failed.publishChecked(async () => { throw new Error('store unavailable'); });
+  failed.finish('error', Date.now());
+  assert.equal(failed.answer, ''); assert.deepEqual(failed.parts, []);
+  assert.deepEqual(failed.since(0).map(e => e.frame.type), ['end']);
+  assert.equal(failed.since(0)[0].frame.code, 'secret_check_failed');
+});
+
+test('legacy direct SSE and idempotent replay contain checked content only', async () => {
+  const fake = 'sk-proj-' + 'R1s2T3u4V5w6X7y8Z9a0B1c2D3e4F5g6H7';
+  script.push([{ message: { content: fake.slice(0, 12) } }, { message: { content: fake.slice(12) } }, { done: true }]);
+  const request = { method: 'POST', url: '/api/chat', headers: { ...as('s-owner'), 'idempotency-key': 'checked-legacy-0001' }, payload: { stream: true, messages: [{ role: 'user', content: 'hello' }], sessionId: 'not-a-saved-conversation' } };
+  const first = await app.inject(request);
+  assert.equal(first.statusCode, 200);
+  assert.ok(!first.body.includes(fake.slice(0, 12)));
+  assert.match(first.body, /REDACTED:openai_key/);
+  const replay = await app.inject(request);
+  assert.equal(replay.statusCode, 200);
+  assert.ok(!replay.body.includes(fake.slice(0, 12)));
+  assert.match(replay.body, /REDACTED:openai_key/);
+});
+
+test('approval detail hides embedded keys even in ordinary text parameters', async () => {
+  const { requestApproval, getApprovalDetail } = await import(join(backendDir, 'src/tools/approvals.ts'));
+  const tool = { name: 'x_call_api', description: 'test', input_schema: { type: 'object' } };
+  const before = new Set(db.prepare('SELECT id FROM tool_approvals').all().map(r => r.id));
+  await requestApproval(tool, { text: `Use ${fakeToken}` }, { userId: 's-owner', sessionId: conv.id, workspaceDir: dir }, 'other');
+  const ids = db.prepare("SELECT id FROM tool_approvals WHERE status = 'pending' ORDER BY requested_at DESC").all();
+  const detail = await getApprovalDetail(ids.find(r => !before.has(r.id)).id);
+  assert.ok(!JSON.stringify(detail).includes(fakeToken));
+  assert.ok(detail.maskedFields.includes('text'));
+  assert.match(JSON.stringify(detail.params), /REDACTED:github_token/);
+});

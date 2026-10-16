@@ -352,8 +352,24 @@ export class ConversationsController {
       } catch (error) {
         if (!current()) return;
         if (error instanceof SessionFailure && error.code === 'cancelled') return;
+        // A restarted backend no longer has this in-memory SSE run. Read the
+        // saved turn before retrying the stream; never resend the user message.
+        const id = this.#state.activeId;
+        if (id) {
+          try {
+            const saved = await this.call('GET', `/api/chat/conversations/${id}/messages`);
+            if (!current()) return;
+            if (saved.status === 200 && record(saved.body) && Array.isArray(saved.body.messages)
+              && !saved.body.activeRunId && saved.body.messages.some((m: WireMessage) => m.role === 'assistant' && m.runId === runId)) {
+              const turns = (saved.body.messages as WireMessage[]).map(fromWire);
+              this.publish({ turns, runId: null, stopping: false, reconnecting: false, queuePaused: this.#state.queue.length > 0,
+                notice: turns.some(t => t.runId === runId && t.code === 'run_interrupted') ? 'Work interrupted by restart. Review the saved checkpoints, then continue safely.' : undefined });
+              return;
+            }
+          } catch { /* A transient outage keeps the bounded reconnect path. */ }
+        }
         if (failures >= RETRY_MS.length) {
-          this.publish({ reconnecting: false, runId: null, notice: 'Lost the connection to this reply. It keeps running on the server; open the conversation again to see it.' });
+          this.publish({ reconnecting: false, runId: null, notice: 'Lost the connection to this reply. Reopen the conversation to check its saved state before retrying.' });
           this.finishLive('error');
           return;
         }

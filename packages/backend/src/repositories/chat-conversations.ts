@@ -44,12 +44,13 @@ export interface ConversationMessage {
   runId: string | null;
   durationMs: number | null;
   createdAt: string;
+  code?: 'run_interrupted';
   /** CHAT-PRO-02 I: the agent that wrote an assistant reply (null = the conversation's agent). */
   agentId?: string | null;
 }
 
 interface SessionRow { id: string; user_id: string; title: string | null; agent_id: string | null; project_id?: string | null; pinned: number; created_at: string; updated_at: string; preview?: string | null }
-interface MessageRow { id: string; role: ConversationMessage['role']; content: string; parts: string | null; status: TurnStatus | null; run_id: string | null; duration_ms: number | null; created_at: string; agent_id?: string | null }
+interface MessageRow { id: string; role: ConversationMessage['role']; content: string; parts: string | null; status: TurnStatus | null; run_id: string | null; duration_ms: number | null; created_at: string; agent_id?: string | null; error_code?: string | null }
 
 const PREVIEW_CHARS = 140;
 
@@ -69,7 +70,7 @@ function parseParts(raw: string | null): TurnPart[] | null {
 function toMessage(r: MessageRow): ConversationMessage {
   return {
     id: r.id, role: r.role, content: r.content, parts: parseParts(r.parts), status: r.status ?? 'complete',
-    runId: r.run_id, durationMs: r.duration_ms, createdAt: r.created_at, agentId: r.agent_id ?? null,
+    runId: r.run_id, durationMs: r.duration_ms, createdAt: r.created_at, agentId: r.agent_id ?? null, ...(r.error_code === 'run_interrupted' ? { code: 'run_interrupted' as const } : {}),
   };
 }
 
