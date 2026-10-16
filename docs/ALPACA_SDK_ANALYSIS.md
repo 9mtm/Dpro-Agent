@@ -391,7 +391,7 @@ try {
 - WebSocket: https://docs.alpaca.markets/docs/websocket-streaming
 
 **SDK Code:**
-- Location: `docs/alpaca-py-master/`
+- Location: the public `alpaca-py` repository (the local copy was removed; it is not part of the app)
 - Key files:
   - `alpaca/trading/enums.py` - All enums
   - `alpaca/trading/requests.py` - Request objects
