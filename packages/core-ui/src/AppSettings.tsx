@@ -1,11 +1,27 @@
+import {SpecialtyLibrary} from './SpecialtyLibrary';
+import { McpLibrary } from './McpLibrary';
+import { SkillLibrary } from './SkillLibrary';
+import { useState } from 'react';
+import { AgentConnectSettings } from './AgentConnectSettings';
+import type { SessionClient } from './session';
+import { ViewTabs } from './ViewTabs';
 import { useAppInfo } from './app-navigation';
 import type { ThemePreference } from './app-navigation';
-export function AppSettings({ signedIn, preference, onTheme, onAccount, onAgents, aboutOnly = false }: { signedIn: boolean; preference: ThemePreference; onTheme: (v: ThemePreference) => void; onAccount: () => void; onAgents?: () => void; aboutOnly?: boolean }) {
-  const info = useAppInfo();
-  return <div className="page-column app-settings"><h1>{aboutOnly ? 'About Dpro' : 'Settings'}</h1>
-    {!aboutOnly && <><section aria-label="General settings"><h2>General</h2><label htmlFor="app-theme">Appearance</label><select id="app-theme" value={preference} onChange={e => onTheme(e.target.value as ThemePreference)}><option value="system">Use system appearance</option><option value="light">Light</option><option value="dark">Dark</option></select><p className="fine-print">Only this device’s appearance preference is saved here.</p></section>
-    <section aria-label="Account and privacy"><h2>Account &amp; privacy</h2><p>{signedIn ? 'Your workspace is available to your signed-in account. Manage your profile and sessions separately.' : 'Sign in to access conversations, agents, memory and tools. Your private workspace is not loaded on this screen.'}</p><button onClick={onAccount}>{signedIn ? 'Manage account' : 'Sign in'}</button></section>
-    <section aria-label="Models and permissions"><h2>Models &amp; tools</h2><p>Choose models and review tool permissions on each agent’s profile.</p><button onClick={signedIn && onAgents ? onAgents : onAccount}>{signedIn ? 'Open agents & permissions' : 'Sign in to manage agents'}</button></section></>}
-    <section aria-label="Application information"><h2>Application</h2><dl><dt>Version</dt><dd>{info?.version ?? 'Web application'}</dd><dt>Connection</dt><dd>{info ? (info.connection === 'local' ? 'This computer' : 'Existing Dpro connection') : 'Browser connection'}</dd></dl><h3>Updates</h3><p>Automatic updates are not available in this build. Install a verified newer package while keeping your existing workspace.</p></section>
+export type SettingsTab='general'|'account'|'models'|'channels'|'skills'|'mcp'|'specialties'|'about';
+export function AppSettings({ signedIn, preference, onTheme, onAccount, onAgents, client, aboutOnly = false, initialTab = 'general' }: { signedIn: boolean; preference: ThemePreference; onTheme: (v: ThemePreference) => void; onAccount: () => void; onAgents?: () => void; client?: SessionClient; aboutOnly?: boolean; initialTab?: SettingsTab }) {
+  const info=useAppInfo();const [tab,setTab]=useState<SettingsTab>(initialTab);const active=aboutOnly?'about':tab;
+  const tabs:{value:SettingsTab;label:string}[]=[{value:'general',label:'General'},{value:'account',label:'Account'},{value:'models',label:'Models & tools'},...(signedIn&&client?.getSnapshot().user?.role==='owner'?[{value:'channels' as const,label:'Channels'},{value:'skills' as const,label:'Skills'},{value:'specialties' as const,label:'Specialties'},{value:'mcp' as const,label:'MCP'}]:[]),{value:'about',label:'Application'}];
+  return <div className="page-column app-settings"><header className="settings-heading"><h2>{aboutOnly?'About Dpro':'Settings'}</h2></header>
+    {!aboutOnly&&<ViewTabs id="settings-view" label="Settings sections" value={active} tabs={tabs} onChange={setTab}/>}
+    <div id="settings-view-panel" role={aboutOnly?undefined:'tabpanel'} aria-labelledby={aboutOnly?undefined:`settings-view-${active}`} className="settings-content">
+      {active==='general'&&<section aria-label="General settings"><h3>Appearance</h3><div className="settings-row"><label htmlFor="app-theme">Theme<span className="fine-print">Saved on this device.</span></label><select id="app-theme" value={preference} onChange={e=>onTheme(e.target.value as ThemePreference)}><option value="system">Use system appearance</option><option value="light">Light</option><option value="dark">Dark</option></select></div></section>}
+      {active==='account'&&<section aria-label="Account and privacy"><h3>Account &amp; privacy</h3><div className="settings-row"><div><span>{signedIn?'Workspace account':'Sign in required'}</span><p className="fine-print">{signedIn?'Profile, active sessions and sign-out controls.':'Conversations, agents, memory and tools stay locked until sign-in.'}</p></div><button onClick={onAccount}>{signedIn?'Manage account':'Sign in'}</button></div></section>}
+      {active==='models'&&<section aria-label="Models and permissions"><h3>Models &amp; tools</h3><div className="settings-row"><div><span>Agent configuration</span><p className="fine-print">Models and tool permissions are managed per agent.</p></div><button onClick={signedIn&&onAgents?onAgents:onAccount}>{signedIn?'Open agents & permissions':'Sign in to manage agents'}</button></div></section>}
+      {active==='channels'&&signedIn&&client&&<AgentConnectSettings client={client}/>}
+      {active==='mcp'&&signedIn&&client&&<McpLibrary client={client}/>}
+      {active==='specialties'&&signedIn&&client&&<SpecialtyLibrary client={client}/>}
+      {active==='skills'&&signedIn&&client&&<SkillLibrary client={client}/>}
+      {active==='about'&&<section aria-label="Application information"><h3>Dpro</h3><dl className="settings-facts"><dt>Version</dt><dd>{info?.version??'Web application'}</dd><dt>Connection</dt><dd>{info?(info.connection==='local'?'This computer':'Existing Dpro connection'):'Browser connection'}</dd></dl><div className="settings-row"><div><span>Updates</span><p className="fine-print">Automatic updates are not available in this build. Install a verified newer package while keeping your existing workspace.</p></div></div></section>}
+    </div>
   </div>;
 }

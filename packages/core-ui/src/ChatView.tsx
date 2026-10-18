@@ -47,7 +47,7 @@ const SUGGESTIONS = [
  * finished turn folds its work into "Worked for …". Behaviour lives in
  * ConversationsController; this file is layout and local view state only.
  */
-export function ChatView({ controller, mode, productName = 'Dpro', client, onAddConnector, onOpenCard, onOpenMemory }: { controller: ConversationsController; mode: 'live' | 'mock'; productName?: string; client?: SessionClient; onAddConnector?: () => void; onOpenCard?: (boardId: string, cardId: string) => void; onOpenMemory?: (drawerId: string, memoryId: string) => void }) {
+export function ChatView({ controller, mode, productName = 'Dpro', client, onAddConnector, onOpenCard, onOpenMemory, terminalRequest = 0 }: { controller: ConversationsController; mode: 'live' | 'mock'; productName?: string; terminalRequest?: number; client?: SessionClient; onAddConnector?: () => void; onOpenCard?: (boardId: string, cardId: string) => void; onOpenMemory?: (drawerId: string, memoryId: string) => void }) {
   const s = useSyncExternalStore(controller.subscribe, controller.getSnapshot, controller.getSnapshot);
   const thread = useRef<HTMLDivElement>(null);
   const input = useRef<HTMLTextAreaElement>(null);
@@ -154,6 +154,7 @@ export function ChatView({ controller, mode, productName = 'Dpro', client, onAdd
   const [maximized, setMaximized] = useState(false);
   useEffect(() => { if (!client) return; const p = new PanesController(client); setPanes(p); const t = { tabs: new TerminalTabs(client), prefs: new TerminalPrefsController(client) }; setTerminal(t); return () => { p.dispose(); t.tabs.dispose(); t.prefs.dispose(); }; }, [client]);
   const owner = client?.getSnapshot().user?.role === 'owner';
+  useEffect(()=>{if(terminalRequest>0&&owner)setPane('terminal');},[terminalRequest,owner]);
   const [keysOpen, setKeysOpen] = useState<string | null>(null);
   // CHAT-PRO-02 I step 2: board cards made from this conversation.
   const [cardsCtl, setCardsCtl] = useState<ChatCardsController | null>(null);
@@ -187,7 +188,7 @@ export function ChatView({ controller, mode, productName = 'Dpro', client, onAdd
   return <div className="chat-layout" data-panel={pane ?? undefined} data-max={(maximized && pane === 'terminal') || undefined}>
   <div className="chat-screen">
     <div className="chat-topbar">
-      {project ? <ProjectBar name={project.name} folder={project.folder} repoUrl={project.repoUrl} git={s.git}/> : <span className="chat-topbar-spacer"/>}
+      {project ? <ProjectBar name={project.name} folder={project.folder} repoUrl={project.repoUrl} git={s.git}/> : <span className="project-bar-item" aria-label="Chat context">General chat · no project folder</span>}
       {client && s.activeId && s.threadPhase !== 'loading' && <ExportMenu key={s.activeId} client={client} conversationId={s.activeId} disabled={running}/>}
       {owner && cardsCtl && s.activeId && <button type="button" className="tool chat-to-board" onClick={() => cardForm ? setCardForm(null) : openCardForm()} aria-pressed={!!cardForm} title="Put this task on a board, with the agents it needs">
         <UiIcon name="board" size={14}/><span>Add to board</span></button>}

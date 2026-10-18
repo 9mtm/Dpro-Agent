@@ -43,7 +43,7 @@ export function AgentsDestination({ client, active = false, onOpenMemory, focusC
       <button type="button" onClick={() => { company.restart(); setBuilding(true); }}>Build your company</button>
     </div>}
     {owner && company && building && <CompanyWizard controller={company} onClose={() => { setBuilding(false); if (company.getSnapshot().hires.some(x => x.status === 'created')) void controller?.list(); }}/>}
-    {owner && hire && hiring && !building && <HireAgent controller={hire} onClose={() => { setHiring(false); if (hire.getSnapshot().step === 'done') void controller?.list(); }}/>}
+    {owner && hire && hiring && !building && <HireAgent controller={hire} onClose={() => { setHiring(false); void controller?.list(); }}/>}
     {!hiring && !building && (controller ? <TeamGrid controller={controller} onOpen={setOpen}/> : <p className="fine-print" role="status">Loading your team…</p>)}
     {owner && !hiring && !building && <ConnectorsSection client={client} active={active} focus={focusConnectors}/>}
   </section>;

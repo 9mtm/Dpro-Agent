@@ -7,7 +7,7 @@ import type { PublicAgent } from './agents';
 import type { MemoryItem, PersonaCurrent, Persona, Traits, TraitName } from './agent-card-contract.js';
 import { permissionCategories, permissionModes, riskyCategories } from './hire-contract.js';
 
-export type CardTab = 'profile' | 'persona' | 'permissions' | 'memory';
+export type CardTab = 'profile' | 'persona' | 'permissions' | 'memory' | 'skills' | 'mcp';
 export type Grants = { version: number; granted: readonly string[]; available: readonly { name: string; description: string; requiresApproval: boolean; allowedByServer: boolean; execClass: boolean }[] };
 export type Permissions = { memoryRead: string[]; memoryWrite: string[]; sharedMemory: boolean; modes: Record<string, string>; version: number };
 export type ProfileDraft = { role: string; department: string; description: string; model: string };
@@ -49,7 +49,7 @@ export class AgentCardController {
   #state: CardState;
   #listeners = new Set<() => void>();
   #disposed = false;
-  constructor(private readonly client: SessionClient, agentId: string, tab: CardTab = 'profile') {
+  constructor(readonly client: SessionClient, agentId: string, tab: CardTab = 'profile') {
     this.#state = Object.freeze({ agentId, tab, phase: 'loading', profile: profileOf() });
   }
   getSnapshot = () => this.#state;

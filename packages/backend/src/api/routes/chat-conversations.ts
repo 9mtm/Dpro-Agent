@@ -1,3 +1,4 @@
+import {projectFolders} from '../../services/project-folder-picker.js';
 /**
  * Saved conversations and resumable chat runs (CHAT-REBUILD-01).
  *
@@ -274,10 +275,16 @@ export async function chatConversationRoutes(fastify: FastifyInstance) {
     if (err instanceof ProjectInputError) return reply.code(400).send({ error: err.message, code: 'invalid_project' });
     throw err;
   };
+  fastify.post('/api/chat/project-folders', {config:{access:'owner'}}, async (request: Req,reply) => {
+    const b:any=request.body??{};
+    if(!b||typeof b!=='object'||Array.isArray(b)||Object.keys(b).some(k=>k!=='path')||(b.path!==undefined&&typeof b.path!=='string'))return reply.code(400).send({code:'invalid_project'});
+    try{return await projectFolders(b.path);}catch{return reply.code(400).send({code:'invalid_project'});}
+  });
   fastify.get('/api/chat/projects', { config: { access: 'owner' } }, async (request) => ({ projects: await listProjects(caller(request)) }));
   fastify.post('/api/chat/projects', { config: { access: 'owner' } }, async (request: Req, reply) => {
     const b: any = request.body ?? {};
     if (typeof b.name !== 'string' || (b.folder !== undefined && b.folder !== null && typeof b.folder !== 'string') || (b.repoUrl !== undefined && b.repoUrl !== null && typeof b.repoUrl !== 'string')) return bad(reply, 'name, folder and repoUrl must be text');
+    if (typeof b.folder !== 'string' || !b.folder.trim()) return reply.code(400).send({ code: 'invalid_project', error: 'Choose a working folder for this project. Use General chat without a folder.' });
     try { return reply.code(201).send({ project: await createProject(caller(request), { name: b.name, folder: b.folder, repoUrl: b.repoUrl }) }); } catch (err) { return projectError(reply, err); }
   });
   fastify.put('/api/chat/projects/:id', { config: { access: 'owner' } }, async (request: Req, reply) => {

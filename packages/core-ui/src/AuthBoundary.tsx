@@ -1,14 +1,14 @@
 import { generatePassword, passwordStrength } from './password-tools.js';
 import { PublicShell } from './PublicShell';
 import { SignedInShell } from './SignedInShell';
-import { useEffect, useMemo, useState, useSyncExternalStore } from 'react';
+import { useEffect, useMemo, useRef, useState, useSyncExternalStore } from 'react';
 import type { ReactNode } from 'react';
 import { SessionClient } from './session';
 import { createLoginMock } from './session-mock';
 
 import { retryAfterNotice } from './retry-after.js';
 import { devQuickLoginAccounts } from './dev-quick-login';
-import { devSessionKeep } from './dev-session-keep';
+import { localSessionKeep } from './local-session-keep';
 import { setupCodeFromFragment } from './owner-setup-contract.js';
 import type { OwnerSetupCode } from './owner-setup-contract.js';
 
@@ -34,14 +34,15 @@ export function AuthBoundary({ client: supplied, children, initialPage }: { clie
   // A build for real data (live transport only, no practice mode) opens the
   // real sign-in at once: no fictional workspace in between.
   const liveOnly = client.canUse('live') && !client.canUse('mock');
+  const resumedClient = useRef<SessionClient|null>(null);
   useEffect(() => {
     if (!liveOnly) return;
     const s = client.getSnapshot();
     if (s.mode === 'fixture') client.selectMode('live');
     if (client.getSnapshot().phase !== 'signed-out' || client.getSnapshot().setup) return;
-    // Local test build: a refresh signs back in (dev-session-keep.ts).
-    const keep = devSessionKeep(typeof window !== 'undefined' ? window.location.hostname : '');
-    if (keep) void client.resume(keep).then(ok => { if (!ok && client.getSnapshot().phase === 'signed-out') void client.discoverSetup(); });
+    // Restore through the local bridge; the backend still validates the session.
+    const keep = localSessionKeep(typeof window !== 'undefined' ? window.location.hostname : '');
+    if (keep && resumedClient.current !== client) { resumedClient.current = client; void client.resume(keep).then(ok => { if (!ok && client.getSnapshot().phase === 'signed-out') void client.discoverSetup(); }); }
     else void client.discoverSetup();
   }, [client, liveOnly, state.mode, state.epoch]);
   // Signed in: the workspace's own status bar carries the mode and the way out.

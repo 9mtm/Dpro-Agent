@@ -60,7 +60,7 @@ jobs:
           node --test --test-timeout=90000 packages/desktop/test/*.test.cjs
       - name: Test backend persistence and security boundaries
         working-directory: packages/backend
-        run: node --import tsx --test test/local-agent-import.test.mjs test/local-import-durable.test.mjs test/local-import-pause.test.mjs test/local-import-store.test.mjs test/dependency-contracts.test.mjs test/cli-invocation.test.mjs test/desktop-args.test.mjs test/safe-logging.test.mjs test/docker-invocation.test.mjs test/extension-resource-path.test.mjs test/regular-file-read.test.mjs test/property-map.test.mjs test/setup-input.test.mjs test/python-process.test.mjs test/sql-binding.test.mjs test/memory-display-page.test.mjs test/local-import-large-dedupe.test.mjs
+        run: node --import tsx --test test/local-agent-import.test.mjs test/local-import-durable.test.mjs test/local-import-pause.test.mjs test/agent-connect-settings.test.mjs test/agent-connect.integration.test.mjs test/local-import-store.test.mjs test/dependency-contracts.test.mjs test/cli-invocation.test.mjs test/desktop-args.test.mjs test/safe-logging.test.mjs test/docker-invocation.test.mjs test/extension-resource-path.test.mjs test/regular-file-read.test.mjs test/property-map.test.mjs test/setup-input.test.mjs test/python-process.test.mjs test/sql-binding.test.mjs test/memory-display-page.test.mjs test/local-import-large-dedupe.test.mjs
       - name: Stage production runtime
         shell: bash
         run: |

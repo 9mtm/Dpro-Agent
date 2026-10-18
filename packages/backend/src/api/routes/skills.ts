@@ -1,3 +1,4 @@
+import { centralSkills, SkillLibraryError } from '../../skills/central-store.js';
 /**
  * Skills API Routes
  * Manage skills installation, settings, and execution
@@ -140,17 +141,11 @@ export async function skillsRoutes(fastify: FastifyInstance) {
           return reply.status(400).send({ success: false, error: 'Invalid content' });
         }
 
-        // TODO: Validate content is valid SKILL.md
-        // TODO: Save to appropriate directory based on source
-        // TODO: Registry will auto-load via file watcher
-
-        return {
-          success: true,
-          message: `Skill "${name}" installed successfully`,
-          source: source,
-        };
+        const result=await centralSkills().installMarkdown(content,name,source);
+        return {success:true,message:result.duplicate?'Skill already installed':`Skill "${name}" saved to central library`,source,skill:result.skill,duplicate:result.duplicate};
       } catch (error: any) {
-        console.error('[Skills API] ❌ Install failed:', error);
+        if(error instanceof SkillLibraryError)return reply.code(error.status).send({success:false,code:error.code});
+        console.error('[Skills API] Install failed');
         // SECURITY: Use centralized error handler to prevent info disclosure (H-09)
         return handleError(reply, error, 'internal', '[Skills] Install failed');
       }

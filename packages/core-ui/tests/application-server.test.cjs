@@ -315,7 +315,7 @@ test('device contract HTTP: exact login body/response, rotation, no token on oth
   });
   const fetcher = async (url, init) => {
     const r = await fetch(s.origin + new URL(url).pathname, { ...init, headers: { ...init.headers, Origin: s.origin } });
-    assert.equal(r.headers.get('set-cookie'), null); assert.equal(r.headers.get('deviceToken'), null);
+    if(new URL(url).pathname.endsWith('/login')) assert.match(r.headers.get('set-cookie'), /HttpOnly/); assert.equal(r.headers.get('deviceToken'), null);
     return { status: r.status, headers: r.headers, url, json: () => r.json() };
   };
   const client = new SessionClient({ live: createSameOriginTransport('http://127.0.0.1:42522', fetcher) }); client.selectMode('live');
@@ -353,4 +353,14 @@ test('auth responses keep the setup name (trimmed, bounded) and nothing else ext
     assert.equal(me.user.full_name, kept);
     assert.deepEqual(Object.keys(me.user).sort(), ['email', 'id', 'role', 'username', ...(kept ? ['full_name'] : [])].sort());
   }
+});
+
+test('remembered session uses HttpOnly cookie, validates bearer upstream and clears on logout', async t => {
+ const s=await setup(t);
+ const login=await s.request('/api/auth/login',{method:'POST',body:{email:'fiction@example.invalid',password:'fiction-only'}});
+ assert.equal(login.status,200);const cookie=login.headers['set-cookie'][0];assert.match(cookie,/HttpOnly/);assert.match(cookie,/SameSite=Strict/);assert.match(cookie,/Max-Age=604800/);
+ const resumed=await s.request('/api/auth/me',{headers:{Authorization:'Bearer dpro-remembered-session',Cookie:cookie.split(';')[0]}});assert.equal(resumed.status,200);assert.equal(s.calls.at(-1).headers.authorization,`Bearer ${token}`);
+ assert.equal((await s.request('/api/auth/me',{headers:{Authorization:'Bearer dpro-remembered-session'}})).status,401);
+ assert.equal((await s.request('/api/auth/me',{headers:{Authorization:'Bearer dpro-remembered-session',Cookie:cookie.split(';')[0],Origin:'http://other.invalid'}})).status,403);
+ const logout=await s.request('/api/auth/logout',{method:'POST',headers:{Authorization:'Bearer dpro-remembered-session',Cookie:cookie.split(';')[0]}});assert.equal(logout.status,200);assert.match(logout.headers['set-cookie'][0],/Max-Age=0/);
 });

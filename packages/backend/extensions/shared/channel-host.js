@@ -2,6 +2,8 @@ import { createHash } from 'node:crypto';
 import { ChannelConnector, TelegramTransport, DiscordTransport, channelInfo } from 'agent-connect-dpro';
 
 const runtimes = new Map();
+export function channelRuntimeState(id) { return runtimes.get(id)?.status() ?? 'restart_required'; }
+export function refreshChannel(id) { void runtimes.get(id)?.refresh().catch(() => {}); }
 export async function stopChannel(id) { await runtimes.get(id)?.stop(); }
 export async function sendChannel(id, destination, text) {
   const runtime = runtimes.get(id);
@@ -29,7 +31,7 @@ export async function registerChannelRoutes(fastify, api, id, options = {}) {
   const enabled = () => db.prepare('SELECT enabled FROM extension_configs WHERE extension_id = ?').get(options.extensionId || id)?.enabled === 1;
   const configured = config => options.isConfigured ? options.isConfigured(config) : Boolean(config.bot_token);
   const values = value => Array.isArray(value) ? value.map(String) : String(value || '').split(',').map(v => v.trim()).filter(Boolean);
-  const active = () => !stopped && enabled();
+  const active = () => !stopped && enabled() && read().enabled !== false;
   const insert = (message, direction, state) => db.prepare(`INSERT OR IGNORE INTO channel_events
     (channel, conversation_id, id, sender_id, sender_name, content, timestamp, direction, state)
     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`).run(id, message.conversationId, message.id,
@@ -97,7 +99,7 @@ export async function registerChannelRoutes(fastify, api, id, options = {}) {
       await connector?.disconnect();
       connector = undefined;
       fingerprint = next;
-      if (!enabled() || !configured(config)) return;
+      if (!active() || !configured(config)) return;
       const createConnector = options.createConnector || ((channelId, transport, hooks) => new ChannelConnector(channelId, transport, hooks));
       const transport = options.createTransport ? options.createTransport(id, config) : id === 'telegram'
         ? new TelegramTransport(config.bot_token) : new DiscordTransport(config.bot_token);
@@ -115,7 +117,7 @@ export async function registerChannelRoutes(fastify, api, id, options = {}) {
     await connector?.disconnect();
     await Promise.allSettled(queues.values());
   }
-  runtimes.set(id, { stop, send });
+  runtimes.set(id, { stop, send, refresh, status: () => stopped ? 'restart_required' : !active() ? 'disabled' : connector?.state || 'disconnected' });
   fastify.addHook('onReady', async () => {
     // Defer network startup so a bad provider credential does not prevent HTTP startup.
     timer = setInterval(() => { void refresh().catch(() => {}); }, 5000);
@@ -131,7 +133,7 @@ export async function registerChannelRoutes(fastify, api, id, options = {}) {
     const stats = db.prepare(`SELECT COUNT(*) AS total, SUM(direction = 'incoming') AS incoming,
       SUM(direction = 'outgoing') AS outgoing, SUM(state = 'failed') AS failed FROM channel_events WHERE channel = ?`).get(id);
     return { configured: configured(read()), connected: active() && connector?.state === 'connected',
-      state: connector?.state || 'disconnected', enabled: enabled(),
+      state: connector?.state || 'disconnected', enabled: active(),
       stats: { total: stats.total || 0, totalMessages: stats.total || 0, incoming: stats.incoming || 0, outgoing: stats.outgoing || 0, failed: stats.failed || 0 } };
   });
   fastify.get('/config', async () => {

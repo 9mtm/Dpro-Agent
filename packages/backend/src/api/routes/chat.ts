@@ -1,3 +1,4 @@
+import { agentSkillsPrompt } from '../../skills/central-store.js';
 import { safeConsole } from '../../services/safe-error-log.js';
 /**
  * Chat API Routes
@@ -374,6 +375,7 @@ export async function executeChatTurn(reply: FastifyReply, input: ChatTurnInput)
 
     // Build complete context: Base Prompt + Personality settings + Agent Memory File + Session Memory
     let resolvedSystemPrompt = baseSystemPrompt || '';
+    if (agentConfig?.id && agentConfig.id !== 'small-local-agent') resolvedSystemPrompt += await agentSkillsPrompt(agentConfig.id);
 
     if (behavior) {
       resolvedSystemPrompt = resolvedSystemPrompt

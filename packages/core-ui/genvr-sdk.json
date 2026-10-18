@@ -1,0 +1,8 @@
+{
+  "package": "3d-world-sdk",
+  "version": "0.3.0-preview.1",
+  "distribution": "https://github.com/Dpro-at/genvr-world-sdk/releases/download/v0.3.0-preview.1/3d-world-sdk-0.3.0-preview.1.tgz",
+  "sha256": "1c5a1e7e0f740c53f513896e41660784f468907bfbd2c35e8454dc55d9d086fd",
+  "license": "AGPL-3.0-only",
+  "prepare": "node scripts/prepare-genvr.cjs /absolute/path/to/3d-world-sdk-0.3.0-preview.1.tgz"
+}

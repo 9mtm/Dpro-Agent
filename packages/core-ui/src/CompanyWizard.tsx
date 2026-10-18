@@ -1,8 +1,9 @@
 import { useState, useSyncExternalStore } from 'react';
 import { allPresets, allRoles, presetLabel, roleLabel } from './hire';
 import type { Preset, Role } from './hire';
-import { shareRoles, sharesTotal } from './company';
-import type { BatchProgress, CompanyController, PlannedHire, Share } from './company';
+import { shareRoles, sharesTotal, shareSpecialties } from './company';
+import { validSpecialties } from './hire-contract.js';
+import type { Specialty, SpecialtyChoice, BatchProgress, CompanyController, PlannedHire, Share } from './company';
 import { rolesSummary } from './team-split';
 import type { TeamRole } from './team-split';
 
@@ -148,6 +149,7 @@ function ShareReview({ shares, busy, controller }: { shares: readonly Share[]; b
             </select>
           </label>)}
         </div>
+        <SpecialtyEditor share={x} busy={busy} controller={controller}/>
         <details className="company-people"><summary>Show the {x.count} {x.count === 1 ? 'agent' : 'agents'}</summary>
           <ul>{teamRoleOrder.filter(r => roles[r] > 0).map(r => <li key={r}>{roles[r]} × {x.titles[r]} · {presetLabel[x.presets[r]]}</li>)}</ul>
         </details>
@@ -156,9 +158,20 @@ function ShareReview({ shares, busy, controller }: { shares: readonly Share[]; b
     <p className="company-total-line"><strong>{total}</strong> {total === 1 ? 'agent' : 'agents'} in total</p>
     <div className="hire-actions">
       <button type="button" disabled={busy} onClick={() => controller.back()}>Back</button>
-      <button type="button" className="primary" disabled={busy || !total} onClick={() => void controller.hireBatch()}>Hire {total} {total === 1 ? 'agent' : 'agents'}</button>
+      <button type="button" className="primary" disabled={busy || !total || shares.some(x=>!validSpecialties(x.specialties,x.count))} onClick={() => void controller.hireBatch()}>Hire {total} {total === 1 ? 'agent' : 'agents'}</button>
     </div>
   </div>;
+}
+
+function SpecialtyEditor({share,busy,controller}:{share:Share;busy:boolean;controller:CompanyController}){
+ const [choice,setChoice]=useState('');
+ const rows=shareSpecialties(share),all=controller.getSnapshot().catalogue?.specialties??[],choices=all.filter(s=>s.department===share.department),allocated=rows.reduce((sum,row)=>sum+row.count,0),valid=validSpecialties(rows,share.count);
+ const update=(index:number,patch:Partial<Specialty>)=>controller.editSpecialties(share.department,rows.map((row,i)=>i===index?{...row,...patch}:row));
+ const add=(option?:SpecialtyChoice)=>{if(rows.length>=50)return;controller.editSpecialties(share.department,[...rows,{name:option?.name??'',description:option?.description??'',count:0}]);setChoice('');};
+ return <section className="company-specialties" aria-label={`Specialties in ${share.departmentLabel}`}><h5>Specialties</h5><p className="fine-print" role="status">{allocated} of {share.count} allocated{!valid?' · Review names and counts before hiring.':''}</p>
+ <ul className="specialty-rows">{rows.map((row,index)=><li key={index}><div className="specialty-fields"><label>Specialty name<input aria-label={`Specialty ${index+1} name in ${share.departmentLabel}`} value={row.name} maxLength={80} disabled={busy} onChange={e=>update(index,{name:e.target.value})}/></label><label>Agents<input type="number" min={0} max={share.count} step={1} aria-label={`Specialty ${index+1} count in ${share.departmentLabel}`} value={row.count} disabled={busy} onChange={e=>{const count=Number(e.target.value);if(Number.isSafeInteger(count)&&count>=0&&count<=1000)update(index,{count});}}/></label><button type="button" disabled={busy} aria-label={`Remove specialty ${index+1} in ${share.departmentLabel}`} onClick={()=>controller.editSpecialties(share.department,rows.filter((_,i)=>i!==index))}>Remove</button></div><label>Description<textarea aria-label={`Specialty ${index+1} description in ${share.departmentLabel}`} value={row.description} maxLength={1800} rows={2} disabled={busy} onChange={e=>update(index,{description:e.target.value})}/></label></li>)}</ul>
+ <div className="specialty-add"><label>Suggested specialty<select aria-label={`Suggested specialty in ${share.departmentLabel}`} value={choice} disabled={busy||rows.length>=50} onChange={e=>setChoice(e.target.value)}><option value="">Choose a specialty</option>{(choices.length?choices:all).filter(option=>!rows.some(row=>row.name.trim().toLowerCase()===option.name.toLowerCase())).map(option=><option key={option.department+option.name} value={option.name}>{option.name}</option>)}</select></label><button type="button" disabled={busy||!choice||rows.length>=50} onClick={()=>add(all.find(option=>option.name===choice))}>Add specialty</button><button type="button" disabled={busy||rows.length>=50} onClick={()=>add()}>Add custom specialty</button></div><p className="fine-print">Zero-count specialties are not hired. Counts must match this department. Specialties do not grant skills or tools.</p>
+ </section>;
 }
 
 /** Progress of a batch hire; Continue is always safe (nobody is hired twice). */

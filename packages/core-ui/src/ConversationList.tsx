@@ -1,3 +1,4 @@
+import {ProjectFolderPicker} from './ProjectFolderPicker';
 import { useEffect, useState, useSyncExternalStore } from 'react';
 import type { ConversationsController, Conversation } from './conversations';
 import type { ChatSearchController, ChatSearchState } from './chat-search';
@@ -99,6 +100,7 @@ function Row({ c, active, running, onOpen, controller }: { c: Conversation; acti
 function ProjectPicker({ controller }: { controller: ConversationsController }) {
   const s = useSyncExternalStore(controller.subscribe, controller.getSnapshot, controller.getSnapshot);
   const [adding, setAdding] = useState(false);
+  const [picking,setPicking]=useState(false);
   const [editing, setEditing] = useState<string | null>(null);
   const [confirmDelete, setConfirmDelete] = useState(false);
   const [form, setForm] = useState({ name: '', folder: '', repoUrl: '' });
@@ -111,11 +113,14 @@ function ProjectPicker({ controller }: { controller: ConversationsController }) 
     if (err) setError(err); else close();
   }}>
     <input autoFocus placeholder="Project name" aria-label="Project name" value={form.name} maxLength={80} onChange={e => setForm({ ...form, name: e.target.value })}/>
-    <input placeholder="Folder, e.g. ~/Projects/app" aria-label="Project folder" value={form.folder} onChange={e => setForm({ ...form, folder: e.target.value })} dir="ltr"/>
+    <input readOnly placeholder="Choose a working folder" aria-label="Project folder" value={form.folder} onChange={e => setForm({ ...form, folder: e.target.value })} dir="ltr"/>
+    <button type="button" className="link-button" disabled={busy} onClick={()=>setPicking(true)}>{form.folder?'Change folder…':'Choose folder…'}</button>
+    {picking&&<ProjectFolderPicker controller={controller} onClose={()=>setPicking(false)} onSelect={folder=>{setForm({...form,folder});setPicking(false);}}/>}
+    <p className="fine-print">Choose the folder this project works in. For a conversation without a folder, use General chat.</p>
     <input placeholder="Git repo (optional)" aria-label="Git repository" value={form.repoUrl} onChange={e => setForm({ ...form, repoUrl: e.target.value })} dir="ltr"/>
     {error && <p className="project-error" role="alert">{error}</p>}
     <div className="project-form-actions">
-      <button type="submit" className="link-button" disabled={busy || !form.name.trim()}>{editing ? 'Save' : 'Create'}</button>
+      <button type="submit" className="link-button" disabled={busy || !form.name.trim() || (!editing && !form.folder.trim())}>{editing ? 'Save' : 'Create'}</button>
       <button type="button" className="link-button" onClick={close}>Cancel</button>
       {editing && (confirmDelete
         ? <span className="project-delete">Delete the project? Its chats stay. <button type="button" className="link-button danger" disabled={busy} onClick={async () => { setBusy(true); await controller.removeProject(editing); setBusy(false); close(); }}>Yes, delete</button></span>
@@ -129,6 +134,7 @@ function ProjectPicker({ controller }: { controller: ConversationsController }) 
       {s.projects.map(p => <option key={p.id} value={p.id}>{p.name}</option>)}
       <option value="__new">+ New project…</option>
     </select>
+    <button type="button" className="link-button project-general" title="Start a general chat without a project folder" aria-label="New general chat" onClick={()=>{ controller.filterProject(''); controller.newChat(); }}>General chat</button>
     {current && <button type="button" className="row-tool" aria-label={`Edit project ${current.name}`} title="Rename, change folder or repo, or delete"
       onClick={() => { setForm({ name: current.name, folder: current.folder ?? '', repoUrl: current.repoUrl ?? '' }); setEditing(current.id); }}><UiIcon name="pencil" size={12}/></button>}
   </div>;

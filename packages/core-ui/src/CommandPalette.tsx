@@ -1,9 +1,10 @@
+import {Icon} from './icons';
 import { useEffect, useMemo, useRef, useState, useSyncExternalStore } from 'react';
 import type { ReactNode } from 'react';
 import type { ChatSearchController, ChatSearchState } from './chat-search';
 import { HitSnippet, resultTitle } from './ChatSearch';
 
-export type Command = { id: string; label: string; group: string; hint?: string; detail?: ReactNode; run: () => void };
+export type Command = { id: string; label: string; group: string; hint?: string; icon?: ReactNode; keywords?: string; detail?: ReactNode; run: () => void };
 /** CHAT-PRO-02 D: the ⌘K box also searches inside the chats. */
 export type PaletteSearch = { controller: ChatSearchController; onOpen: (conversationId: string, messageId: string | null) => void };
 
@@ -20,10 +21,10 @@ export function CommandPalette({ open, commands, onClose, search }: { open: bool
   const found = useSyncExternalStore(search ? search.controller.subscribe : noSearch, search ? search.controller.getSnapshot : idleSearch, search ? search.controller.getSnapshot : idleSearch);
   const list = useMemo(() => {
     const q = query.trim().toLowerCase();
-    const matched = commands.filter(c => !q || c.label.toLowerCase().includes(q) || c.group.toLowerCase().includes(q));
+    const matched = commands.filter(c => !q || c.label.toLowerCase().includes(q) || c.group.toLowerCase().includes(q) || c.keywords?.toLowerCase().includes(q));
     if (!search || found.phase !== 'ready' || found.query !== query.trim()) return matched;
     const hits: Command[] = found.results.flatMap(r => r.hits.filter(h => h.kind !== 'title').map(h => ({
-      id: `hit-${h.messageId}`, group: 'In conversations', label: resultTitle(r), detail: <HitSnippet hit={h}/>,
+      id: `hit-${h.messageId}`, icon:<Icon name="message-circle"/>, group: 'In conversations', label: resultTitle(r), detail: <HitSnippet hit={h}/>,
       run: () => search.onOpen(r.conversationId, h.messageId),
     }))).slice(0, PALETTE_HITS);
     return [...matched, ...hits];
@@ -50,7 +51,7 @@ export function CommandPalette({ open, commands, onClose, search }: { open: bool
           return <li key={c.id} role="presentation">
             {heading && <p className="cmdk-group">{heading}</p>}
             <button type="button" role="option" aria-selected={i === index} className="cmdk-item" data-detail={c.detail ? true : undefined} onMouseEnter={() => setIndex(i)} onClick={() => run(c)}>
-              {c.detail ? <span className="cmdk-hit"><span dir="auto">{c.label}</span>{c.detail}</span> : <span>{c.label}</span>}{c.hint && <kbd>{c.hint}</kbd>}
+              {c.icon&&<span className="cmdk-icon" aria-hidden="true">{c.icon}</span>}{c.detail ? <span className="cmdk-hit"><span dir="auto">{c.label}</span>{c.detail}</span> : <span>{c.label}</span>}{c.hint && <kbd>{c.hint}</kbd>}
             </button>
           </li>;
         })}

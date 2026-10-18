@@ -231,3 +231,16 @@ test('the first step offers agent numbers up to 500 or a custom number, never "p
   assert.equal(w.getSnapshot().step, 'departments');
   assert.doesNotMatch(markup(w), /people|person/i);
 });
+
+
+test('specialty editing blocks unbalanced allocations and sends reviewed names/counts/descriptions',async t=>{
+ const {w,calls}=await fixture(t);await w.loadCatalogue();w.chooseTotal(2);w.toggleDepartment('development');await w.propose();
+ w.editSpecialties('development',[{name:'Server administrator',count:1,description:'Operate fictional servers.'}]);assert.match(markup(w),/1 of 2 allocated/);await w.hireBatch();assert.equal(batchCreates(calls).length,0);assert.match(w.getSnapshot().notice,/Specialty counts/);
+ const rows=[{name:'Server administrator',count:1,description:'Operate fictional servers.'},{name:'Custom data guardian',count:1,description:'Review fictional access.'}];w.editSpecialties('development',rows);assert.match(markup(w),/Add custom specialty/);assert.match(markup(w),/Custom data guardian/);await w.hireBatch();assert.deepEqual(batchCreates(calls)[0].body.departments[0].specialties,rows);
+});
+
+test('specialty contract rejects privilege injection, duplicate names and mismatched totals',()=>{
+ const make=specialties=>({id:'specialty-test-id',departments:[{department:'data',count:2,specialties}]});
+ const valid=[{name:'Data engineer',count:1,description:'Build pipelines.'},{name:'Data security specialist',count:1,description:'Review access.'}];
+ for(const allow of [allowedRequest,allowed]){assert.equal(allow('POST','/api/onboarding/team-batches',make(valid)),true);for(const rows of [[valid[0]],[{...valid[0],count:3}],[valid[0],{...valid[1],name:'data engineer'}],[{...valid[0],count:2,tools:['all']}]] )assert.equal(allow('POST','/api/onboarding/team-batches',make(rows)),false);}
+});

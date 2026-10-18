@@ -61,11 +61,13 @@ export function withAttachments(message: string, files: readonly { name: string;
   return [message || 'Please look at the attached files.', ...blocks].join('\n\n');
 }
 
-export class ConversationsController {
-  #state: ConversationsState = Object.freeze({
+const emptyState = (): ConversationsState => Object.freeze({
     access: 'ready', listPhase: 'idle', conversations: [], activeId: null, threadPhase: 'empty', turns: [], draft: '', agentId: '', replyAgent: '', agents: [], models: [], model: '', projects: [], projectFilter: '', git: null,
     runId: null, starting: false, stopping: false, reconnecting: false, queue: [], queuePaused: false, attachments: [], focus: null,
-  });
+});
+
+export class ConversationsController {
+  #state: ConversationsState = emptyState();
   #listeners = new Set<() => void>();
   #unsubscribe: () => void;
   #epoch: number;
@@ -86,7 +88,10 @@ export class ConversationsController {
   private publish(patch: Partial<ConversationsState>) { if (this.#disposed) return; this.#state = Object.freeze({ ...this.#state, ...patch }); this.#listeners.forEach(fn => fn()); }
   private clear() {
     this.#follow?.abort();
-    this.publish({ access: 'denied', conversations: [], activeId: null, turns: [], draft: '', runId: null, queue: [], threadPhase: 'empty', listPhase: 'idle', notice: undefined });
+    this.#openSeq++;
+    this.#history = [];
+    this.#modelsAt = 0;
+    this.publish({ ...emptyState(), access: 'denied', notice: undefined });
   }
   dispose() { this.#follow?.abort(); this.#unsubscribe(); this.#disposed = true; this.#listeners.clear(); }
 
@@ -118,8 +123,9 @@ export class ConversationsController {
   recall(): string | undefined { return this.#history.at(-1); }
 
   private async call(method: 'GET' | 'POST' | 'PUT' | 'DELETE', path: string, body?: unknown) {
+    if (!this.live()) return { status: 403, body: null };
     const r = await this.client.request(body === undefined ? { method, path } as never : { method, path, body } as never);
-    return r;
+    return this.live() ? r : { status: 403, body: null };
   }
 
   async load() {
@@ -145,7 +151,7 @@ export class ConversationsController {
    * started later shows up when the picker is opened.
    */
   async loadModels(refresh = false) {
-    if (this.client.getSnapshot().user?.role !== 'owner' || (this.#state.models.length && !refresh)) return;
+    if (!this.live() || this.client.getSnapshot().user?.role !== 'owner' || (this.#state.models.length && !refresh)) return;
     if (refresh && Date.now() - this.#modelsAt < 5000) return;
     this.#modelsAt = Date.now();
     try {
@@ -157,7 +163,7 @@ export class ConversationsController {
     } catch { /* the picker stays as it was */ }
   }
   async loadProjects() {
-    if (this.client.getSnapshot().user?.role !== 'owner') return;
+    if (!this.live() || this.client.getSnapshot().user?.role !== 'owner') return;
     try {
       const r = await this.call('GET', '/api/chat/projects');
       if (this.live() && r.status === 200 && record(r.body) && Array.isArray(r.body.projects)) this.publish({ projects: r.body.projects as Project[] });
@@ -165,12 +171,17 @@ export class ConversationsController {
   }
   /** Shows only one project's conversations ('' = all); a new chat goes into it. */
   filterProject(id: string) { if (id === '' || this.#state.projects.some(p => p.id === id)) this.publish({ projectFilter: id }); }
+  async browseProjectFolders(path?:string):Promise<{path:string;parent:string|null;selectable:boolean;truncated:boolean;entries:{name:string;path:string}[]}>{
+    const r=await this.call('POST','/api/chat/project-folders',path?{path}:{});
+    if(r.status!==200)throw Error('Folder unavailable');return r.body as never;
+  }
   /** Creates a project; resolves with an error message for the form, or null on success. */
   async createProject(input: { name: string; folder: string; repoUrl: string }): Promise<string | null> {
     const body: Record<string, string> = { name: input.name.trim() };
     if (input.folder.trim()) body.folder = input.folder.trim();
     if (input.repoUrl.trim()) body.repoUrl = input.repoUrl.trim();
     if (!body.name) return 'Give the project a name.';
+    if (!body.folder) return 'Choose a working folder for this project, or use General chat.';
     try {
       const r = await this.call('POST', '/api/chat/projects', body);
       if ((r.status === 201 || r.status === 200) && record(r.body) && record(r.body.project)) {
@@ -228,7 +239,7 @@ export class ConversationsController {
   selectModel(model: string) { if (model === '' || this.#state.models.some(m => m.id === model)) this.publish({ model }); }
 
   async loadAgents() {
-    if (this.client.getSnapshot().user?.role !== 'owner' || this.#state.agents.length) return;
+    if (!this.live() || this.client.getSnapshot().user?.role !== 'owner' || this.#state.agents.length) return;
     try {
       const r = await this.client.request({ method: 'GET', path: '/api/agents' });
       if (!this.live() || r.status !== 200 || !record(r.body) || !Array.isArray(r.body.agents)) return;
@@ -423,6 +434,7 @@ export class ConversationsController {
 
   /** CHAT-PRO-02 F: saves the conversation as a Markdown file (a failure shows as the notice). */
   async exportMarkdown(id: string, tools = false): Promise<ExportResult> {
+    if (!this.live()) return { ok: false, message: 'Sign in again to export this conversation.' };
     const r = await exportConversation(this.client, id, tools);
     if (!r.ok && this.live()) this.publish({ notice: r.message });
     return r;

@@ -1,3 +1,9 @@
+import {approvalRoute,allowedApproval,approvalResponse} from './approvals-contract.js';
+import {allowedTemplates,templatePath,templatesResponse} from './specialty-contract.js';
+import { allowedMcpImport, mcpImportPath, mcpImportResponse } from './mcp-import-contract.js';
+import { allowedSkillLibrary, skillLibraryPath, skillLibraryResponse } from './skill-library-contract.js';
+import { allowedGenVR, genvrRoute, genvrResponse, GENVR_BYTES } from './genvr-contract.js';
+import { allowedChannel, channelRoute, channelResponse } from './agent-connect-contract.js';
 import { allowedPersonality, personalityRoute, personalityResponse } from './personality-contract.js';
 import { allowedBoard, boardRoute, boardResponse, BOARDS_PATH } from './board-contract.js';
 import { allowedAgentCard, cardRoute, agentCardResponse } from './agent-card-contract.js';
@@ -55,7 +61,11 @@ function user(value: unknown): User {
 }
 // Reject before URL normalization. No generic URL, header, key or mutation escape hatch.
 export function allowedRequest(method: string, path: string, body?: unknown): boolean {
-  if (allowedPersonality(method, path, body) || allowedHire(method, path, body) || allowedBoard(method, path, body) || allowedConversation(method, path, body) || allowedAgentCard(method, path, body) || allowedTerminal(method, path, body) || allowedConnector(method, path, body) || allowedLocalImport(method, path, body) || allowedChatBoard(method, path, body) || allowedChatMemory(method, path, body) || allowedChatSearch(method, path, body) || allowedChatExport(method, path, body) || allowedChatSecrets(method, path, body)) return true;
+  if (approvalRoute(path)) return allowedApproval(method,path,body);
+  if (mcpImportPath(path)) return allowedMcpImport(method,path,body);
+  if (templatePath(path)) return allowedTemplates(method,path,body);
+  if (skillLibraryPath(path)) return allowedSkillLibrary(method,path,body);
+  if (allowedGenVR(method, path, body) || allowedChannel(method, path, body) || allowedPersonality(method, path, body) || allowedHire(method, path, body) || allowedBoard(method, path, body) || allowedConversation(method, path, body) || allowedAgentCard(method, path, body) || allowedTerminal(method, path, body) || allowedConnector(method, path, body) || allowedLocalImport(method, path, body) || allowedChatBoard(method, path, body) || allowedChatMemory(method, path, body) || allowedChatSearch(method, path, body) || allowedChatExport(method, path, body) || allowedChatSecrets(method, path, body)) return true;
   const agentId = /^\/api\/agents\/([^/?#]+)$/.exec(path)?.[1];
   if (method === 'PUT') return validAgentId(agentId) && record(body) && Object.keys(body).length === 2 && Object.keys(body).every(k => k === 'name' || k === 'expectedVersion') && typeof body.name === 'string' && validatedDisplayName(body.name) === body.name && validVersion(body.expectedVersion);
   if (method === 'GET' && body === undefined && (path === '/api/agents' || validAgentId(agentId))) return true;
@@ -110,6 +120,12 @@ function projectResponse(path: string, response: WireResponse): WireResponse {
   if (conversationRoute(path)) return { status: response.status, body: conversationResponse(path, response.status, response.body) };
   if (cardRoute(path)) return { status: response.status, body: agentCardResponse(path, response.status, response.body) };
   if (terminalRoute(path)) return { status: response.status, body: terminalResponse(path, response.status, response.body) };
+  if (approvalRoute(path)) return {status:response.status,body:approvalResponse(path,response.status,response.body)};
+  if (mcpImportPath(path)) return { status: response.status, body: mcpImportResponse(path,response.status,response.body) };
+  if (templatePath(path)) return {status:response.status,body:templatesResponse(path,response.status,response.body)};
+  if (skillLibraryPath(path)) return { status: response.status, body: skillLibraryResponse(path,response.status,response.body) };
+  if (genvrRoute(path)) return { status: response.status, body: genvrResponse(path, response.status, response.body) };
+  if (channelRoute(path)) return { status: response.status, body: channelResponse(path, response.status, response.body) };
   if (connectorRoute(path)) return { status: response.status, body: connectorResponse(path, response.status, response.body) };
   if (localImportRoute(path)) return { status: response.status, body: localImportResponse(path, response.status, response.body) };
   if (chatBoardRoute(path)) return { status: response.status, body: chatBoardResponse(path, response.status, response.body) };
@@ -156,7 +172,7 @@ export function createSameOriginTransport(origin: string, fetcher: typeof fetch)
       const response = await fetcher(origin + request.path, {
         method: request.method, body: request.body === undefined ? undefined : JSON.stringify(request.body),
         headers: { Accept: chat || runEvents ? 'text/event-stream' : 'application/json', ...(request.body === undefined ? {} : { 'Content-Type': 'application/json' }), ...request.headers },
-        signal: request.signal, credentials: 'omit', mode: 'same-origin', redirect: 'error', cache: 'no-store', referrerPolicy: 'no-referrer',
+        signal: request.signal, credentials: request.path === '/api/auth/login' || request.headers.Authorization === 'Bearer dpro-remembered-session' ? 'same-origin' : 'omit', mode: 'same-origin', redirect: 'error', cache: 'no-store', referrerPolicy: 'no-referrer',
       });
       if (response.redirected || response.type === 'opaqueredirect' || (response.url && response.url !== origin + request.path) || (response.status >= 300 && response.status < 400)) throw new SessionFailure('blocked');
       if (runEvents && response.status === 200) {
@@ -360,7 +376,7 @@ export class SessionClient {
     if (request.path === '/api/setup/status' || request.path === OWNER_SETUP_PATH || request.path === '/api/chat' || request.path === '/api/auth/login' || request.path === '/api/auth/logout' || Object.keys(request).some(k => !['method', 'path', 'body'].includes(k))) throw new SessionFailure('blocked');
     if ((conversationRoute(request.path) || chatSearchRoute(request.path) || chatExportRoute(request.path) || chatSecretsRoute(request.path)) && this.#state.user?.role === 'guest') throw new SessionFailure('blocked');
     if (request.path === CLEANUP_PATH && this.#state.user?.role !== 'owner') throw new SessionFailure('blocked');
-    if ((connectorRoute(request.path) || localImportRoute(request.path) || chatBoardRoute(request.path) || chatMemoryRoute(request.path)) && this.#state.user?.role !== 'owner') throw new SessionFailure('blocked');
+    if ((request.path === '/api/chat/project-folders' || approvalRoute(request.path) || templatePath(request.path) || mcpImportPath(request.path) || channelRoute(request.path) || connectorRoute(request.path) || localImportRoute(request.path) || chatBoardRoute(request.path) || chatMemoryRoute(request.path)) && this.#state.user?.role !== 'owner') throw new SessionFailure('blocked');
     if (terminalRoute(request.path) && (this.#state.user?.role !== 'owner' || terminalPath(request.path)?.kind === 'stream')) throw new SessionFailure('blocked');
     if (request.method === 'PUT' && !conversationRoute(request.path) && this.#state.user?.role !== 'owner') throw new SessionFailure('blocked');
     if (request.method === 'POST' && request.path.startsWith('/api/memory/') && this.#state.user?.role !== 'owner') throw new SessionFailure('blocked');

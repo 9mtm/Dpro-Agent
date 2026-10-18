@@ -117,12 +117,17 @@ export function validDistributionBody(b) {
     && keys.reduce((a, k) => a + b.counts[k], 0) <= MAX_TOTAL;
 }
 
+export function validSpecialties(rows,count){
+ if(rows===undefined)return true;
+ return Array.isArray(rows)&&rows.length>=1&&rows.length<=50&&rows.every(s=>record(s)&&onlyKeys(s,['name','count','description'])&&typeof s.name==='string'&&s.name.normalize('NFKC').trim().length>0&&s.name.length<=80&&!/[\u0000-\u001f\u007f\u202a-\u202e\u2066-\u2069]/.test(s.name)&&typeof s.description==='string'&&s.description.length<=1800&&!/[\u0000\u202a-\u202e\u2066-\u2069]/.test(s.description)&&Number.isSafeInteger(s.count)&&s.count>=0&&s.count<=count)&&new Set(rows.map(s=>s.name.normalize('NFKC').trim().toLowerCase())).size===rows.length&&rows.reduce((sum,s)=>sum+s.count,0)===count;
+}
 /** POST team-batches: a reviewed plan, one entry per department, persona per role optional. */
 export function validBatchBody(b) {
   if (!record(b) || !onlyKeys(b, ['id', 'language', 'departments']) || !batchIdOk(b.id) || (b.language !== undefined && !nameLanguages.includes(b.language))) return false;
   const d = b.departments;
   if (!Array.isArray(d) || d.length < 1 || d.length > 12) return false;
-  const ok = d.every(x => record(x) && onlyKeys(x, ['department', 'count', 'presets']) && department(x.department) && headcount(x.count)
+  const ok = d.every(x => record(x) && onlyKeys(x, ['department', 'count', 'presets', 'specialties']) && department(x.department) && headcount(x.count)
+    && validSpecialties(x.specialties,x.count)
     && (x.presets === undefined || (record(x.presets) && Object.entries(x.presets).every(([r, p]) => teamRoles.includes(r) && presets.includes(p)))));
   return ok && new Set(d.map(x => x.department)).size === d.length && d.reduce((a, x) => a + x.count, 0) <= MAX_TOTAL;
 }
@@ -203,6 +208,7 @@ function catalogueResult(status, body) {
   if (!record(body) || !Array.isArray(body.sizes) || !Array.isArray(body.departments) || body.departments.length > 100) fail();
   return {
     ...(headcount(body.maxTotal) ? { maxTotal: body.maxTotal } : {}),
+    ...(Array.isArray(body.specialties)?{specialties:body.specialties.filter(s=>record(s)&&department(s.department)&&typeof s.name==='string'&&s.name.length<=80&&typeof s.description==='string'&&s.description.length<=1800).slice(0,250).map(s=>({department:s.department,name:s.name,description:s.description}))}:{}),
     sizes: body.sizes.filter(x => record(x) && companySizes.includes(x.id)).map(x => ({ id: x.id, label: clip(x.label, 60) })),
     departments: body.departments.filter(x => record(x) && department(x.id)).map(x => ({ id: x.id, label: clip(x.label, 60), summary: clip(x.summary, 200) })),
   };

@@ -1,0 +1,3 @@
+CREATE TABLE IF NOT EXISTS specialty_templates (id TEXT PRIMARY KEY, name TEXT NOT NULL, department TEXT NOT NULL, description TEXT NOT NULL, revision INTEGER NOT NULL, content_hash TEXT NOT NULL, config_json TEXT NOT NULL);
+CREATE TABLE IF NOT EXISTS agent_template_snapshots (agent_id TEXT PRIMARY KEY REFERENCES agents_config(id) ON DELETE CASCADE, template_id TEXT NOT NULL, template_revision INTEGER NOT NULL, content_hash TEXT NOT NULL, config_json TEXT NOT NULL, primary_skill_id TEXT);
+CREATE TABLE IF NOT EXISTS template_hire_requests (owner_id TEXT NOT NULL, request_id TEXT NOT NULL, fingerprint TEXT NOT NULL, agent_id TEXT NOT NULL REFERENCES agents_config(id), PRIMARY KEY(owner_id,request_id));

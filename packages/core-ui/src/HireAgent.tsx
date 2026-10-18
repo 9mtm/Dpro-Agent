@@ -1,4 +1,5 @@
-import { useSyncExternalStore } from 'react';
+import {SpecialtyLibrary} from './SpecialtyLibrary';
+import { useState, useSyncExternalStore } from 'react';
 import {
   allCategories, allDialects, allDrawerKinds, allPresets, allRoles, allTraits, categoryLabel, dialectLabel, drawerKindLabel, isRisky, memoryTool, modeLabel,
   presetHelp, presetLabel, roleHelp, roleLabel, traitLabel,
@@ -16,6 +17,7 @@ const phaseLabel: Record<string, string> = {
 
 /** Hire an agent: role and persona become one create request; memory and permissions are one save. */
 export function HireAgent({ controller, onClose }: { controller: HireController; onClose: () => void }) {
+  const [templateMode,setTemplateMode]=useState(false);
   const s = useSyncExternalStore(controller.subscribe, controller.getSnapshot, controller.getSnapshot);
   const busy = ['creating', 'loading', 'saving'].includes(s.phase);
   const locked = !s.owner || busy || !!s.agent;
@@ -36,7 +38,9 @@ export function HireAgent({ controller, onClose }: { controller: HireController;
     </ol>
     <p role="status">{s.notice ?? (s.agent && s.phase === 'editing' ? 'Hired — choose memory and permissions, then save' : phaseLabel[s.phase] ?? s.phase)}</p>
 
-    {s.step === 'role' && <form className="hire-form" onSubmit={e => { e.preventDefault(); controller.go('persona'); }}>
+    {s.step==='role'&&s.owner&&<div className="actions"><button type="button" disabled={locked} aria-pressed={!templateMode} onClick={()=>setTemplateMode(false)}>Configure manually</button><button type="button" disabled={locked} aria-pressed={templateMode} onClick={()=>setTemplateMode(true)}>Choose specialty template</button></div>}
+    {s.step==='role'&&templateMode&&<SpecialtyLibrary client={controller.client} hire onHired={onClose}/>}
+    {s.step === 'role' && !templateMode && <form className="hire-form" onSubmit={e => { e.preventDefault(); controller.go('persona'); }}>
       <label>Name<input value={d.name} maxLength={80} disabled={locked} placeholder="Leave empty for a generated name" onChange={e => controller.edit({ name: e.target.value })}/></label>
       <fieldset className="hire-choices" disabled={locked}><legend>Role in the team</legend>
         {allRoles.map(r => <label key={r} className="hire-choice">

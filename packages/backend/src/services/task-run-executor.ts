@@ -1,3 +1,4 @@
+import { agentSkillsPrompt } from '../skills/central-store.js';
 /**
  * Durable task-run executor + startup recovery (CORE-08, R2).
  *
@@ -347,7 +348,7 @@ export async function executeTaskRun(runId: string, owner: string = WORKER_ID): 
         console.warn(`[TaskRun] ⚠️  ${msg}`);
         return await fail(msg, agent.id);
       }
-      systemPrompt = agent.system_prompt ?? `You are ${agent.name}, an AI agent.`;
+      systemPrompt = (agent.system_prompt ?? `You are ${agent.name}, an AI agent.`) + await agentSkillsPrompt(agent.id);
       claudeClient = new ClaudeClient(apiKey, agent.model);
       driver = claudeDriver(claudeClient, agent, systemPrompt, registry.getToolsForAPI());
     }

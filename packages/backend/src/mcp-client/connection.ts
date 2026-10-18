@@ -113,6 +113,7 @@ function connectionKey(row: McpServerRow, secrets: McpSecrets): string {
 }
 
 async function openClient(row: McpServerRow, secrets: McpSecrets): Promise<Client> {
+  const startupTimeout = row.startup_timeout_ms ?? row.timeout_ms;
   const client = new Client(CLIENT_INFO, { capabilities: {} });
   if (row.transport === 'stdio') {
     if (!isExecToolsEnabled()) throw new McpCallError('not_allowed', 'stdio MCP servers need AGENT_EXEC_TOOLS=true in the server environment');
@@ -121,7 +122,7 @@ async function openClient(row: McpServerRow, secrets: McpSecrets): Promise<Clien
     const env = minimalChildEnv(secrets.env) as Record<string, string>;
     const transport = new StdioClientTransport({ command: row.command!, args: parseList(row.args), env, cwd, stderr: 'pipe' });
     transport.stderr?.on('data', () => { /* drained, not logged: may hold secrets */ });
-    await withTimeout(client.connect(transport, { timeout: row.timeout_ms }), row.timeout_ms, () => { void transport.close().catch(() => {}); });
+    await withTimeout(client.connect(transport, { timeout: startupTimeout }), startupTimeout, () => { void transport.close().catch(() => {}); });
     return client;
   }
   const allowRemote = row.allow_remote === 1;
@@ -135,7 +136,7 @@ async function openClient(row: McpServerRow, secrets: McpSecrets): Promise<Clien
       requestInit: { headers },
       eventSourceInit: { fetch: (u: string | URL, init?: RequestInit) => guarded(u, { ...init, headers: { ...(init?.headers as any), ...headers } }) } as any,
     });
-  await withTimeout(client.connect(transport, { timeout: row.timeout_ms }), row.timeout_ms, () => { void transport.close().catch(() => {}); });
+  await withTimeout(client.connect(transport, { timeout: startupTimeout }), startupTimeout, () => { void transport.close().catch(() => {}); });
   return client;
 }
 

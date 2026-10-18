@@ -22,7 +22,7 @@ export const RUN_IDLE_MS: number;
 export const RUN_FRAME_BYTES: number;
 export function validRunId(x: unknown): x is string;
 export type ConversationPath =
-  | { kind: 'list' | 'projects' | 'transcribe' } | { kind: 'one' | 'messages' | 'runs' | 'project' | 'project-git'; id: string }
+  | { kind: 'list' | 'projects' | 'transcribe' | 'folder-picker' } | { kind: 'one' | 'messages' | 'runs' | 'project' | 'project-git'; id: string }
   | { kind: 'events'; run: string; after: number } | { kind: 'stop'; run: string }
   | { kind: 'project-changes'; id: string } | { kind: 'project-diff' | 'project-tree' | 'project-file'; id: string; rel: string };
 export function conversationPath(path: string): ConversationPath | null;
