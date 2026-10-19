@@ -1,5 +1,6 @@
 import { useEffect, useRef, useState } from 'react';
-import { GenVRTeam, type SpaceAgent } from './GenVRTeam';
+import type { SpaceAgent } from './GenVRTeam';
+import type { Publication } from './connections-contract.js';
 import type { SessionClient } from './session';
 import { GENVR_PATH, GENVR_AGENTS, genvrId, validStudioProject } from './genvr-contract.js';
 type Project={id:string;title:string;agentCount?:number};
@@ -8,7 +9,6 @@ export function GenVRPage({client,active}:{client:SessionClient;active:boolean})
  const selection=useRef<SpaceAgent[]|undefined>(undefined);
  const [mcp,setMcp]=useState('Preparing local MCP…');
  useEffect(()=>{if(!active)return;if(client.getSnapshot().user?.role!=='owner'){setMcp('Local MCP setup is managed by the workspace owner.');return;}let disposed=false;void client.request({method:'POST',path:'/api/genvr/mcp/bootstrap',body:{}} as never).then(result=>{if(disposed)return;const state=(result.body as {status?:string})?.status;setMcp(result.status!==200?'Local MCP could not be prepared.':state==='ready'?'Local MCP ready · choose tools for each agent in its MCP tab.':state==='blocked'?'Local MCP configured · blocked by the server execution policy or working-folder configuration.':state==='disabled'?'Local MCP disabled · enable it in Settings → MCP when needed.':state==='conflict'?'Local MCP needs review in Settings → MCP.':'Local MCP package unavailable in this build.');}).catch(()=>{if(!disposed)setMcp('Local MCP could not be prepared.');});return()=>{disposed=true;};},[client,active]);
- const [editing,setEditing]=useState<{project?:Record<string,any>;revision?:number;team:SpaceAgent[]}|null>(null);
  const [channel,setChannel]=useState(''),[phase,setPhase]=useState('idle'),[notice,setNotice]=useState('');
  const [projects,setProjects]=useState<Project[]>([]),[listing,setListing]=useState('loading'),[query,setQuery]=useState(''),[retry,setRetry]=useState(0);
  useEffect(()=>{
@@ -18,13 +18,18 @@ export function GenVRPage({client,active}:{client:SessionClient;active:boolean})
    setProjects(body.projects);setListing('ready');
   }).catch(()=>{if(!disposed)setListing('error');});return()=>{disposed=true;};
  },[client,active,channel,retry]);
+ const [published,setPublished]=useState<Publication[]>([]);
+ useEffect(()=>{if(!active||channel||client.getSnapshot().user?.role!=='owner')return;let disposed=false;void client.request({method:'GET',path:'/api/connections/genvr/publications'} as never).then(r=>{if(!disposed&&r.status===200)setPublished((r.body as {publications:Publication[]}).publications);}).catch(()=>{});return()=>{disposed=true;};},[client,active,channel,retry]);
+ // No space yet: start a new one right away (once per visit).
+ const started=useRef(false);
+ useEffect(()=>{if(active&&!channel&&listing==='ready'&&projects.length===0&&!started.current){started.current=true;open();}},[active,channel,listing,projects.length]);
  function open(id?:string){selection.current=undefined;opening.current=id;setNotice('');setPhase('loading');setChannel(crypto.randomUUID());}
  useEffect(()=>{
   if(!channel)return;let disposed=false;
   const send=(value:Record<string,unknown>)=>frame.current?.contentWindow?.postMessage({type:'dpro-genvr',channel,...value},window.location.origin);
   const receive=async(event:MessageEvent)=>{
    if(disposed||event.source!==frame.current?.contentWindow||event.origin!==window.location.origin||event.data?.type!=='dpro-genvr'||event.data.channel!==channel)return;
-   const data=event.data;if(data.operation==='ready'){send({operation:'start',projectId:opening.current,storageNamespace:client.getSnapshot().user?.id});return;}if(data.operation==='mounted'){setPhase('ready');return;}
+   const data=event.data;if(data.operation==='ready'){send({operation:'start',projectId:opening.current,storageNamespace:client.getSnapshot().user?.id,privateLibrary:client.getSnapshot().user?.role==='owner'});return;}if(data.operation==='mounted'){setPhase('ready');return;}
    if(data.operation==='unavailable'){setPhase('unavailable');return;}
    if(data.operation==='open-failed'){setNotice('Choose the saved space from the Studio project menu to open it.');return;}
    if(data.operation==='closed'){if(data.ok){setChannel('');setPhase('idle');}else setNotice('Studio is busy or saving failed. Keep it open and save or export your edits.');return;}
@@ -60,11 +65,12 @@ export function GenVRPage({client,active}:{client:SessionClient;active:boolean})
  },[client,channel]);
  const visible=projects.filter(project=>project.title.toLocaleLowerCase().includes(query.toLocaleLowerCase().trim()));
  return <div className="genvr-page"><header className="genvr-toolbar"><div><h2>GenVR</h2><p className="fine-print">Your private spaces in this workspace. Film exports are saved separately.</p></div>
- {channel?<button type="button" onClick={()=>{setNotice('');frame.current?.contentWindow?.postMessage({type:'dpro-genvr',channel,operation:'close'},window.location.origin);}}>Save & close Studio</button>:<button type="button" className="primary" disabled={editing!==null} onClick={()=>setEditing({team:[]})}>Create space</button>}</header>
+ {channel?<button type="button" onClick={()=>{setNotice('');frame.current?.contentWindow?.postMessage({type:'dpro-genvr',channel,operation:'close'},window.location.origin);}}>Save & close Studio</button>:<button type="button" className="primary" onClick={()=>open()}>Create space</button>}</header>
  <p className="fine-print" role="status">{mcp}</p>
  {notice&&<p role="alert">{notice}</p>}
- {editing?<GenVRTeam key={editing.project?.id??'new'} client={client} initial={editing.team} creating={!editing.project} onCancel={()=>setEditing(null)} onConfirm={async team=>{if(!editing.project){open();selection.current=team;setEditing(null);return;}const result=await client.request({method:'PUT',path:`${GENVR_PATH}/${editing.project.id}`,body:{project:editing.project,revision:editing.revision,agents:team}} as never);if(result.status!==200)throw Error();setEditing(null);setRetry(n=>n+1);}}/>:!channel?<section className="genvr-library" aria-label="My spaces"><div className="genvr-library-heading"><h3>My spaces <span className="fine-print">{projects.length}</span></h3><input type="search" aria-label="Search spaces" placeholder="Search spaces" value={query} maxLength={200} onChange={event=>setQuery(event.target.value)}/></div>
- {listing==='loading'?<p role="status">Loading your spaces…</p>:listing==='error'?<div role="alert"><p>Your spaces could not be loaded.</p><button type="button" onClick={()=>setRetry(value=>value+1)}>Try again</button></div>:projects.length===0?<p className="empty-note">No spaces yet. Create your first space above, or import a saved project inside Studio.</p>:visible.length===0?<p className="empty-note">No spaces match your search.</p>:<ul className="genvr-world-list">{visible.map(project=><li key={project.id}><button type="button" className="genvr-world-row" onClick={()=>open(project.id)} aria-label={`Open space: ${project.title}`}><span aria-hidden="true">◇</span><strong>{project.title}</strong><span className="fine-print">{project.agentCount??0} agents · Open space →</span></button><button type="button" aria-label={`Manage agents: ${project.title}`} onClick={()=>{setNotice('');void client.request({method:'GET',path:`${GENVR_PATH}/${project.id}`} as never).then(result=>{if(result.status!==200)throw Error();const body=result.body as {project:Record<string,any>;revision:number;agents:SpaceAgent[]};setEditing({project:body.project,revision:body.revision,team:body.agents});}).catch(()=>setNotice('Space agents could not be loaded. Try again.'));}}>Manage agents</button></li>)}</ul>}
+ {!channel?<section className="genvr-library" aria-label="My spaces"><div className="genvr-library-heading"><h3>My spaces <span className="fine-print">{projects.length}</span></h3><input type="search" aria-label="Search spaces" placeholder="Search spaces" value={query} maxLength={200} onChange={event=>setQuery(event.target.value)}/></div>
+ {listing==='loading'?<p role="status">Loading your spaces…</p>:listing==='error'?<div role="alert"><p>Your spaces could not be loaded.</p><button type="button" onClick={()=>setRetry(value=>value+1)}>Try again</button></div>:projects.length===0?<p className="empty-note">No spaces yet. Starting a new space…</p>:visible.length===0?<p className="empty-note">No spaces match your search.</p>:<ul className="genvr-world-list">{visible.map(project=><li key={project.id}><button type="button" className="genvr-world-row" onClick={()=>open(project.id)} aria-label={`Open space: ${project.title}`}><span aria-hidden="true">◇</span><strong>{project.title}</strong><span className="fine-print">Open space →</span></button></li>)}</ul>}
+ {published.length>0&&<><div className="genvr-library-heading"><h3>Published on Genvr <span className="fine-print">{published.length}</span></h3></div><ul className="genvr-world-list">{published.map(p=><li key={p.serverId}><div className="genvr-world-row"><span aria-hidden="true">◆</span><strong>{p.title}</strong><span className="fine-print">{p.status==='published'?`Published · ${p.access}`:'Private draft'} · {p.link?<a href={p.link} target="_blank" rel="noopener noreferrer">Open place</a>:p.serverId}</span></div></li>)}</ul></>}
  </section>:<>{phase==='loading'&&<p role="status">Opening GenVR Studio…</p>}{phase==='unavailable'&&<p role="alert">GenVR is unavailable in this build. Your saved spaces remain in your workspace.</p>}<iframe ref={frame} title="GenVR Studio" className="genvr-frame" src={`/genvr/studio.html#${channel}`} sandbox="allow-scripts allow-same-origin allow-downloads allow-pointer-lock"/></>}
  </div>;
 }

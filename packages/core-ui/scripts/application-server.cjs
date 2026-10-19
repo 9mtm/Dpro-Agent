@@ -4,6 +4,7 @@ const {allowedTemplates,templatePath,templatesResponse}=require('../src/specialt
 const { allowedMcpImport, mcpImportPath, mcpImportResponse } = require('../src/mcp-import-contract.js');
 const { allowedSkillLibrary, skillLibraryPath, skillLibraryResponse } = require('../src/skill-library-contract.js');
 const { createGenVRAssets } = require('./genvr-assets.cjs');
+const { createStudioHost } = require('./genvr-studio-host.cjs');
 const { allowedGenVR, genvrRoute, genvrResponse, GENVR_BYTES } = require('../src/genvr-contract.js');
 const { allowedChannel, channelRoute, channelResponse } = require('../src/agent-connect-contract.js');
 const { allowedPersonality, personalityRoute, personalityResponse } = require('../src/personality-contract.js');
@@ -183,7 +184,11 @@ function createApplicationServer({ packageRoot = root, channel, stage1ReadOnly =
   if (!['candidate', 'current'].includes(channel) || !(typeof upstreamPort === 'function' || validPort(upstreamPort)) || !Number.isInteger(timeoutMs) || timeoutMs < 1 || timeoutMs > 10000) throw Error('Invalid launch configuration');
   if (!Number.isInteger(streamTimeoutMs) || streamTimeoutMs < 1 || streamTimeoutMs > CHAT_DEADLINE_MS || !Number.isInteger(streamIdleMs) || streamIdleMs < 1 || streamIdleMs > CHAT_IDLE_MS) throw Error('Invalid stream limits');
   if (!Number.isInteger(runStreamMs) || runStreamMs < 1 || runStreamMs > RUN_STREAM_MS || !Number.isInteger(runIdleMs) || runIdleMs < 1 || runIdleMs > RUN_IDLE_MS) throw Error('Invalid run stream limits');
-  const serveGenVR = createGenVRAssets(packageRoot);
+  // Live bridge (MCP + local voice) and the owner's private library for the GenVR frame.
+  const studio = createStudioHost({ packageRoot });
+  let studioToken = null;
+  void studio.token().then(t => { studioToken = t; }, () => {});
+  const serveGenVR = createGenVRAssets(packageRoot, () => studioToken);
   const assets = readCurrent(packageRoot, channel); // Pin validated bytes for this server lifetime.
   const server = http.createServer({ maxHeaderSize: 16384, requestTimeout: 10000, headersTimeout: 10000 }, async (req, res) => {
     for (const [k, v] of Object.entries(HEADERS)) res.setHeader(k, v);
@@ -212,6 +217,12 @@ function createApplicationServer({ packageRoot = root, channel, stage1ReadOnly =
     if ((req.headers.origin && req.headers.origin !== origin) || (req.headers['sec-fetch-site'] && !['same-origin', 'none'].includes(req.headers['sec-fetch-site']))) return send(403);
     if (stage1ReadOnly && raw.startsWith('/api/') && !stage1Route(req.method, raw)) return send(403, { code: 'stage1_read_only' });
     if (requestPath(raw) === null || raw.length > 2048) return send(400);
+    const studioPath = requestPath(raw);
+    if (studioPath.startsWith('/studio-bridge/') || studioPath.startsWith('/studio-library/')) {
+      // Long polls, voice generation and library files outlive the API deadline.
+      clearTimeout(timer);
+      try { if (await studio.handle(req, res, studioPath)) return; } catch { return send(500); }
+    }
     if (!raw.startsWith('/api/') && serveGenVR(req, res, requestPath(raw))) return;
     if (!raw.startsWith('/api/')) {
       if (!['GET', 'HEAD'].includes(req.method)) return send(405);
@@ -362,6 +373,8 @@ function createApplicationServer({ packageRoot = root, channel, stage1ReadOnly =
     } catch { send(400); }
   });
   server.on('checkContinue', (_req, res) => { res.writeHead(417); res.end(); });
+  server.on('listening', () => { const a = server.address(); if (a && typeof a === 'object') void studio.listening(`http://${HOST}:${a.port}`).catch(() => {}); });
+  server.on('close', () => { void studio.close(); });
   server.on('upgrade', (_req, socket) => socket.destroy());
   server.on('connect', (_req, socket) => socket.destroy());
   server.on('clientError', (_error, socket) => socket.destroy());
