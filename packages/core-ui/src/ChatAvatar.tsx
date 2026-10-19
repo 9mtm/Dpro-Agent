@@ -2,12 +2,13 @@ import { useEffect, useRef, useState } from 'react';
 import type { Turn } from './turns';
 
 type Voice = { id: string; name: string; language: string | null };
-type Prefs = { voiceId: string; speak: boolean; size: 's' | 'm' | 'l' };
+type Choices = { voiceId: string; speak: boolean; size: 's' | 'm' | 'l' };
 type Phase = 'loading' | 'ready' | 'thinking' | 'preparing' | 'speaking' | 'unavailable';
-const DEFAULTS: Prefs = { voiceId: '', speak: true, size: 'm' };
-// Kept in memory for this session only (no browser storage); a saved per-agent voice belongs to the agent's server record.
-const remembered = new Map<string, Prefs>();
-const readPrefs = (agentId: string): Prefs => remembered.get(agentId || 'default') ?? DEFAULTS;
+const DEFAULTS: Choices = { voiceId: '', speak: true, size: 'm' };
+// The owner's choices come from the package's own Avatar Live Settings window. Dpro keeps them
+// in memory for this session only (no browser storage); a saved per-agent voice belongs to the agent's server record.
+const remembered = new Map<string, Choices>();
+const readChoices = (agentId: string): Choices => remembered.get(agentId || 'default') ?? DEFAULTS;
 const HEIGHT = { s: 180, m: 260, l: 360 } as const;
 const LABEL: Record<Phase, string> = { loading: 'Loading the avatar…', ready: 'Ready', thinking: 'Thinking…', preparing: 'Preparing the voice…', speaking: 'Speaking…', unavailable: 'The avatar is not available in this build.' };
 
@@ -19,22 +20,26 @@ export function speakable(text: string): string {
 
 /** The agent's face in the chat: it shows when the agent works and speaks finished replies with its saved voice. */
 export function ChatAvatar({ turns, agentId, agentName, onClose }: { turns: readonly Turn[]; agentId: string; agentName: string; onClose: () => void }) {
-  const frame = useRef<HTMLIFrameElement>(null), channel = useRef(crypto.randomUUID()), pending = useRef(new Map<string, (value: unknown) => void>());
-  const [phase, setPhase] = useState<Phase>('loading'), [voices, setVoices] = useState<Voice[]>([]), [notice, setNotice] = useState(''), [menu, setMenu] = useState(false);
-  const [prefs, setPrefsState] = useState<Prefs>(() => readPrefs(agentId));
-  useEffect(() => setPrefsState(readPrefs(agentId)), [agentId]);
-  const setPrefs = (patch: Partial<Prefs>) => setPrefsState(current => { const next = { ...current, ...patch }; remembered.set(agentId || 'default', next); return next; });
+  const frame = useRef<HTMLIFrameElement>(null), channel = useRef(crypto.randomUUID());
+  const [phase, setPhase] = useState<Phase>('loading'), [voices, setVoices] = useState<Voice[]>([]), [notice, setNotice] = useState('');
+  const [choices, setChoicesState] = useState<Choices>(() => readChoices(agentId));
+  const [settingsOpen, setSettingsOpen] = useState(false);
+  const setChoices = (patch: Partial<Choices>) => setChoicesState(current => { const next = { ...current, ...patch }; remembered.set(agentId || 'default', next); return next; });
   const post = (value: Record<string, unknown>) => frame.current?.contentWindow?.postMessage({ type: 'dpro-avatar', channel: channel.current, ...value }, window.location.origin);
-  const ask = (operation: string) => new Promise<unknown>(resolve => { const id = crypto.randomUUID(); pending.current.set(id, resolve); post({ id, operation }); setTimeout(() => { if (pending.current.delete(id)) resolve(null); }, 10000); });
+  const latest = useRef({ agentName, choices }); latest.current = { agentName, choices };
+  useEffect(() => { const next = readChoices(agentId); setChoicesState(next); post({ operation: 'agent', agentName, voiceId: next.voiceId }); }, [agentId, agentName]);
   useEffect(() => {
     const receive = (event: MessageEvent) => {
       if (event.source !== frame.current?.contentWindow || event.origin !== window.location.origin || event.data?.type !== 'dpro-avatar' || event.data.channel !== channel.current) return;
       const data = event.data;
-      if (data.operation === 'ready') { post({ operation: 'start', layout: 'compact' }); return; }
-      if (data.operation === 'mounted') { setPhase('ready'); void ask('voices').then(value => { if (Array.isArray(value)) setVoices(value as Voice[]); else setNotice('Saved voices could not be loaded. Speech stays off.'); }); return; }
+      if (data.operation === 'ready') { post({ operation: 'start', layout: 'compact', agentName: latest.current.agentName, voiceId: latest.current.choices.voiceId }); return; }
+      if (data.operation === 'mounted') { setPhase('ready'); return; }
       if (data.operation === 'unavailable') { setPhase('unavailable'); return; }
-      if (data.operation === 'state') { setPhase(data.state === 'speaking' ? 'speaking' : data.state === 'preparing' ? 'preparing' : 'ready'); if (typeof data.error === 'string') setNotice(/library is full/i.test(data.error) ? 'The voice library is full (100 recordings). Remove old recordings in the Studio voice library.' : data.error); return; }
-      if (data.response && typeof data.id === 'string') { const done = pending.current.get(data.id); if (done) { pending.current.delete(data.id); done(data.ok ? data.value : null); } }
+      if (data.operation === 'voices') { if (Array.isArray(data.voices)) setVoices(data.voices as Voice[]); else setNotice('Saved voices could not be loaded. Speech stays off.'); return; }
+      if (data.operation === 'voice' && typeof data.voiceId === 'string') { setChoices({ voiceId: data.voiceId }); return; }
+      if (data.operation === 'prefs' && data.prefs && typeof data.prefs === 'object') { setChoices({ speak: data.prefs.speak === true, size: ['s', 'm', 'l'].includes(data.prefs.size) ? data.prefs.size : 'm' }); return; }
+      if (data.operation === 'settings') { setSettingsOpen(data.open === true); return; }
+      if (data.operation === 'state') { setPhase(data.state === 'speaking' ? 'speaking' : data.state === 'preparing' ? 'preparing' : 'ready'); if (typeof data.error === 'string') setNotice(/library is full/i.test(data.error) ? 'The voice library is full (100 recordings). Remove old recordings in the Studio voice library.' : data.error); }
     };
     window.addEventListener('message', receive); return () => window.removeEventListener('message', receive);
   }, []);
@@ -48,31 +53,26 @@ export function ChatAvatar({ turns, agentId, agentName, onClose }: { turns: read
     wasRunning.current = false; setPhase(p => p === 'thinking' ? 'ready' : p);
     if (last.status !== 'complete' || spoken.current === last.key) return;
     spoken.current = last.key; post({ operation: 'mood', expression: 'smile', duration: 2500 });
-    const voice = voices.find(v => v.id === prefs.voiceId);
+    const voice = voices.find(v => v.id === choices.voiceId);
     const text = speakable(last.content);
-    if (prefs.speak && voice && text) post({ operation: 'speak', text, voiceId: voice.id, language: voice.language ?? 'ar' });
-  }, [last?.key, last?.status, phase === 'loading', voices, prefs.speak, prefs.voiceId]);
-  const voice = voices.find(v => v.id === prefs.voiceId);
-  const box = useRef<HTMLElement>(null), [full, setFull] = useState(false);
+    if (choices.speak && voice && text) post({ operation: 'speak', text, voiceId: voice.id, language: voice.language ?? 'ar' });
+  }, [last?.key, last?.status, phase === 'loading', voices, choices.speak, choices.voiceId]);
+  const voice = voices.find(v => v.id === choices.voiceId);
   // Full screen fills the Dpro window and also asks the system for real full screen where it is allowed.
+  // While the package Settings window is open the frame gets the whole window too, so the window has room.
+  const box = useRef<HTMLElement>(null), [full, setFull] = useState(false);
   useEffect(() => { const sync = () => { if (!document.fullscreenElement) setFull(false); }; document.addEventListener('fullscreenchange', sync); return () => document.removeEventListener('fullscreenchange', sync); }, []);
   useEffect(() => { if (!full) return; const esc = (e: KeyboardEvent) => { if (e.key === 'Escape') setFull(false); }; window.addEventListener('keydown', esc); return () => window.removeEventListener('keydown', esc); }, [full]);
   const toggleFull = () => { if (full) { setFull(false); if (document.fullscreenElement) void document.exitFullscreen().catch(() => {}); } else { setFull(true); void box.current?.requestFullscreen?.().catch(() => { /* the window-filling view stays */ }); } };
-  return <section ref={box} className={`chat-avatar${full ? ' is-full' : ''}`} aria-label={`${agentName} avatar`} style={full ? undefined : { height: HEIGHT[prefs.size] }}>
+  const wide = full || settingsOpen;
+  return <section ref={box} className={`chat-avatar${wide ? ' is-full' : ''}`} aria-label={`${agentName} avatar`} style={wide ? undefined : { height: HEIGHT[choices.size] }}>
     <iframe ref={frame} title={`${agentName} avatar`} className="chat-avatar-frame" src={`/genvr/avatar.html#${channel.current}`} sandbox="allow-scripts allow-same-origin"/>
-    <div className="chat-avatar-bar">
+    {settingsOpen ? null : <div className="chat-avatar-bar">
       <span className={`chat-avatar-state is-${phase}`} role="status"><span aria-hidden="true" className="dot"/>{agentName} · {LABEL[phase]}</span>
-      <span className="chat-avatar-voice">{prefs.speak ? voice ? `Voice: ${voice.name}` : 'Choose a voice to hear replies' : 'Speech off'}</span>
-      <button type="button" className="tool" aria-expanded={menu} aria-haspopup="dialog" onClick={() => setMenu(m => !m)}>Avatar settings</button>
+      <span className="chat-avatar-voice">{choices.speak ? voice ? `Voice: ${voice.name}` : 'Choose a voice in Settings to hear replies' : 'Speech off'}</span>
       <button type="button" className="tool" aria-pressed={full} onClick={toggleFull}>{full ? 'Exit full screen' : 'Full screen'}</button>
       <button type="button" className="tool" aria-label="Hide avatar" onClick={onClose}>✕</button>
-    </div>
-    {menu ? <div className="chat-avatar-menu" role="dialog" aria-label="Avatar settings">
-      <label className="field"><span>Voice</span><select value={prefs.voiceId} onChange={e => setPrefs({ voiceId: e.target.value })}><option value="">No voice</option>{voices.map(v => <option key={v.id} value={v.id}>{v.name}{v.language ? ` · ${v.language}` : ''}</option>)}</select></label>
-      <label className="check"><input type="checkbox" checked={prefs.speak} onChange={e => setPrefs({ speak: e.target.checked })}/>Speak replies aloud</label>
-      <div role="group" aria-label="Avatar size" className="chat-avatar-sizes">{(['s', 'm', 'l'] as const).map(size => <button key={size} type="button" aria-pressed={prefs.size === size} onClick={() => setPrefs({ size })}>{size === 's' ? 'Small' : size === 'm' ? 'Medium' : 'Large'}</button>)}</div>
-      <p className="fine-print">Kept for {agentName} until Dpro closes. The voice is made on this computer; nothing is uploaded.</p>
-    </div> : null}
+    </div>}
     {notice ? <p className="chat-avatar-notice" role="alert">{notice}</p> : null}
   </section>;
 }

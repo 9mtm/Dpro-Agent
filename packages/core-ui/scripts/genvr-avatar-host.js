@@ -26,14 +26,19 @@ window.addEventListener('message',event=>{
  if(event.source!==parent||event.origin!==location.origin||event.data?.type!=='dpro-avatar'||event.data.channel!==channel)return;
  const data=event.data;
  if(data.operation==='start'&&!live){
+  const agent={name:typeof data.agentName==='string'?data.agentName.slice(0,80):'Agent'};
+  let voiceId=typeof data.voiceId==='string'?data.voiceId:'';
   void import('/genvr/dist/studio.js').then(sdk=>{
-   live=sdk.mountAvatarLive(document.getElementById('avatar'),{projectId:'dpro-chat',display:{open:true,layout:['compact','desktop','large','watch'].includes(data.layout)?data.layout:'compact',framing:'bust',background:'color',color:/^#[0-9a-f]{6}$/i.test(data.color??'')?data.color:'#101827'}});
+   // The package draws its own Avatar Live Settings window; this frame only passes voices in and choices out.
+   const host={voices:[],voiceId,onVoice:id=>{voiceId=id;live.setHost({host:{voiceId:id}});send({operation:'voice',voiceId:id});},onPrefs:prefs=>send({operation:'prefs',prefs:{speak:prefs.speak===true,size:['s','m','l'].includes(prefs.size)?prefs.size:'m'}}),onSettings:open=>send({operation:'settings',open:open===true})};
+   live=sdk.mountAvatarLive(document.getElementById('avatar'),{projectId:'dpro-chat',agent,host,display:{open:true,layout:['compact','desktop','large','watch'].includes(data.layout)?data.layout:'compact',framing:'bust',background:'color',color:/^#[0-9a-f]{6}$/i.test(data.color??'')?data.color:'#101827'}});
    send({operation:'mounted'});
+   void voice({action:'voices'}).then(result=>{const voices=(result.voices??[]).map(v=>({id:v.id,name:v.name,language:v.language??null}));live.setHost({host:{voices}});send({operation:'voices',voices});}).catch(error=>send({operation:'voices',error:String(error.message||error)}));
   }).catch(()=>send({operation:'unavailable'}));
   return;
  }
+ if(live&&data.operation==='agent'&&typeof data.agentName==='string'){live.setHost({agent:{name:data.agentName.slice(0,80)},host:{voiceId:typeof data.voiceId==='string'?data.voiceId:''}});return;}
  if(!live)return;
- if(data.operation==='voices'){void voice({action:'voices'}).then(result=>send({id:data.id,response:true,ok:true,value:(result.voices??[]).map(v=>({id:v.id,name:v.name,language:v.language??null}))})).catch(error=>send({id:data.id,response:true,ok:false,error:String(error.message||error)}));return;}
  if(data.operation==='speak'&&typeof data.text==='string'&&typeof data.voiceId==='string'){
   const text=data.text.slice(0,1200),language=typeof data.language==='string'&&/^[a-z]{2,3}$/.test(data.language)?data.language:'ar';
   speaking=speaking.then(()=>{send({operation:'state',state:'preparing'});return speak(text,data.voiceId,language);}).then(()=>send({operation:'state',state:'ready'}),error=>send({operation:'state',state:'ready',error:String(error.message||error)}));
