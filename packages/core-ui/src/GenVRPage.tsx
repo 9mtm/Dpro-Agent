@@ -60,8 +60,16 @@ export function GenVRPage({client,active}:{client:SessionClient;active:boolean})
     send({id:data.id,response:true,ok:true,value:data.operation==='list'?body.projects:data.operation==='read'?body.project:undefined});
    }catch{if(!disposed)send({id:data.id,response:true,ok:false});}
   };
+  // Real application events: new pending approvals appear as Avatar Live notification cards.
+  // Deciding stays in Dpro (Approvals page, owner only); the card only points there.
+  const seen=new Set<string>();let first=true;
+  const approvals=client.getSnapshot().user?.role==='owner'?setInterval(()=>{void client.request({method:'GET',path:'/api/approvals?status=pending&limit=100'} as never).then(r=>{
+   if(disposed||r.status!==200)return;const rows=(r.body as {approvals?:{id:string;toolName:string;agentId:string|null}[]}).approvals??[];
+   for(const a of rows){if(seen.has(a.id))continue;seen.add(a.id);if(first)continue;send({operation:'notify',notification:{type:'approval',title:'Approval waiting',body:`${a.toolName} is waiting for your approval in Dpro → Approvals.`,sourceId:a.id,needsApproval:true}});}
+   first=false;
+  }).catch(()=>{});},15000):undefined;
   window.addEventListener('message',receive);const timer=setTimeout(()=>{if(!disposed)setPhase(current=>current==='loading'?'unavailable':current);},20000);
-  return()=>{disposed=true;clearTimeout(timer);window.removeEventListener('message',receive);};
+  return()=>{disposed=true;clearTimeout(timer);if(approvals)clearInterval(approvals);window.removeEventListener('message',receive);};
  },[client,channel]);
  const visible=projects.filter(project=>project.title.toLocaleLowerCase().includes(query.toLocaleLowerCase().trim()));
  return <div className="genvr-page"><header className="genvr-toolbar"><div><h2>GenVR</h2><p className="fine-print">Your private spaces in this workspace. Film exports are saved separately.</p></div>

@@ -16,6 +16,11 @@ window.addEventListener('message',async event=>{
    send({operation:'mounted'});if(sdk.STUDIO_HOST_VERSION!==1&&typeof data.projectId==='string')openExisting(data.projectId);
   }catch{send({operation:'unavailable'});}
  }
+ if(data.operation==='notify'&&studio&&data.notification&&typeof data.notification==='object'){
+  // Through the authenticated loopback bridge, like a live MCP present_avatar call.
+  const token=document.querySelector('meta[name="genvr-studio-token"]')?.content;const n=data.notification;
+  if(token&&n.type==='approval'&&typeof n.title==='string'&&typeof n.body==='string')void fetch('/studio-bridge/call',{method:'POST',headers:{Authorization:'Bearer '+token,'Content-Type':'application/json'},body:JSON.stringify({tool:'present_avatar',arguments:{event:{kind:'notification',notification:{type:'approval',title:n.title.slice(0,200),body:n.body.slice(0,500),...(typeof n.sourceId==='string'?{sourceId:n.sourceId.slice(0,200)}:{}),needsApproval:true}}}})}).catch(()=>{});
+ }
  if(data.operation==='close'){try{send({operation:'closed',ok:await studio?.dispose()===true});}catch{send({operation:'closed',ok:false});}}
 });
 send({operation:'ready'});
