@@ -35,6 +35,7 @@ import { memoryRoutes } from './routes/memory.js';
 import { memoryFilesRoutes } from './routes/memory-files.js';
 import { memoryLearningRoutes } from './routes/memory-learning.js';
 import { genvrRoutes } from './routes/genvr.js';
+import { connectionsRoutes } from './routes/connections.js';
 import { agentConnectRoutes } from './routes/agent-connect.js';
 import { memoryImportRoutes } from './routes/memory-import.js';
 import { credentialsRoutes } from './routes/credentials.js';
@@ -312,6 +313,7 @@ export async function buildServer(options: BuildServerOptions = {}): Promise<Fas
   await fastify.register(memoryLearningRoutes); // CORE-05: owner-only weekly learning summary
   await fastify.register(agentConnectRoutes);
   await fastify.register(genvrRoutes);
+  await fastify.register(connectionsRoutes);
   await fastify.register(memoryImportRoutes); // CLI-02: owner-only safe import (preview -> quarantine proposals)
   await fastify.register(credentialsRoutes); // 🔐 Credentials System
   // SECURITY (S0-Q.14): the /api/onboarding/* routes started the interactive

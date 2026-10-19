@@ -49,6 +49,7 @@ export type AuditEventType =
     | 'extension.storage.accessed'
     // MCP client (M1)
     | 'mcp.server.change'
+    | 'connection.change'
     | 'mcp.tool.call'
     // Built-in terminal (TERM-01)
     | 'terminal.session.open'
