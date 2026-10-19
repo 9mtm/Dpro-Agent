@@ -23,7 +23,7 @@ function clientFor(transport, mode = 'mock') {
   const client = new SessionClient({ [mode]: async r => { calls.push(r); return transport(r); } });
   return { client, calls };
 }
-const render = client => renderToStaticMarkup(React.createElement(AuthBoundary, { client }, 'fictional workspace'));
+const render = client => renderToStaticMarkup(React.createElement(AuthBoundary, { client, initialPage: 'account' }, 'fictional workspace'));
 
 test('contract: exact body; replies keep only reviewed codes at their status; fragment code', () => {
   assert.equal(CODE.length, 43);

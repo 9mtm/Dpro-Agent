@@ -25,7 +25,8 @@
 
 import type { Actor } from './actor.js';
 import { ScopeError, drawerOpen, drawerWritable, requireActor, requireMember } from './scope.js';
-import { memoryOwner, memoryUser, versionActor } from './memory-actor.js';
+import { memoryOwner, memoryUser, memberUser, versionActor } from './memory-actor.js';
+import { memoryDisplayPage } from '../memory/display-page.js';
 import { memoryRecall, type MemoryRecallRepository } from './memory-recall.js';
 import { memoryOwnerRepository, type MemoryOwnerRepository } from './memory-owner.js';
 import { memoryShared, type MemorySharedRepository } from './memory-shared.js';
@@ -58,6 +59,7 @@ export const DRAWER_CLOSED = 'that memory drawer is not open for this conversati
 export const OUTSIDER_REFUSED = 'not available when answering someone else';
 
 export interface MemoryRepository extends MemoryRecallRepository, MemoryOwnerRepository, MemorySharedRepository {
+  displayPage(actor: Actor | null | undefined, cursor?: string): ReturnType<typeof memoryDisplayPage>;
   list(actor: Actor | null | undefined): Promise<Memory[]>;
   drawers(actor: Actor | null | undefined): Promise<Array<DrawerRef & { count: number }>>;
   get(actor: Actor | null | undefined, id: string): Promise<Memory>;
@@ -107,6 +109,10 @@ export const memoryRepository: MemoryRepository = {
   ...memoryRecall,
   ...memoryOwnerRepository,
   ...memoryShared,
+
+  displayPage(actor, cursor) {
+    return memoryDisplayPage(memberUser(actor).userId, cursor);
+  },
 
   async list(actor) {
     const { a, userId } = memoryUser(actor);

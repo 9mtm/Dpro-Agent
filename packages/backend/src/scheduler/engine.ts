@@ -1,3 +1,4 @@
+import { safeConsole } from '../services/safe-error-log.js';
 /**
  * Cron Engine
  * Manages scheduled jobs using node-cron
@@ -95,24 +96,24 @@ export class CronEngine extends EventEmitter implements ICronEngine {
         try {
           if (!(await claimRun(job.id, tickSlot(job.cronExpression)))) return;
         } catch (error: any) {
-          console.error(`[CronEngine] ❌ Job "${job.name}" claim failed:`, error?.code ?? 'error');
+          safeConsole.error(`[CronEngine] ❌ Job "${job.name}" claim failed:`, error?.code ?? 'error');
           return;
         }
 
-        console.log(`[CronEngine] ⏰ Executing job: ${job.name}`);
+        safeConsole.log(`[CronEngine] ⏰ Executing job: ${job.name}`);
 
         try {
           const result = await this.executeJob(job.id);
 
           if (result.success) {
-            console.log(`[CronEngine] ✅ Job "${job.name}" completed`);
+            safeConsole.log(`[CronEngine] ✅ Job "${job.name}" completed`);
           } else {
-            console.error(`[CronEngine] ❌ Job "${job.name}" failed:`, result.error);
+            safeConsole.error(`[CronEngine] ❌ Job "${job.name}" failed:`, result.error);
           }
 
           this.emit('job:executed', result);
         } catch (error: any) {
-          console.error(`[CronEngine] ❌ Job "${job.name}" error:`, error);
+          safeConsole.error(`[CronEngine] ❌ Job "${job.name}" error:`, error);
           this.emit('job:error', { jobId: job.id, error: error.message });
         }
 
@@ -125,7 +126,7 @@ export class CronEngine extends EventEmitter implements ICronEngine {
     this.jobs.set(job.id, job);
     this.tasks.set(job.id, task);
 
-    console.log(`[CronEngine] 📅 Scheduled job: ${job.name} (${job.cronExpression})`);
+    safeConsole.log(`[CronEngine] 📅 Scheduled job: ${job.name} (${job.cronExpression})`);
   }
 
   /**
@@ -137,7 +138,7 @@ export class CronEngine extends EventEmitter implements ICronEngine {
     if (task) {
       task.stop();
       this.tasks.delete(jobId);
-      console.log(`[CronEngine] ⏹️  Unscheduled job: ${jobId}`);
+      safeConsole.log(`[CronEngine] ⏹️  Unscheduled job: ${jobId}`);
     }
   }
 

@@ -4,7 +4,7 @@ import fs from 'fs';
 import path from 'path';
 import { randomUUID } from 'crypto';
 import { q } from '../repositories/sql-steps.js';
-import { spawnPython, getPythonPath } from './python-env.js';
+import { spawnPython, getPythonPath, PYTHON_SCRIPTS_DIR } from './python-env.js';
 import { getEnvProviderApiKey } from '../credentials/authority.js';
 
 type AudioProvider = 'openai' | 'local' | 'qwen';
@@ -106,7 +106,7 @@ export class AudioService {
     return new Promise((resolve, reject) => {
       // Call Python script
       const python = spawnPython(
-        path.join(process.cwd(), 'python-scripts', 'tools', 'stt', 'stt.py'),
+        path.join(PYTHON_SCRIPTS_DIR, 'tools', 'stt', 'stt.py'),
         [audioPath]
       );
 
@@ -248,7 +248,7 @@ export class AudioService {
       const argsFile = outputPath + '.args.json';
       fs.writeFileSync(argsFile, JSON.stringify({ text, voice, outputPath, language }), 'utf8');
 
-      const ttsScriptPath = path.join(process.cwd(), 'python-scripts', 'tools', 'tts', 'tts.py');
+      const ttsScriptPath = path.join(PYTHON_SCRIPTS_DIR, 'tools', 'tts', 'tts.py');
       console.log('[TTS] Using Python:', getPythonPath());
       console.log('[TTS] Script path:', ttsScriptPath);
       console.log('[TTS] Args file:', argsFile);
@@ -318,7 +318,7 @@ export class AudioService {
         referenceAudio
       }), 'utf8');
 
-      const qwenScriptPath = path.join(process.cwd(), 'python-scripts', 'tools', 'tts', 'qwen-tts.py');
+      const qwenScriptPath = path.join(PYTHON_SCRIPTS_DIR, 'tools', 'tts', 'qwen-tts.py');
       console.log('[Qwen3-TTS] Using Python:', getPythonPath());
       console.log('[Qwen3-TTS] Script path:', qwenScriptPath);
       console.log('[Qwen3-TTS] Args:', { voice, language, emotion: emotion || 'none', hasReference: !!referenceAudio });

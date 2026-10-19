@@ -1,3 +1,5 @@
+import { safeConsole } from '../services/safe-error-log.js';
+import { extensionResourcePath } from './resource-path.js';
 /**
  * Extension SDK
  * Provides ExtensionApi interface for extensions to register routes, tools, migrations, cron jobs, etc.
@@ -210,7 +212,7 @@ export function createExtensionApi(
       const result = checkPermissions(extensionId, ['database']);
       if (!result.granted) {
         const error = `Extension "${extensionId}" missing permission: database`;
-        console.error(`[ExtensionApi:${extensionId}] ❌ ${error}`);
+        safeConsole.error(`[ExtensionApi:${extensionId}] ❌ ${error}`);
 
         logSecurityEvent({
           event_type: 'extension.permission.denied',
@@ -234,7 +236,7 @@ export function createExtensionApi(
     // Route Registration (collected, registered later at startup)
     registerRoutes(routesFn, prefix?) {
       routesToRegister.push({ fn: routesFn, prefix });
-      console.log(`[ExtensionApi:${extensionId}] ✅ Route registered: /api/ext/${extensionId}${prefix || ''}`);
+      safeConsole.log(`[ExtensionApi:${extensionId}] ✅ Route registered: /api/ext/${extensionId}${prefix || ''}`);
     },
 
     // Tool Registration (global - available to all sessions)
@@ -243,7 +245,7 @@ export function createExtensionApi(
       const result = checkPermissions(extensionId, ['tools']);
       if (!result.granted) {
         const error = `Extension "${extensionId}" missing permission: tools`;
-        console.error(`[ExtensionApi:${extensionId}] ❌ ${error}`);
+        safeConsole.error(`[ExtensionApi:${extensionId}] ❌ ${error}`);
 
         logSecurityEvent({
           event_type: 'extension.permission.denied',
@@ -264,7 +266,7 @@ export function createExtensionApi(
       // SECURITY: an extension tool may not replace a built-in tool (and its policy)
       if (isReservedToolName(tool.name)) {
         const error = `Extension "${extensionId}" may not register reserved tool name: ${tool.name}`;
-        console.error(`[ExtensionApi:${extensionId}] ❌ ${error}`);
+        safeConsole.error(`[ExtensionApi:${extensionId}] ❌ ${error}`);
         try {
           logSecurityEvent({
             event_type: 'extension.permission.denied',
@@ -294,7 +296,7 @@ export function createExtensionApi(
       // Tag tool with extensionId for tracking
       const taggedTool = { ...tool, extensionId, execClass };
       registerExtensionTool(taggedTool);
-      console.log(`[ExtensionApi:${extensionId}] ✅ Tool registered globally: ${tool.name}`);
+      safeConsole.log(`[ExtensionApi:${extensionId}] ✅ Tool registered globally: ${tool.name}`);
 
       // Log successful registration
       try {
@@ -317,7 +319,7 @@ export function createExtensionApi(
 
     unregisterTool(name) {
       unregisterExtensionTool(name);
-      console.log(`[ExtensionApi:${extensionId}] ❌ Tool unregistered globally: ${name}`);
+      safeConsole.log(`[ExtensionApi:${extensionId}] ❌ Tool unregistered globally: ${name}`);
     },
 
     // Dashboard Widget Registration
@@ -328,7 +330,7 @@ export function createExtensionApi(
       const existing = db.prepare('SELECT id FROM dashboard_widgets WHERE id = ?').get(widgetId);
 
       if (existing) {
-        console.log(`[ExtensionApi:${extensionId}] ⏭️  Dashboard widget already registered: ${widget.id}`);
+        safeConsole.log(`[ExtensionApi:${extensionId}] ⏭️  Dashboard widget already registered: ${widget.id}`);
         return;
       }
 
@@ -351,7 +353,7 @@ export function createExtensionApi(
         widget.settingsSchema ? JSON.stringify(widget.settingsSchema) : null
       );
 
-      console.log(`[ExtensionApi:${extensionId}] ✅ Dashboard widget registered: ${widget.id} → ${widget.name}`);
+      safeConsole.log(`[ExtensionApi:${extensionId}] ✅ Dashboard widget registered: ${widget.id} → ${widget.name}`);
     },
 
     // Migration Runner (idempotent per extension)
@@ -387,7 +389,7 @@ export function createExtensionApi(
           .get(extensionId, filename);
 
         if (alreadyRun) {
-          console.log(`[ExtensionApi:${extensionId}] ⏭️  Migration already run: ${filename}`);
+          safeConsole.log(`[ExtensionApi:${extensionId}] ⏭️  Migration already run: ${filename}`);
           continue;
         }
 
@@ -404,7 +406,7 @@ export function createExtensionApi(
           'INSERT INTO extension_migrations (extension_id, filename) VALUES (?, ?)'
         ).run(extensionId, filename);
 
-        console.log(`[ExtensionApi:${extensionId}] ✅ Migration executed: ${filename}`);
+        safeConsole.log(`[ExtensionApi:${extensionId}] ✅ Migration executed: ${filename}`);
       }
     },
 
@@ -414,7 +416,7 @@ export function createExtensionApi(
       const result = checkPermissions(extensionId, ['cron']);
       if (!result.granted) {
         const error = `Extension "${extensionId}" missing permission: cron`;
-        console.error(`[ExtensionApi:${extensionId}] ❌ ${error}`);
+        safeConsole.error(`[ExtensionApi:${extensionId}] ❌ ${error}`);
 
         logSecurityEvent({
           event_type: 'extension.permission.denied',
@@ -434,7 +436,7 @@ export function createExtensionApi(
 
       const fullJobId = `ext:${extensionId}:${jobId}`;
       cronEngine.register(fullJobId, schedule, handler);
-      console.log(`[ExtensionApi:${extensionId}] ✅ Cron job registered: ${jobId} (${schedule})`);
+      safeConsole.log(`[ExtensionApi:${extensionId}] ✅ Cron job registered: ${jobId} (${schedule})`);
 
       // Log successful registration
       logSecurityEvent({
@@ -454,7 +456,7 @@ export function createExtensionApi(
     unregisterCronJob(jobId) {
       const fullJobId = `ext:${extensionId}:${jobId}`;
       cronEngine.unregister(fullJobId);
-      console.log(`[ExtensionApi:${extensionId}] ❌ Cron job unregistered: ${jobId}`);
+      safeConsole.log(`[ExtensionApi:${extensionId}] ❌ Cron job unregistered: ${jobId}`);
     },
 
     // Config Management
@@ -476,7 +478,7 @@ export function createExtensionApi(
            updated_at = excluded.updated_at`
       ).run(extensionId, JSON.stringify(config));
 
-      console.log(`[ExtensionApi:${extensionId}] ✅ Config saved`);
+      safeConsole.log(`[ExtensionApi:${extensionId}] ✅ Config saved`);
     },
 
     // Logger
@@ -486,13 +488,13 @@ export function createExtensionApi(
 
       switch (level) {
         case 'info':
-          console.log(`${prefix} ℹ️  ${msg}`);
+          safeConsole.log(`${prefix} ℹ️  ${msg}`);
           break;
         case 'warn':
-          console.warn(`${prefix} ⚠️  ${msg}`);
+          safeConsole.warn(`${prefix} ⚠️  ${msg}`);
           break;
         case 'error':
-          console.error(`${prefix} ❌ ${msg}`);
+          safeConsole.error(`${prefix} ❌ ${msg}`);
           break;
       }
     },
@@ -602,7 +604,7 @@ export function createExtensionApi(
           source: extensionId,
         });
 
-        console.log(`[ExtensionApi:${extensionId}] 📬 Notification created: "${notification.title}"`);
+        safeConsole.log(`[ExtensionApi:${extensionId}] 📬 Notification created: "${notification.title}"`);
 
         return {
           id: result.id,
@@ -628,7 +630,7 @@ export function createExtensionApi(
 
     // i18n: Register translations from extension's i18n directory
     registerTranslations(localeDir = 'i18n') {
-      const i18nDir = resolve(extensionDir, localeDir);
+      const i18nDir = extensionResourcePath(extensionDir, localeDir);
 
       if (!existsSync(i18nDir)) {
         return; // No i18n directory — skip silently
@@ -638,13 +640,13 @@ export function createExtensionApi(
 
       for (const file of files) {
         const locale = file.replace('.json', '');
-        const filePath = join(i18nDir, file);
+        const filePath = extensionResourcePath(extensionDir, join(localeDir, file));
         try {
           const translations = JSON.parse(readFileSync(filePath, 'utf-8'));
           registerExtensionBackendTranslations(extensionId, locale, translations);
-          console.log(`[ExtensionApi:${extensionId}] 🌐 Loaded ${locale} translations (${Object.keys(translations).length} keys)`);
+          safeConsole.log(`[ExtensionApi:${extensionId}] 🌐 Loaded ${locale} translations (${Object.keys(translations).length} keys)`);
         } catch (err) {
-          console.error(`[ExtensionApi:${extensionId}] ❌ Failed to load ${locale} translations:`, err);
+          safeConsole.error(`[ExtensionApi:${extensionId}] ❌ Failed to load ${locale} translations:`, err);
         }
       }
     },

@@ -15,6 +15,18 @@ const { fixtureProposal, fixtureContext } = require('../src/memory-fixture.ts');
 const memoryProposal = () => ({ ...fixtureProposal(fixtureContext), id: 'p1' });
 const memoryDrawer = () => ({ drawer: { kind: 'owner' }, drawerId: 'owner', agentId: 'main', revision: 3, hash, count: 1, content: 'Fictional text', path: 'private/server/path' });
 const memorySummary = () => { const { changes, ...rest } = memoryProposal(); return { ...rest, counts: { add: 1, update: 1, delete: 1 } }; };
+test('memory display pages cross the HTTP bridge with exact cursors and reviewed fields only', async t => {
+  const row = { id: '00000000-0000-4000-8000-000000000001', type: 'fact', content: 'Fictional display memory', createdAt: '2026-01-01T00:00:00.000Z', embedding: [1, 2], userId: 'private-owner', metadata: { internal: true } };
+  const s = await setup(t, (req, res) => res.end(JSON.stringify({ memories: [row], nextCursor: req.url.includes('?') ? null : 'opaque_next', total: 2 })));
+  for (const target of ['/api/memory/page', '/api/memory/page?cursor=opaque_next']) {
+    const r = await s.request(target); assert.equal(r.status, 200);
+    const b = JSON.parse(r.text); assert.equal(b.memories.length, 1); assert.equal(b.total, 2);
+    assert.doesNotMatch(r.text, /embedding|userId|metadata|private-owner/);
+  }
+  assert.deepEqual(s.calls.map(c => c.path), ['/api/memory/page', '/api/memory/page?cursor=opaque_next']);
+  assert.ok((await s.request('/api/memory/page?cursor=opaque_next&user=other')).status >= 400);
+  assert.equal(s.calls.length, 2);
+});
 async function setup(t, handler, options = {}) {
   const calls = [];
   const backend = http.createServer(async (req, res) => {
@@ -284,7 +296,7 @@ test('HTTP decision timeout remains unknown and is never retried', async t => {
     if (req.method === 'POST') return;
     const reply = await mock.transport({ method: 'GET', path: req.url, signal: new AbortController().signal, headers: {} });
     res.end(JSON.stringify(reply.body));
-  }, { timeoutMs: 100 });
+  }, { timeoutMs: 1000 });
   const { createMemoryAdapter, MemoryController } = require('../src/memory.ts');
   const transport = async r => { const reply = await s.request(r.path, r); return { status: reply.status, body: JSON.parse(reply.text) }; };
   const ctrl = new MemoryController(createMemoryAdapter(transport, () => true), mock.context);
@@ -333,4 +345,12 @@ test('device HTTP rate limit and Retry-After never schedule a second request', a
   }) });
   client.selectMode('live'); await client.login('a', 'b'); await new Promise(resolve => setTimeout(resolve, 20));
   assert.equal(client.getSnapshot().notice, 'rate_limited'); assert.equal(client.getSnapshot().phase, 'signed-out'); assert.equal(s.calls.length, 1);
+});
+test('auth responses keep the setup name (trimmed, bounded) and nothing else extra', async t => {
+  for (const [fullName, kept] of [['  Fiction Owner ', 'Fiction Owner'], ['x'.repeat(201), undefined], [7, undefined], ['', undefined]]) {
+    const s = await setup(t, (req, res) => res.end(JSON.stringify(req.url === '/api/auth/login' ? { user: { ...user, full_name: fullName }, token, deviceToken: 'd'.repeat(43) } : { user: { ...user, full_name: fullName } })));
+    const me = JSON.parse((await s.request('/api/auth/me')).text);
+    assert.equal(me.user.full_name, kept);
+    assert.deepEqual(Object.keys(me.user).sort(), ['email', 'id', 'role', 'username', ...(kept ? ['full_name'] : [])].sort());
+  }
 });

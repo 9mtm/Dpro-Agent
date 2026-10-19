@@ -1,3 +1,4 @@
+import { safeConsole } from '../services/safe-error-log.js';
 /**
  * Plugin Manager
  * Manages plugin lifecycle and orchestration
@@ -98,7 +99,7 @@ export class PluginManager extends EventEmitter implements IPluginManager {
    * Load a plugin
    */
   async loadPlugin(pluginId: string): Promise<void> {
-    console.log(`[PluginManager] 📥 Loading plugin: ${pluginId}`);
+    safeConsole.log(`[PluginManager] 📥 Loading plugin: ${pluginId}`);
 
     const plugin = this.loader.getLoadedPlugin(pluginId);
     if (!plugin) {
@@ -112,11 +113,11 @@ export class PluginManager extends EventEmitter implements IPluginManager {
    * Unload a plugin
    */
   async unloadPlugin(pluginId: string): Promise<void> {
-    console.log(`[PluginManager] 📤 Unloading plugin: ${pluginId}`);
+    safeConsole.log(`[PluginManager] 📤 Unloading plugin: ${pluginId}`);
 
     const plugin = this.registry.get(pluginId);
     if (!plugin) {
-      console.warn(`[PluginManager] Plugin ${pluginId} not registered`);
+      safeConsole.warn(`[PluginManager] Plugin ${pluginId} not registered`);
       return;
     }
 
@@ -134,7 +135,7 @@ export class PluginManager extends EventEmitter implements IPluginManager {
 
       console.log(`[PluginManager] ✅ Unloaded: ${plugin.name}`);
     } catch (error) {
-      console.error(`[PluginManager] ❌ Failed to unload ${plugin.name}:`, error);
+      safeConsole.error(`[PluginManager] ❌ Failed to unload ${plugin.name}:`, error);
       throw error;
     }
   }
@@ -143,12 +144,12 @@ export class PluginManager extends EventEmitter implements IPluginManager {
    * Reload a plugin
    */
   async reloadPlugin(pluginId: string): Promise<void> {
-    console.log(`[PluginManager] 🔄 Reloading plugin: ${pluginId}`);
+    safeConsole.log(`[PluginManager] 🔄 Reloading plugin: ${pluginId}`);
 
     await this.unloadPlugin(pluginId);
     await this.loadPlugin(pluginId);
 
-    console.log(`[PluginManager] ✅ Reloaded plugin: ${pluginId}`);
+    safeConsole.log(`[PluginManager] ✅ Reloaded plugin: ${pluginId}`);
   }
 
   /**

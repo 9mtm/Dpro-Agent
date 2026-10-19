@@ -1,3 +1,4 @@
+import { safeConsole } from './safe-error-log.js';
 /**
  * Notification Service
  *
@@ -395,7 +396,7 @@ async function dispatchEmail(
   // Example with nodemailer:
   // const transporter = nodemailer.createTransport({ ... });
   // await transporter.sendMail({ from, to, subject: title, text: body });
-  console.log(`[Notification] Email → ${to}: ${title}`);
+  safeConsole.log(`[Notification] Email → ${to}: ${title}`);
 }
 
 async function dispatchPush(
@@ -406,7 +407,7 @@ async function dispatchPush(
   // TODO: integrate web-push library
   // const subscription = JSON.parse(subscriptionJson);
   // await webpush.sendNotification(subscription, JSON.stringify({ title, body }));
-  console.log(`[Notification] Push → ${subscriptionJson.slice(0, 30)}: ${title}`);
+  safeConsole.log(`[Notification] Push → ${subscriptionJson.slice(0, 30)}: ${title}`);
 }
 
 async function dispatchWhatsApp(
@@ -416,7 +417,7 @@ async function dispatchWhatsApp(
 ): Promise<void> {
   // TODO: integrate Twilio / WhatsApp Business API / wwebjs
   // await twilioClient.messages.create({ body: `${title}: ${body}`, from: 'whatsapp:+...', to: `whatsapp:${phone}` });
-  console.log(`[Notification] WhatsApp → ${phone}: ${title}`);
+  safeConsole.log(`[Notification] WhatsApp → ${phone}: ${title}`);
 }
 
 // ── Schedule Engine ───────────────────────────────────────────────────────────

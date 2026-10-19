@@ -1,16 +1,22 @@
+import { safeConsole } from '../services/safe-error-log.js';
 /**
  * Docker Manager
  * Manages Docker containers for sandboxed execution
  */
 
-import { exec, spawn } from 'child_process';
+import { execFile, spawn, type ExecFileOptions } from 'child_process';
 import { promisify } from 'util';
 import { v4 as uuid } from 'uuid';
 import type { DockerConfig, SandboxSession, SandboxConfig } from './types.js';
 
-const execAsync = promisify(exec);
+const execFileAsync = promisify(execFile);
+type DockerCommand = (args: string[], options?: ExecFileOptions) => Promise<{ stdout: string; stderr: string }>;
+const runDockerCommand: DockerCommand = (args, options = {}) => execFileAsync('docker', args, { ...options, encoding: 'utf8' });
+const validImage = (image: string) => typeof image === 'string' && /^[A-Za-z0-9][A-Za-z0-9._/:@-]{0,511}$/.test(image);
 
 export class DockerManager {
+  constructor(private readonly runCommand: DockerCommand = runDockerCommand) {}
+
   private sessions: Map<string, SandboxSession> = new Map();
   private dockerAvailable: boolean | null = null;
 
@@ -23,8 +29,8 @@ export class DockerManager {
     }
 
     try {
-      await execAsync('docker --version');
-      await execAsync('docker info');
+      await this.runCommand(['--version']);
+      await this.runCommand(['info']);
       this.dockerAvailable = true;
       console.log('[Sandbox] Docker is available');
       return true;
@@ -39,20 +45,21 @@ export class DockerManager {
    * Pull Docker image if not exists
    */
   async ensureImage(image: string): Promise<boolean> {
+    if (!validImage(image)) return false;
     try {
       // Check if image exists locally
-      const { stdout } = await execAsync(`docker images -q ${image}`);
+      const { stdout } = await this.runCommand(['images', '-q', '--', image]);
       if (stdout.trim()) {
         return true;
       }
 
       // Pull image
-      console.log(`[Sandbox] Pulling image: ${image}`);
-      await execAsync(`docker pull ${image}`, { timeout: 300000 }); // 5 min timeout
-      console.log(`[Sandbox] Image pulled: ${image}`);
+      safeConsole.log(`[Sandbox] Pulling image: ${image}`);
+      await this.runCommand(['pull', '--', image], { timeout: 300000 }); // 5 min timeout
+      safeConsole.log(`[Sandbox] Image pulled: ${image}`);
       return true;
     } catch (error) {
-      console.error(`[Sandbox] Failed to pull image ${image}:`, error);
+      safeConsole.error(`[Sandbox] Failed to pull image ${image}:`, error);
       return false;
     }
   }
@@ -61,6 +68,7 @@ export class DockerManager {
    * Create a new sandbox session (container)
    */
   async createSession(config: SandboxConfig, agentId?: string): Promise<SandboxSession> {
+    if (!validImage(config.docker.image)) throw new Error('Invalid Docker image reference');
     const sessionId = uuid();
     const containerName = `sandbox-${sessionId.slice(0, 8)}`;
 
@@ -69,13 +77,12 @@ export class DockerManager {
 
     try {
       // Create container (don't start yet)
-      const { stdout } = await execAsync(
-        `docker create ${dockerArgs.join(' ')} ${config.docker.image} tail -f /dev/null`
-      );
+      const { stdout } = await this.runCommand(['create', ...dockerArgs, '--', config.docker.image, 'tail', '-f', '/dev/null']);
       const containerId = stdout.trim();
+      if (!/^[a-f0-9]{12,64}$/i.test(containerId)) throw new Error('Invalid Docker container identifier');
 
       // Start container
-      await execAsync(`docker start ${containerId}`);
+      await this.runCommand(['start', '--', containerId]);
 
       const session: SandboxSession = {
         id: sessionId,
@@ -183,7 +190,7 @@ export class DockerManager {
       execArgs.push('-i');
     }
 
-    execArgs.push(session.containerId);
+    execArgs.push('--', session.containerId);
     execArgs.push('sh', '-c', command);
 
     return new Promise((resolve, reject) => {
@@ -257,11 +264,11 @@ export class DockerManager {
 
     try {
       // Stop container
-      await execAsync(`docker stop ${session.containerId}`, { timeout: 10000 });
+      await this.runCommand(['stop', '--', session.containerId], { timeout: 10000 });
     } catch {
       // Force kill if stop fails
       try {
-        await execAsync(`docker kill ${session.containerId}`);
+        await this.runCommand(['kill', '--', session.containerId]);
       } catch {
         // Ignore
       }
@@ -269,14 +276,14 @@ export class DockerManager {
 
     try {
       // Remove container
-      await execAsync(`docker rm -f ${session.containerId}`);
+      await this.runCommand(['rm', '-f', '--', session.containerId]);
     } catch {
       // Ignore
     }
 
     session.status = 'stopped';
     this.sessions.delete(sessionId);
-    console.log(`[Sandbox] Destroyed session: ${sessionId}`);
+    safeConsole.log(`[Sandbox] Destroyed session: ${sessionId}`);
   }
 
   /**

@@ -32,7 +32,9 @@ import type { MemoryRequest, MemoryController } from './memory';
 import { retryAfterSeconds } from './retry-after.js';
 
 export type Mode = 'fixture' | 'mock' | 'live';
-export type User = Readonly<{ id: string; email: string; username: string; role: 'owner' | 'admin' | 'user' | 'guest' }>;
+export type User = Readonly<{ id: string; email: string; username: string; role: 'owner' | 'admin' | 'user' | 'guest'; name?: string }>;
+/** What the UI calls the account: the name typed at setup, else the user name. */
+export const displayName = (u: User): string => u.name ?? u.username;
 type BoundaryNotice = 'published_password' | 'account_inactive' | 'rate_limited' | 'origin_not_allowed' | 'host_not_allowed';
 export type SessionState = Readonly<{ mode: Mode; epoch: number; retryAfterSeconds?: number; setup?: 'checking' | 'required' | 'login' | 'unavailable'; phase: 'signed-out' | 'signing-in' | 'authenticated' | 'signing-out'; user?: User; notice?: BoundaryNotice | 'invalid' | 'denied' | 'limited' | 'unavailable' | 'expired' | 'logout-confirmed' | 'logout-unknown' }>;
 import { SessionFailure } from './session-failure';
@@ -48,7 +50,8 @@ function user(value: unknown): User {
   if (!record(value) || !['owner', 'admin', 'user', 'guest'].includes(value.role as string)
     || !['id', 'email', 'username'].every(k => typeof value[k] === 'string' && (value[k] as string).length > 0 && (value[k] as string).length <= 320)
     || !id(value.id as string)) throw new SessionFailure('unavailable');
-  return Object.freeze({ id: value.id as string, email: value.email as string, username: value.username as string, role: value.role as User['role'] });
+  const name = typeof value.full_name === 'string' ? value.full_name.trim() : '';
+  return Object.freeze({ id: value.id as string, email: value.email as string, username: value.username as string, role: value.role as User['role'], ...(name && name.length <= 200 ? { name } : {}) });
 }
 // Reject before URL normalization. No generic URL, header, key or mutation escape hatch.
 export function allowedRequest(method: string, path: string, body?: unknown): boolean {

@@ -1,3 +1,4 @@
+import { safeConsole } from '../../services/safe-error-log.js';
 /**
  * Database Management API Routes
  * Stats, backups, vacuum, optimization
@@ -512,7 +513,7 @@ export async function databaseRoutes(fastify: FastifyInstance) {
         deletedCount += wafScans.changes;
       }
 
-      console.log(`[Database API] ✅ Cleaned ${deletedCount} old records (>${daysOld} days)`);
+      safeConsole.log(`[Database API] ✅ Cleaned ${deletedCount} old records (>${daysOld} days)`);
 
       return {
         success: true,

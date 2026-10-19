@@ -1,3 +1,4 @@
+import { safeConsole } from './safe-error-log.js';
 /**
  * Agent Evolution Scheduler
  *
@@ -110,7 +111,7 @@ export async function unscheduleAgentEvolution(agentId) {
   if (jobId) {
     cronEngine.unscheduleJob(jobId);
 
-    console.log(`[Evolution Scheduler] ⏹️  Unscheduled evolution for agent ${agentId}`);
+    safeConsole.log(`[Evolution Scheduler] ⏹️  Unscheduled evolution for agent ${agentId}`);
   }
 }
 

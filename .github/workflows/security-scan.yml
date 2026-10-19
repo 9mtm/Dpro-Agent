@@ -1,116 +1,65 @@
-# SECURITY: Automated dependency scanning and security checks (L-07)
-# Runs on every push and pull request to detect vulnerabilities
-
 name: Security Scanning
 
 on:
+  workflow_dispatch:
   push:
-    branches: [ main, develop ]
+    branches: [main, develop]
   pull_request:
-    branches: [ main, develop ]
+    branches: [main, develop]
   schedule:
-    # Run daily at 2 AM UTC
     - cron: '0 2 * * *'
+
+permissions:
+  contents: read
+
+concurrency:
+  group: security-${{ github.ref }}
+  cancel-in-progress: true
 
 jobs:
   dependency-scan:
-    name: Dependency Security Scan
+    name: Dependency audit
     runs-on: ubuntu-latest
-
+    strategy:
+      fail-fast: false
+      matrix:
+        package: [backend, core-ui, desktop]
     steps:
-      - name: Checkout code
-        uses: actions/checkout@v4
-
-      - name: Setup Node.js
-        uses: actions/setup-node@v4
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
         with:
-          node-version: '20'
-
-      - name: Install pnpm
-        uses: pnpm/action-setup@v2
-        with:
-          version: 8
-
-      - name: Install dependencies
-        run: pnpm install
-
-      - name: Run pnpm audit
-        run: |
-          echo "🔍 Running pnpm audit..."
-          pnpm audit --audit-level=moderate || true
-          pnpm audit --json > audit-results.json || true
-
-      - name: Check for high/critical vulnerabilities
-        run: |
-          # Check if audit results exist
-          if [ ! -f "audit-results.json" ]; then
-            echo "⚠️  No audit results found, skipping vulnerability check"
-            exit 0
-          fi
-
-          # Check if file is empty or invalid JSON
-          if [ ! -s "audit-results.json" ]; then
-            echo "⚠️  Audit results file is empty, skipping vulnerability check"
-            exit 0
-          fi
-
-          # Try to parse vulnerabilities (with error handling)
-          HIGH_VULN=$(cat audit-results.json | jq -r '.metadata.vulnerabilities.high // 0' 2>/dev/null || echo "0")
-          CRITICAL_VULN=$(cat audit-results.json | jq -r '.metadata.vulnerabilities.critical // 0' 2>/dev/null || echo "0")
-
-          echo "High severity: $HIGH_VULN"
-          echo "Critical severity: $CRITICAL_VULN"
-
-          if [ "$CRITICAL_VULN" != "0" ] && [ "$CRITICAL_VULN" -gt 0 ]; then
-            echo "❌ CRITICAL vulnerabilities found!"
-            exit 1
-          fi
-
-          if [ "$HIGH_VULN" != "0" ] && [ "$HIGH_VULN" -gt 5 ]; then
-            echo "⚠️  Warning: $HIGH_VULN high severity vulnerabilities found"
-          fi
-
-      - name: Upload audit results
-        if: always()
-        uses: actions/upload-artifact@v4
-        with:
-          name: security-audit-results
-          path: audit-results.json
+          node-version: '24.21.0'
+      - name: Audit locked dependencies
+        working-directory: packages/${{ matrix.package }}
+        run: npm audit --package-lock-only --audit-level=low
 
   secret-scan:
-    name: Secret Detection Scan
+    name: Secret detection
     runs-on: ubuntu-latest
-
     steps:
-      - name: Checkout code
-        uses: actions/checkout@v4
+      - uses: actions/checkout@v4
         with:
-          fetch-depth: 0 # Full history for better detection
-
-      - name: Run Gitleaks
-        uses: gitleaks/gitleaks-action@v2
+          fetch-depth: 0
+      - uses: gitleaks/gitleaks-action@v2
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-          GITLEAKS_LICENSE: ${{ secrets.GITLEAKS_LICENSE }} # Optional: for Gitleaks Pro features
-        # Allow to continue even if secrets are found (will be reviewed manually)
-        continue-on-error: true
+          GITLEAKS_ENABLE_UPLOAD_ARTIFACT: 'false'
+          GITLEAKS_ENABLE_COMMENTS: 'false'
 
   code-security:
-    name: Code Security Analysis
+    name: CodeQL current source
     runs-on: ubuntu-latest
     permissions:
       security-events: write
       contents: read
       actions: read
-
     steps:
-      - name: Checkout code
-        uses: actions/checkout@v4
-
-      - name: Initialize CodeQL
-        uses: github/codeql-action/init@v3
+      - uses: actions/checkout@v4
+      - uses: github/codeql-action/init@v3
         with:
-          languages: javascript, typescript
-
-      - name: Perform CodeQL Analysis
-        uses: github/codeql-action/analyze@v3
+          languages: javascript-typescript
+          build-mode: none
+          queries: security-extended
+      - uses: github/codeql-action/analyze@v3
+        with:
+          category: '.github/workflows/security-scan.yml:code-security'

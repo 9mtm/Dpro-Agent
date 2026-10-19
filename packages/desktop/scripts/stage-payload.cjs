@@ -5,7 +5,7 @@
  *
  *   payload/node/node[.exe]  the Node runtime that runs the backend
  *   payload/backend/         backend source + its installed node_modules
- *   payload/node_modules/    the repository-root modules the backend also resolves (hoisted ones)
+ *   payload/node_modules/    hoisted dependencies, copied by an explicit resource mapping
  *   payload/core-ui/         UI bridge scripts + contracts + the candidate UI build
  *
  * Local builds only: the Node runtime is the one running this script (or
@@ -43,6 +43,8 @@ const noSecrets = src => !/(^|[\\/])\.env(\.|$)(?!example)/.test(src) && !src.sp
 
 /** A build made with --dev-quick-login carries test passwords: never put it into an app. */
 function refuseDevAccounts(coreUi, buildDir) {
+  const html = fs.readFileSync(path.join(buildDir, 'index.html'), 'utf8');
+  if (!/<meta name="core-ui-dev-quick-login" content="disabled"\s*\/?\s*>/.test(html)) throw new Error('refusing UI without explicit disabled dev quick-login provenance');
   let accounts = [];
   try { accounts = JSON.parse(fs.readFileSync(path.join(coreUi, 'dev-accounts.local.json'), 'utf8')); } catch { return; }
   const needles = (Array.isArray(accounts) ? accounts : []).flatMap(a => [a && a.email, a && a.password]).filter(x => typeof x === 'string' && x.length >= 4);
@@ -66,8 +68,9 @@ function stage(options) {
 
   const backend = path.join(packages, 'backend');
   for (const part of BACKEND_PARTS) copy(path.join(backend, part), path.join(out, 'backend', part), noSecrets);
-  copy(fs.realpathSync(options.backendModules), path.join(out, 'backend', 'node_modules'), src => !SKIP_MODULES.has(path.basename(src)));
-  copy(fs.realpathSync(options.rootModules), path.join(out, 'node_modules'), src => !SKIP_MODULES.has(path.basename(src)));
+  const moduleFilter = src => !SKIP_MODULES.has(path.basename(src)) && noSecrets(src);
+  copy(fs.realpathSync(options.backendModules), path.join(out, 'backend', 'node_modules'), moduleFilter);
+  copy(fs.realpathSync(options.rootModules), path.join(out, 'node_modules'), moduleFilter);
   // node-pty's helper must stay executable (npm may have installed it without the bit).
   for (const helper of ['build/Release/spawn-helper', `prebuilds/${process.platform}-${process.arch}/spawn-helper`]) {
     const file = path.join(out, 'backend', 'node_modules', 'node-pty', helper);
@@ -100,4 +103,4 @@ if (require.main === module) {
   }
 }
 
-module.exports = { stage, parseArgs, BACKEND_PARTS };
+module.exports = { stage, parseArgs, BACKEND_PARTS, refuseDevAccounts };

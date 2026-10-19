@@ -1,3 +1,4 @@
+import { safeConsole } from './safe-error-log.js';
 /**
  * Anthropic Skills Service
  *
@@ -196,7 +197,7 @@ export class AnthropicSkillsService {
 
       throw new Error('SKILL.md not found or empty');
     } catch (error) {
-      console.error(`Error fetching skill content for ${skillPath}:`, error);
+      safeConsole.error(`Error fetching skill content for ${skillPath}:`, error);
       throw new Error('Failed to fetch skill content');
     }
   }
@@ -247,7 +248,7 @@ export class AnthropicSkillsService {
     }
 
     try {
-      console.log(`[AnthropicSkills] 📦 Installing skill: ${skillName} from path: ${skillPath}`);
+      safeConsole.log(`[AnthropicSkills] 📦 Installing skill: ${skillName} from path: ${skillPath}`);
 
       // 1. Fetch skill content from GitHub
       console.log(`[AnthropicSkills] 📥 Fetching content from GitHub...`);
@@ -281,7 +282,7 @@ export class AnthropicSkillsService {
 
       // 6. Insert into database
       const category = this.extractCategoryFromPath(skillPath);
-      console.log(`[AnthropicSkills] 💾 Saving to database with category: ${category}`);
+      safeConsole.log(`[AnthropicSkills] 💾 Saving to database with category: ${category}`);
 
       await q.run(`
         INSERT INTO installed_skills (

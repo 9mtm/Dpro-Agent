@@ -1,3 +1,4 @@
+import { safeConsole } from '../../services/safe-error-log.js';
 /**
  * Claude Code CLI Tool
  *
@@ -11,7 +12,7 @@
  *   - Delegating coding tasks with full Claude Code tool access
  */
 
-import { execFile, exec } from 'node:child_process';
+import { execFile } from 'node:child_process';
 import { promisify } from 'node:util';
 import * as os from 'node:os';
 import * as path from 'node:path';
@@ -29,7 +30,7 @@ import {
 import { cliFailureText, cliNoOutputText, safeErrorFields } from '../../services/safe-error-log.js';
 
 const execFileAsync = promisify(execFile);
-const execAsync = promisify(exec);
+import { cliInvocation } from './process-invocation.js';
 
 // npm global bin dirs — checked in priority order
 const NODE_BIN_DIRS_WIN = [
@@ -41,6 +42,7 @@ const NODE_BIN_DIRS_WIN = [
 async function findClaudeExecutable(): Promise<string> {
   if (process.platform === 'win32') {
     const candidates = NODE_BIN_DIRS_WIN.flatMap(d => [
+      path.join(d, 'claude.exe'),
       path.join(d, 'claude.cmd'),
       path.join(d, 'claude'),
     ]).concat(['claude']);
@@ -141,9 +143,9 @@ export const claudeCliTool: Tool = {
       };
     }
 
-    console.log(`[ClaudeCLI] 🚀 Sending prompt (${prompt.length} chars)`);
+    safeConsole.log(`[ClaudeCLI] 🚀 Sending prompt (${prompt.length} chars)`);
     if (workdir) console.log(`[ClaudeCLI]   Workdir: ${workdir}`);
-    if (model) console.log(`[ClaudeCLI]   Model: ${model}`);
+    if (model) safeConsole.log(`[ClaudeCLI]   Model: ${model}`);
 
     // SECURITY (S1.1): key from the credential authority only: the server env
     // key, then the calling agent's OWN key, then the caller's own credentials.
@@ -178,25 +180,14 @@ export const claudeCliTool: Tool = {
       let stdout: string;
       let stderr: string;
 
-      if (process.platform === 'win32' && claudeBin.endsWith('.cmd')) {
-        // On Windows, .cmd files need exec() (shell) — use command name so PATH resolves correctly
-        const binName = path.basename(claudeBin, '.cmd');
-        const shellArgs = args.map(a => (a.includes(' ') ? `"${a.replace(/"/g, '\\"')}"` : a)).join(' ');
-        const shellCmd = `${binName} ${shellArgs}`;
-        ({ stdout, stderr } = await execAsync(shellCmd, {
-          timeout,
-          maxBuffer: 1024 * 1024 * 10,
-          cwd,
-          env: childEnv,
-        }));
-      } else {
-        ({ stdout, stderr } = await execFileAsync(claudeBin, args, {
-          timeout,
-          maxBuffer: 1024 * 1024 * 10,
-          cwd,
-          env: childEnv,
-        }));
-      }
+      const invocation = await cliInvocation(claudeBin, args);
+      ({ stdout, stderr } = await execFileAsync(invocation.file, invocation.args, {
+        timeout,
+        maxBuffer: 1024 * 1024 * 10,
+        cwd,
+        env: childEnv,
+        windowsHide: true,
+      }));
 
       // SECURITY (FU-03): stderr is never the answer, even on exit 0 (it can
       // hold the prompt, paths or tokens). Empty stdout gets a generic text.

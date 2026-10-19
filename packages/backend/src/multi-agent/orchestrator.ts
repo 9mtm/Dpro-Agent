@@ -1,3 +1,4 @@
+import { safeConsole } from '../services/safe-error-log.js';
 /**
  * Agent Orchestrator
  * Manages agent spawning, task assignment, and coordination
@@ -310,7 +311,7 @@ export class AgentOrchestrator {
       new Date().toISOString()
     );
 
-    console.log(`[Orchestrator] Registered agent: ${definition.name} (${definition.id})`);
+    safeConsole.log(`[Orchestrator] Registered agent: ${definition.name} (${definition.id})`);
     return instance;
   }
 
@@ -421,7 +422,7 @@ export class AgentOrchestrator {
       fullDefinition.metadata ? JSON.stringify(fullDefinition.metadata) : null
     );
 
-    console.log(`[Orchestrator] Created team: ${fullDefinition.name} (${id})`);
+    safeConsole.log(`[Orchestrator] Created team: ${fullDefinition.name} (${id})`);
     return instance;
   }
 
@@ -538,7 +539,7 @@ export class AgentOrchestrator {
       if (parent) this.persistTask(parent);
     }
 
-    console.log(`[Orchestrator] Created task: ${task.title} (${id})`);
+    safeConsole.log(`[Orchestrator] Created task: ${task.title} (${id})`);
     return task;
   }
 

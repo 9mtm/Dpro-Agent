@@ -1,0 +1,101 @@
+name: Current Desktop Release
+
+on:
+  workflow_dispatch:
+    inputs:
+      platform:
+        description: Platform to verify (all required for draft publication)
+        type: choice
+        default: all
+        options: [all, mac-arm64, mac-x64, win-x64, linux-x64]
+      publish_draft:
+        description: Create a draft release after all platforms pass
+        type: boolean
+        default: false
+
+permissions:
+  contents: read
+
+concurrency:
+  group: desktop-release-${{ github.ref }}-${{ inputs.platform || 'all' }}
+  cancel-in-progress: false
+
+jobs:
+  build:
+    strategy:
+      fail-fast: false
+      matrix:
+        include: ${{ fromJSON(inputs.platform == 'mac-arm64' && '[{"os":"macos-14","platform":"mac-arm64","target":"dist:mac"}]' || inputs.platform == 'mac-x64' && '[{"os":"macos-15-intel","platform":"mac-x64","target":"dist:mac"}]' || inputs.platform == 'win-x64' && '[{"os":"windows-latest","platform":"win-x64","target":"dist:win"}]' || inputs.platform == 'linux-x64' && '[{"os":"ubuntu-22.04","platform":"linux-x64","target":"dist:linux"}]' || '[{"os":"macos-14","platform":"mac-arm64","target":"dist:mac"},{"os":"macos-15-intel","platform":"mac-x64","target":"dist:mac"},{"os":"windows-latest","platform":"win-x64","target":"dist:win"},{"os":"ubuntu-22.04","platform":"linux-x64","target":"dist:linux"}]') }}
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 45
+    env:
+      CSC_IDENTITY_AUTO_DISCOVERY: 'false'
+      PUPPETEER_SKIP_DOWNLOAD: 'true'
+      PLAYWRIGHT_SKIP_BROWSER_DOWNLOAD: '1'
+      npm_config_fund: 'false'
+      npm_config_audit: 'false'
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '24.21.0'
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - name: Install locked dependencies
+        shell: bash
+        run: |
+          npm ci --prefix packages/backend
+          npm ci --prefix packages/core-ui
+          npm ci --prefix packages/desktop
+      - name: Build verified UI
+        run: |
+          node packages/core-ui/scripts/build.cjs
+          node packages/core-ui/scripts/build.cjs --candidate --live-entry
+      - name: Test UI and desktop retention
+        timeout-minutes: 5
+        shell: bash
+        run: |
+          node --test --test-concurrency=2 --test-timeout=90000 packages/core-ui/tests/*.test.cjs
+          node --test --test-timeout=90000 packages/desktop/test/*.test.cjs
+      - name: Test backend persistence and security boundaries
+        working-directory: packages/backend
+        run: node --import tsx --test test/local-agent-import.test.mjs test/local-import-durable.test.mjs test/local-import-pause.test.mjs test/local-import-store.test.mjs test/dependency-contracts.test.mjs test/cli-invocation.test.mjs test/desktop-args.test.mjs test/safe-logging.test.mjs test/docker-invocation.test.mjs test/extension-resource-path.test.mjs test/regular-file-read.test.mjs test/property-map.test.mjs test/setup-input.test.mjs test/python-process.test.mjs test/sql-binding.test.mjs test/memory-display-page.test.mjs test/local-import-large-dedupe.test.mjs
+      - name: Stage production runtime
+        shell: bash
+        run: |
+          npm prune --omit=dev --prefix packages/backend
+          mkdir -p .release-empty-modules
+          node packages/desktop/scripts/stage-payload.cjs --root-modules .release-empty-modules
+      - name: Build installers
+        run: npm --prefix packages/desktop run ${{ matrix.target }}
+      - name: Verify unpacked runtime
+        run: node packages/desktop/scripts/verify-release.cjs
+      - name: Collect checksummed installers
+        run: node packages/desktop/scripts/collect-release.cjs ${{ matrix.platform }}
+      - uses: actions/upload-artifact@v4
+        with:
+          name: desktop-${{ matrix.platform }}
+          path: packages/desktop/release/publish/*
+          if-no-files-found: error
+          retention-days: 14
+
+  draft:
+    needs: build
+    if: ${{ inputs.publish_draft && (inputs.platform == 'all' || inputs.platform == '') }}
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/download-artifact@v4
+        with:
+          pattern: desktop-*
+          path: release-assets
+          merge-multiple: true
+      - name: Create draft for review
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          VERSION=$(node -p "require('./packages/desktop/package.json').version")
+          gh release create "v$VERSION" release-assets/* --draft --target "$GITHUB_SHA" --title "Dpro $VERSION" --notes "Current Electron desktop application with background imports and existing workspace reuse. These builds are unsigned. Verify the platform SHA256 manifest before installation."

@@ -1,3 +1,4 @@
+import { safeConsole } from '../services/safe-error-log.js';
 /**
  * Credential Manager
  *
@@ -67,7 +68,7 @@ export class CredentialManager implements ICredentialManager {
     // Save
     await this.storage.save(credential);
 
-    console.log(`[Credentials] ✅ Created: ${credential.name} (${credential.type})`);
+    safeConsole.log(`[Credentials] ✅ Created: ${credential.name} (${credential.type})`);
 
     return credential;
   }

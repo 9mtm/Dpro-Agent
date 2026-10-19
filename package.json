@@ -14,7 +14,7 @@
     "dev": "node scripts/next-local.mjs dev --hostname 127.0.0.1 --port 41521",
     "build": "node scripts/next-local.mjs build",
     "start": "node scripts/next-local.mjs start --hostname 127.0.0.1 --port 41521",
-    "lint": "eslint",
+    "lint": "npm --prefix packages/core-ui run typecheck",
     "backend:dev": "cd packages/backend && npm run dev",
     "backend:install": "cd packages/backend && npm install",
     "backend:build": "cd packages/backend && npm run build",

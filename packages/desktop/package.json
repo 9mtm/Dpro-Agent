@@ -1,7 +1,7 @@
 {
   "name": "@agent-player/desktop",
   "productName": "Dpro",
-  "version": "1.3.0",
+  "version": "1.3.2",
   "private": true,
   "description": "Dpro desktop app",
   "license": "MIT",
@@ -38,6 +38,13 @@
         "filter": [
           "**/*"
         ]
+      },
+      {
+        "from": "payload/node_modules",
+        "to": "payload/node_modules",
+        "filter": [
+          "**/*"
+        ]
       }
     ],
     "asar": true,
@@ -53,7 +60,8 @@
       "hardenedRuntime": false,
       "extendInfo": {
         "NSMicrophoneUsageDescription": "Dpro uses the microphone only when you press the microphone button to dictate a message."
-      }
+      },
+      "icon": "build/icon.icns"
     },
     "win": {
       "target": [
@@ -70,6 +78,10 @@
         "AppImage"
       ],
       "category": "Development"
-    }
+    },
+    "executableName": "Dpro"
+  },
+  "overrides": {
+    "@electron/get": "5.1.0"
   }
 }

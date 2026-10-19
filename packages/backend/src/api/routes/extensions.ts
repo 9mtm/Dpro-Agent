@@ -1,3 +1,4 @@
+import { safeConsole } from '../../services/safe-error-log.js';
 /**
  * Extensions API Routes
  * Manage modern Extension SDK extensions
@@ -462,7 +463,7 @@ export async function extensionsRoutes(fastify: FastifyInstance) {
       // Update config
       await q.run('UPDATE extension_configs SET config_json = ? WHERE extension_id = ?', JSON.stringify(config), id);
 
-      console.log(`[Extensions API] ✅ Config updated for ${id}`);
+      safeConsole.log(`[Extensions API] ✅ Config updated for ${id}`);
 
       return {
         success: true,
@@ -560,7 +561,7 @@ export async function extensionsRoutes(fastify: FastifyInstance) {
         enabled: config?.enabled === 1,
       };
     } catch (error: any) {
-      console.error(`[Extensions API] ❌ Get status failed for ${(request.params as any).id}:`, error);
+      safeConsole.error(`[Extensions API] ❌ Get status failed for ${(request.params as any).id}:`, error);
       return handleError(reply, error, 'internal', '[Extensions]');
     }
   });

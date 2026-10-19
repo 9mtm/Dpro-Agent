@@ -54,6 +54,7 @@ export function createCardMock() {
       { id: 'llama-fiction:3b', name: '🏠 llama-fiction:3b', provider: 'local', size: '2.0GB', available: true },
       { id: 'lmstudio:fiction/mistral-7b', name: 'fiction/mistral-7b', provider: 'lmstudio', size: '', available: true },
     ], activeProvider: 'local' } };
+    if (p.kind === 'memory-page') return { status: 200, body: { memories: [...mem.values()].map(view), total: mem.size, nextCursor: null } };
     if (p.kind === 'memories') {
       if (request.method === 'GET') return { status: 200, body: { success: true, memories: [...mem.values()].map(view) } };
       const m: Mem = { id: uuid(), type: body!.type, content: body!.content, importance: body!.importance ?? 5, drawer: body!.drawer ?? { kind: 'owner' }, memoryLayer: 'working', createdAt: now(), tags: [], history: [] };

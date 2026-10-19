@@ -18,6 +18,7 @@
  */
 
 import { lockName, one, q, run, sql, type Step } from '../repositories/sql-steps.js';
+import { trimTrailingSlashes } from '../auth/setup-input.js';
 import { getSettingsManager } from '../settings/index.js';
 import { DEFAULT_SETTINGS } from '../settings/types.js';
 import type { AgentSettings } from '../settings/types.js';
@@ -165,10 +166,10 @@ export function validateStep(step: unknown, data: unknown): ValidatedStep {
       let url: string | undefined;
       if (provider === 'ollama') {
         url = ollamaUrl === undefined || ollamaUrl === '' ? DEFAULT_OLLAMA_URL : (ollamaUrl as string);
-        if (typeof url !== 'string' || !isLoopbackUrl(url)) {
+        if (typeof url !== 'string' || url.length > 2048 || !isLoopbackUrl(url)) {
           throw new WizardInputError('Ollama URL must be a local address (127.0.0.1)');
         }
-        url = url.replace(/\/+$/, '');
+        url = trimTrailingSlashes(url);
       } else if (ollamaUrl !== undefined && ollamaUrl !== '') {
         throw new WizardInputError('ollamaUrl is only valid for the Ollama provider');
       }

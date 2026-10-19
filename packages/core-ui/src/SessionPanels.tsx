@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useState, useSyncExternalStore } from 'react';
-import { bindMemorySession } from './session';
+import { bindMemorySession, displayName } from './session';
 import type { SessionClient } from './session';
 import { createMemoryAdapter, MemoryController, validDrawer } from './memory';
 import { AgentsController } from './agents';
@@ -22,9 +22,9 @@ export function AccountPanel({ client }: { client: SessionClient }) {
   const [confirm, setConfirm] = useState(false);
   return <section className="panel account-page" aria-label="Account"><h2>Account</h2>
     <div className="account-card">
-      <span className="team-avatar account-avatar" aria-hidden="true">{user.username.trim().slice(0, 1).toUpperCase() || '?'}</span>
+      <span className="team-avatar account-avatar" aria-hidden="true">{displayName(user).trim().slice(0, 1).toUpperCase() || '?'}</span>
       <div className="account-who">
-        <p className="account-name">Signed in as <bdi>{user.username}</bdi></p>
+        <p className="account-name">Signed in as <bdi>{displayName(user)}</bdi></p>
         <p className="fine-print"><bdi>{user.email}</bdi></p>
       </div>
       <span className="badge">{roleName[user.role] ?? user.role}</span>

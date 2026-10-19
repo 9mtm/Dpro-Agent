@@ -1,3 +1,4 @@
+import { readRegularFile, FileReadError } from '../services/read-regular-file.js';
 /**
  * Memory files (CORE-04): the database is canonical; every drawer can be
  * exported as a readable Markdown file, and an edited file comes back only
@@ -397,9 +398,13 @@ export async function exportDrawerFileIfPresent(userId: string, drawer: DrawerRe
 export async function readDrawerFile(userId: string, agentId: string, drawer: DrawerRef): Promise<string> {
   const file = drawerFilePath(agentId, userId, drawer);
   if (!(await refuseNonRegular(file))) throw new MemoryFileError('This drawer has not been exported yet', 404);
-  const st = await fs.stat(file);
-  if (st.size > MAX_FILE_BYTES) throw new MemoryFileError('File is too large');
-  return fs.readFile(file, 'utf-8');
+  try {
+    const { data } = await readRegularFile(file, MAX_FILE_BYTES, { root: path.dirname(file) });
+    return data.toString('utf8');
+  } catch (error) {
+    if (error instanceof FileReadError) throw new MemoryFileError(error.message);
+    throw error;
+  }
 }
 
 /** Canonical hash of what a reviewer sees in a proposal (see MemoryProposal.reviewHash). */

@@ -1,12 +1,15 @@
 import { useEffect, useState, useSyncExternalStore } from 'react';
 import type { ReactNode } from 'react';
 import type { SessionClient } from './session';
+import { displayName } from './session';
 import { ConversationsController } from './conversations';
 import { ChatView } from './ChatView';
 import { ConversationList } from './ConversationList';
 import { AgentsDestination } from './AgentsDestination';
 import { BoardController } from './board';
 import { TaskBoard } from './TaskBoard';
+import { AppSettings } from './AppSettings';
+import { useAppNavigation, useAppTheme } from './app-navigation';
 import { AccountPanel } from './SessionPanels';
 import { MemoryPage } from './MemoryViews';
 import type { MemoryFocus } from './MemoryViews';
@@ -17,13 +20,13 @@ import { CommandPalette } from './CommandPalette';
 import { ChatSearchController } from './chat-search';
 import type { Command } from './CommandPalette';
 
-type Page = 'chat' | 'agents' | 'board' | 'memory' | 'account';
+type Page = 'chat' | 'agents' | 'board' | 'memory' | 'account' | 'settings' | 'about';
 const pages: ReadonlyArray<{ key: Page; label: string; icon: IconName | 'board' }> = [
   { key: 'chat', label: 'Chat', icon: 'message-circle' },
   { key: 'agents', label: 'Agents', icon: 'user' },
   { key: 'board', label: 'Board', icon: 'board' },
   { key: 'memory', label: 'Memory', icon: 'database' },
-  { key: 'account', label: 'Account', icon: 'settings' },
+  { key: 'settings', label: 'Settings', icon: 'settings' },
 ];
 
 /**
@@ -35,8 +38,10 @@ const pages: ReadonlyArray<{ key: Page; label: string; icon: IconName | 'board' 
 export function SignedInShell({ client, notice }: { client: SessionClient; notice: ReactNode }) {
   const state = useSyncExternalStore(client.subscribe, client.getSnapshot, client.getSnapshot);
   const [page, setPage] = useState<Page>('chat');
-  const [theme, setTheme] = useState<'light' | 'dark'>(() =>
-    typeof window !== 'undefined' && window.matchMedia?.('(prefers-color-scheme: dark)').matches ? 'dark' : 'light');
+  const appearance = useAppTheme();
+  const theme = appearance.theme;
+  const setTheme = (fn: (v: 'light' | 'dark') => 'light' | 'dark') => appearance.setPreference(fn(theme));
+  useAppNavigation(destination => setPage(destination === 'home' ? 'chat' : destination));
   const [chat, setChat] = useState<ConversationsController>();
   useEffect(() => { const c = new ConversationsController(client); setChat(c); void c.load(); return () => c.dispose(); }, [client]);
   // CHAT-PRO-02 D: search inside the chats (the sidebar box and the ⌘K box each keep their own).
@@ -99,10 +104,10 @@ export function SignedInShell({ client, notice }: { client: SessionClient; notic
         {chat && <ConversationList controller={chat} search={user.role === 'guest' ? undefined : search?.side} onOpen={() => setPage('chat')}/>}
       </div>
       <div className="sidebar-footer">
-        <button className="user-chip" onClick={() => setPage('account')} title="Account">
-          <span className="avatar" aria-hidden="true">{(user.username || '?').slice(0, 1).toUpperCase()}</span>
-          <span className="user-name"><bdi>{user.username}</bdi><small>{user.role}</small></span>
-        </button>
+        <details className="account-menu"><summary className="user-chip" title="Account">
+          <span className="avatar" aria-hidden="true">{(displayName(user) || '?').slice(0, 1).toUpperCase()}</span>
+          <span className="user-name"><bdi>{displayName(user)}</bdi><small>{user.role}</small></span>
+        </summary><div><button onClick={() => setPage('account')}>Account & sessions</button><button onClick={() => setPage('settings')}>Settings</button><button onClick={() => client.cancel()}>Sign out on this device</button></div></details>
       </div>
     </aside>
     <main id="content" className="page-area">
@@ -115,6 +120,7 @@ export function SignedInShell({ client, notice }: { client: SessionClient; notic
       <section className="page page-scroll" hidden={page !== 'agents'}><div className="page-column"><AgentsDestination key={`agents-${connectorsFocus}`} client={client} active={page === 'agents'} focusConnectors={connectorsFocus > 0} onOpenMemory={() => setPage('memory')}/></div></section>
       <section className="page page-scroll page-board page-ui" hidden={page !== 'board'}>{board && <TaskBoard controller={board} active={page === 'board'} onOpenChat={id => { void chat?.open(id); setPage('chat'); }}/>}</section>
       <section className="page page-scroll page-wide page-ui" hidden={page !== 'memory'}><MemoryPage client={client} active={page === 'memory'} focus={memoryFocus}/></section>
+      {(page === 'settings' || page === 'about') && <section className="page page-scroll"><AppSettings signedIn preference={appearance.preference} onTheme={appearance.setPreference} onAccount={() => setPage('account')} onAgents={() => setPage('agents')} aboutOnly={page === 'about'}/></section>}
       <section className="page page-scroll" hidden={page !== 'account'}><div className="page-column"><AccountPanel client={client}/></div></section>
     </main>
     <footer className="statusbar">

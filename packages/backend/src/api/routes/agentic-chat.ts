@@ -1,3 +1,4 @@
+import { safeConsole } from '../../services/safe-error-log.js';
 /**
  * Claude Streaming Chat Handler with Agentic Tool Loop
  *
@@ -104,7 +105,7 @@ export async function streamChatClaude(
 ): Promise<FastifyReply> {
   console.log('[Chat] 🚀 Starting Claude agentic stream');
   const startedAt = Date.now();
-  console.log('[Chat]   Model:', model);
+  safeConsole.log('[Chat]   Model:', model);
   console.log('[Chat]   Messages:', messages.length);
   console.log('[Chat]   Tools offered:', tools.length);
 

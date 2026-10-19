@@ -1,3 +1,4 @@
+import { safeConsole } from '../../../src/services/safe-error-log.js';
 /**
  * Campaign Management API Routes
  * CRUD operations + auto-dialer control
@@ -73,7 +74,7 @@ router.get('/:id', async (req, res) => {
       stats: result.stats
     });
   } catch (error) {
-    console.error('[Campaigns API] Error getting campaign:', error);
+    safeConsole.error('[Campaigns API] Error getting campaign:', error);
     res.status(500).json({ error: 'Failed to get campaign' });
   }
 });
@@ -290,7 +291,7 @@ router.post('/:id/start', async (req, res) => {
       message: 'Campaign started'
     });
   } catch (error) {
-    console.error('[Campaigns API] Error starting campaign:', error);
+    safeConsole.error('[Campaigns API] Error starting campaign:', error);
     res.status(500).json({ error: error.message || 'Failed to start campaign' });
   }
 });

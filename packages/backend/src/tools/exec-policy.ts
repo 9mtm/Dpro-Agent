@@ -99,15 +99,15 @@ const CHILD_ENV_ALLOWLIST = [
 export function minimalChildEnv(
   extra: Record<string, string | undefined> = {}
 ): NodeJS.ProcessEnv {
-  const env: NodeJS.ProcessEnv = {};
+  const entries: Array<[string, string]> = [];
   for (const key of CHILD_ENV_ALLOWLIST) {
     const value = process.env[key];
-    if (value !== undefined) env[key] = value;
+    if (typeof value === 'string') entries.push([key, value]);
   }
   for (const [key, value] of Object.entries(extra)) {
-    if (value !== undefined) env[key] = value;
+    if (typeof value === 'string') entries.push([key, value]);
   }
-  return env;
+  return Object.fromEntries(entries);
 }
 
 function realOrResolved(p: string): string {

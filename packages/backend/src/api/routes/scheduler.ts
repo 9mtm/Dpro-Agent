@@ -1,3 +1,4 @@
+import { safeConsole } from '../../services/safe-error-log.js';
 /**
  * Scheduler API Routes
  * Manage cron jobs and scheduled tasks
@@ -120,7 +121,7 @@ export async function schedulerRoutes(fastify: FastifyInstance) {
         job,
       };
     } catch (error: any) {
-      console.error('[Scheduler API] ❌ Create job failed:', error);
+      safeConsole.error('[Scheduler API] ❌ Create job failed:', error);
       // SECURITY: Use centralized error handler to prevent info disclosure (H-09)
       return handleError(reply, error, 'internal', '[Scheduler] Create job failed');
     }
@@ -176,7 +177,7 @@ export async function schedulerRoutes(fastify: FastifyInstance) {
         job: updatedJob,
       };
     } catch (error: any) {
-      console.error('[Scheduler API] ❌ Update job failed:', error);
+      safeConsole.error('[Scheduler API] ❌ Update job failed:', error);
       // SECURITY: Use centralized error handler to prevent info disclosure (H-09)
       return handleError(reply, error, 'internal', '[Scheduler] Update job failed');
     }
@@ -231,7 +232,7 @@ export async function schedulerRoutes(fastify: FastifyInstance) {
         duration: result.duration,
       };
     } catch (error: any) {
-      console.error('[Scheduler API] ❌ Execute job failed:', error);
+      safeConsole.error('[Scheduler API] ❌ Execute job failed:', error);
       // SECURITY: Use centralized error handler to prevent info disclosure (H-09)
       return handleError(reply, error, 'internal', '[Scheduler] Execute job failed');
     }

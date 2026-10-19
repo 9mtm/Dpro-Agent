@@ -126,7 +126,7 @@ test('mock login is explicitly fictional and rejects wrong credentials', async (
 });
 test('shell renders fixture by default, login has no protected content, logout needs explicit confirmation', async () => {
   let html = renderToStaticMarkup(React.createElement(App)); assert.match(html, /Open offline login mock/); assert.doesNotMatch(html, /Use live sign-in/);
-  const s = setup(() => ok({ setupComplete: true, setupRequired: false, message: 'Setup already completed' })); s.client.selectMode('mock'); await s.client.discoverSetup(); html = renderToStaticMarkup(React.createElement(App, { client: s.client })); assert.match(html, /type="password"/); assert.doesNotMatch(html, /Memory review/);
+  const s = setup(() => ok({ setupComplete: true, setupRequired: false, message: 'Setup already completed' })); s.client.selectMode('mock'); await s.client.discoverSetup(); html = renderToStaticMarkup(React.createElement(App, { client: s.client })); assert.match(html, /Welcome to Dpro/); assert.doesNotMatch(html, /type="password"|Memory review/);
   await s.login(); html = renderToStaticMarkup(React.createElement(App, { client: s.client })); assert.match(html, /disabled="">Sign out on all devices/); assert.match(html, /Agent files and reviews/); assert.doesNotMatch(html, /must-not-escape|fictional-token|Mira/);
 });
 
@@ -178,4 +178,18 @@ test('memory-originated 401 resets session and bound controller; pending read ca
   assert.equal(s.client.getSnapshot().phase, 'signed-out'); assert.equal(controller.getSnapshot().phase, 'denied');
   pending.resolve(ok({ drawerId: 'owner', agentId: 'agent1', drawer: { kind: 'owner' }, revision: 1, hash: 'a'.repeat(64), count: 0, path: 'fictional', content: 'stale secret' })); await old;
   assert.equal(controller.getSnapshot().drawer, undefined); assert.equal(controller.getSnapshot().context.userId, ''); stop();
+});
+test('the name typed at setup is shown; missing or odd names fall back to the user name', async () => {
+  const { displayName } = require('../src/session.ts');
+  const cases = [['  Mohamed Alarade  ', 'Mohamed Alarade'], ['', 'Fiction'], ['   ', 'Fiction'], [42, 'Fiction'], ['x'.repeat(201), 'Fiction'], [undefined, 'Fiction']];
+  for (const [fullName, shown] of cases) {
+    const named = { ...owner, ...(fullName === undefined ? {} : { full_name: fullName }) };
+    const transport = async r => ok(r.path === '/api/auth/login' ? { user: named, token, deviceToken: 'd'.repeat(43) } : { user: named });
+    const client = new SessionClient({ mock: transport, live: transport }); client.selectMode('mock');
+    await client.login('fiction@example.invalid', 'fictional-password');
+    const user = client.getSnapshot().user;
+    assert.equal(displayName(user), shown);
+    assert.equal(user.api_key, undefined);
+    assert.ok(Object.isFrozen(user));
+  }
 });

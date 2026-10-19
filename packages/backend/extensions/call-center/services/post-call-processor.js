@@ -1,3 +1,4 @@
+import { safeConsole } from '../../../src/services/safe-error-log.js';
 /**
  * Post-Call Processor
  * Handles post-call automation: recording download, transcription, analytics, workflow triggers
@@ -61,7 +62,7 @@ class PostCallProcessor {
           session.recording_file_id = recordingFile.id;
           results.recordingDownloaded = true;
         } catch (error) {
-          console.error('[PostCallProcessor] Error downloading recording:', error);
+          safeConsole.error('[PostCallProcessor] Error downloading recording:', error);
           results.errors.push({ step: 'download', error: error.message });
         }
       }
@@ -164,7 +165,7 @@ class PostCallProcessor {
       console.log(`[PostCallProcessor] Recording downloaded and stored: ${storageFile.id}`);
       return storageFile;
     } catch (error) {
-      console.error('[PostCallProcessor] Error downloading recording:', error);
+      safeConsole.error('[PostCallProcessor] Error downloading recording:', error);
       throw error;
     }
   }

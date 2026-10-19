@@ -97,7 +97,7 @@ export class AgentsController {
       if (ticket !== this.#ticket) return;
       if (r.status !== 200) return this.#fail(r.status);
       const b = agentResponse('/api/agents', r).body as { agents: PublicAgent[] };
-      this.#publish({ agents: Object.freeze(b.agents), phase: 'idle' });
+      this.#publish({ agents: Object.freeze(b.agents), phase: 'ready' });
     } catch { if (ticket === this.#ticket) this.#fail(); }
   }
   async select(id: string) {

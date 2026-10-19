@@ -1,73 +1,14 @@
-# Gitleaks Configuration
-# Security: Configure secret detection to ignore false positives while catching real secrets
+title = "Dpro secret detection"
 
-title = "Agent Player - Gitleaks Config"
+[extend]
+useDefault = true
 
-# Allowlist for known false positives
 [allowlist]
-description = "Allowlist for safe patterns"
-
-# Allow example/placeholder keys in documentation and tests
-regexes = [
-    # Example API keys in docs (sk-xxx, pk_xxx patterns)
-    '''(sk|pk)_test_[a-zA-Z0-9]{24}''',
-
-    # UUID patterns used as example IDs
-    '''[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}''',
-
-    # Default passwords in setup/migrations (owner@localhost, admin123)
-    '''owner@localhost''',
-    '''admin123''',
-
-    # Demo/test credentials
-    '''demo@example\.com''',
-    '''test@example\.com''',
-]
-
-# Ignore patterns by path
+description = "Generated dependency and output directories only"
 paths = [
-    # Ignore lock files (contain package checksums that look like secrets)
-    '''pnpm-lock\.yaml''',
-    '''package-lock\.json''',
-    '''yarn\.lock''',
-
-    # Ignore build outputs
-    '''\.next/''',
-    '''/dist/''',
-    '''/build/''',
-
-    # Ignore node_modules
-    '''/node_modules/''',
-
-    # Ignore test fixtures and mocks
-    '''/__tests__/''',
-    '''/__mocks__/''',
-    '''/fixtures/''',
-
-    # Ignore documentation with examples
-    '''/docs/''',
-    '''README\.md''',
-    '''CHANGELOG\.md''',
-
-    # Ignore migration files with default setup credentials
-    '''/migrations/''',
-    '''/src/db/migrations/''',
-
-    # Ignore config examples
-    '''\.example$''',
-    '''\.sample$''',
-]
-
-# Ignore specific commits (if needed - add commit SHAs here)
-commits = []
-
-# Stop words - don't flag these as secrets
-stopwords = [
-    "example",
-    "test",
-    "demo",
-    "localhost",
-    "placeholder",
-    "redacted",
-    "censored",
+  '''(^|/)node_modules/''',
+  '''(^|/)\.git/''',
+  '''(^|/)\.next/''',
+  '''(^|/)dist/''',
+  '''(^|/)release/''',
 ]

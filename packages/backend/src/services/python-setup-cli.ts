@@ -1,3 +1,4 @@
+import { safeConsole } from './safe-error-log.js';
 /**
  * CLI entry point for Python environment setup.
  * Run via: npm run setup:python
@@ -10,6 +11,6 @@ setupPythonEnvironment()
     process.exit(0);
   })
   .catch((err) => {
-    console.error('\nSetup failed:', err.message);
+    safeConsole.error('\nSetup failed:', err.message);
     process.exit(1);
   });

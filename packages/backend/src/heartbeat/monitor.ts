@@ -1,3 +1,4 @@
+import { safeConsole } from '../services/safe-error-log.js';
 /**
  * Heartbeat Monitor Service
  * Tracks component health and manages heartbeats
@@ -50,7 +51,7 @@ export class HeartbeatMonitor {
     this.components.set(registration.id, state);
     this.heartbeatHistory.set(registration.id, []);
 
-    console.log(`[Heartbeat] Registered component: ${registration.name} (${registration.id})`);
+    safeConsole.log(`[Heartbeat] Registered component: ${registration.name} (${registration.id})`);
 
     // Start automatic health checks if configured
     if (this.config.autoCheck && registration.healthCheck) {
@@ -78,7 +79,7 @@ export class HeartbeatMonitor {
   ): Heartbeat | null {
     const state = this.components.get(componentId);
     if (!state) {
-      console.warn(`[Heartbeat] Unknown component: ${componentId}`);
+      safeConsole.warn(`[Heartbeat] Unknown component: ${componentId}`);
       return null;
     }
 
@@ -239,7 +240,7 @@ export class HeartbeatMonitor {
     const state = this.components.get(componentId);
     if (!state) return;
 
-    console.log(
+    safeConsole.log(
       `[Heartbeat] Status change: ${state.registration.name} ${oldStatus} -> ${newStatus}`
     );
 
@@ -319,7 +320,7 @@ export class HeartbeatMonitor {
       }
     }
 
-    console.log(`[Heartbeat] Alert created: ${alert.severity} - ${alert.message}`);
+    safeConsole.log(`[Heartbeat] Alert created: ${alert.severity} - ${alert.message}`);
   }
 
   /**

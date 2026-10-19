@@ -1,3 +1,5 @@
+import { generatePassword, passwordStrength } from './password-tools.js';
+import { PublicShell } from './PublicShell';
 import { SignedInShell } from './SignedInShell';
 import { useEffect, useMemo, useState, useSyncExternalStore } from 'react';
 import type { ReactNode } from 'react';
@@ -21,7 +23,7 @@ const notices = {
   unavailable: 'Request unavailable. No automatic retry was sent.', expired: 'Session expired or revoked. Sign in again.',
   'logout-confirmed': 'Server confirmed sign-out on all devices.', 'logout-unknown': 'Local session cleared. Server sign-out on other devices is unconfirmed. No retry was sent.',
 };
-export function AuthBoundary({ client: supplied, children }: { client?: SessionClient; children: ReactNode }) {
+export function AuthBoundary({ client: supplied, children, initialPage }: { client?: SessionClient; children: ReactNode; initialPage?: 'home' | 'account' }) {
   const fallback = useMemo(() => supplied ? undefined : new SessionClient({ mock: createLoginMock() }), [supplied]);
   const client = supplied ?? fallback!;
   const state = useSyncExternalStore(client.subscribe, client.getSnapshot, client.getSnapshot);
@@ -41,7 +43,7 @@ export function AuthBoundary({ client: supplied, children }: { client?: SessionC
     const keep = devSessionKeep(typeof window !== 'undefined' ? window.location.hostname : '');
     if (keep) void client.resume(keep).then(ok => { if (!ok && client.getSnapshot().phase === 'signed-out') void client.discoverSetup(); });
     else void client.discoverSetup();
-  }, [client, liveOnly, state.mode]);
+  }, [client, liveOnly, state.mode, state.epoch]);
   // Signed in: the workspace's own status bar carries the mode and the way out.
   const signedIn = state.mode !== 'fixture' && state.phase === 'authenticated';
   return <div className={`auth-boundary${signedIn ? ' signed-in' : ''}`}>
@@ -53,18 +55,18 @@ export function AuthBoundary({ client: supplied, children }: { client?: SessionC
       </> : <button disabled={state.phase === 'signing-out'} onClick={() => client.selectMode('fixture')}>Return to fixture (local session cleared)</button>}
       <span>Authentication copy: English draft.</span>
     </section>}
-    {state.mode === 'fixture' ? (liveOnly ? null : children) : <SessionWorkspace key={`${state.mode}:${state.epoch}`} client={client} setupCode={setupCode}/>}
+    {state.mode === 'fixture' ? (liveOnly ? null : children) : <SessionWorkspace key={`${state.mode}:${state.epoch}`} client={client} setupCode={setupCode} initialPage={initialPage}/>}
   </div>;
 }
-function SessionWorkspace({ client, setupCode }: { client: SessionClient; setupCode: string | null }) {
+function SessionWorkspace({ client, setupCode, initialPage }: { client: SessionClient; setupCode: string | null; initialPage?: 'home' | 'account' }) {
   const state = useSyncExternalStore(client.subscribe, client.getSnapshot, client.getSnapshot);
   const [email, setEmail] = useState(''); const [password, setPassword] = useState('');
   // Signed in: the full workspace (sidebar, chat, agents, memory, account).
   if (state.phase === 'authenticated' && state.user) return <SignedInShell client={client} notice={state.notice ? <>{notices[state.notice]}{retryAfterNotice(state.retryAfterSeconds)}</> : null}/>;
-  return <main className="auth-workspace" lang="en" dir="ltr">
+  return <PublicShell setup={state.setup} initialPage={initialPage}><section className="auth-workspace" aria-label="Account sign-in" lang="en" dir="ltr">
     <h1>Dpro · {state.mode === 'mock' ? 'Offline login exercise' : 'Account'}</h1>
     {state.notice && <p role="status">{notices[state.notice]}{retryAfterNotice(state.retryAfterSeconds)}</p>}
-    {state.phase === 'authenticated' && state.user ? null : state.phase === 'signed-out' && state.setup === 'required' ? <OwnerSetup client={client} setupCode={setupCode}/> : state.phase === 'signing-out' ? <><p role="status">Signing out on all devices…</p><button onClick={() => client.cancel()}>Clear locally; server outcome remains unknown</button></> : state.phase === 'signed-out' && state.setup !== 'login' ? <section aria-label="Setup discovery">
+    {state.phase === 'authenticated' && state.user ? null : state.phase === 'signed-out' && state.setup === 'required' ? <OwnerSetup client={client} setupCode={setupCode} initialPage={initialPage}/> : state.phase === 'signing-out' ? <><p role="status">Signing out on all devices…</p><button onClick={() => client.cancel()}>Clear locally; server outcome remains unknown</button></> : state.phase === 'signed-out' && state.setup !== 'login' ? <section aria-label="Setup discovery">
       <p role="status">{state.setup === 'checking' ? 'Checking installation setup…' : state.setup === 'unavailable' ? 'Setup status unavailable. Sign-in is withheld; no automatic retry was sent.'
         : 'Check installation setup before signing in. No request has been sent automatically.'}</p>
       <p>Discovery does not verify an account, installation identity, or system readiness.</p>
@@ -82,7 +84,7 @@ function SessionWorkspace({ client, setupCode }: { client: SessionClient; setupC
       {state.phase === 'signing-in' && <button type="button" onClick={() => client.cancel()}>Cancel sign-in</button>}
     </form>}
     <p>Settings credentials remain masked-only; no credential values are fetched.</p>
-  </main>;
+  </section></PublicShell>;
 }
 // Read once per page load (a repeated initializer must not lose the code).
 let linkCode: string | null | undefined;
@@ -107,9 +109,11 @@ const ownerSetupNotices: Record<OwnerSetupCode | 'unavailable' | 'mismatch', str
   mismatch: 'The two passwords do not match.',
 };
 /** First run (INSTALLER-07): create the owner with the one-time code from this computer's terminal. */
-function OwnerSetup({ client, setupCode }: { client: SessionClient; setupCode: string | null }) {
+function OwnerSetup({ client, setupCode, initialPage }: { client: SessionClient; setupCode: string | null; initialPage?: 'home' | 'account' }) {
   const [name, setName] = useState(''); const [email, setEmail] = useState('');
   const [password, setPassword] = useState(''); const [confirm, setConfirm] = useState('');
+  const [visible, setVisible] = useState(false);
+  const strength = passwordStrength(password);
   const [code, setCode] = useState(setupCode ?? ''); const [editCode, setEditCode] = useState(!setupCode);
   const [busy, setBusy] = useState(false); const [notice, setNotice] = useState<keyof typeof ownerSetupNotices | null>(null);
   return <form className="owner-setup" aria-label="Create the owner account" method="post" onSubmit={async e => {
@@ -124,12 +128,19 @@ function OwnerSetup({ client, setupCode }: { client: SessionClient; setupCode: s
     }
   }}>
     <h2>Create the owner account</h2>
-    <p>This is the first start of this installation. The owner controls every agent, key and setting.</p>
+    <p>Set up the owner of this new workspace. If you used Dpro before, open your existing workspace from the desktop setup instead. The owner controls agents, keys and settings.</p>
     {notice && <p role="alert">{ownerSetupNotices[notice]}</p>}
     <label htmlFor="owner-name">Your name</label><input id="owner-name" required maxLength={100} autoComplete="name" value={name} onChange={e => setName(e.target.value)} disabled={busy}/>
     <label htmlFor="owner-email">Email</label><input id="owner-email" type="email" name="username" required maxLength={320} autoComplete="username" value={email} onChange={e => setEmail(e.target.value)} disabled={busy}/>
-    <label htmlFor="owner-password">Password (at least 12 characters)</label><input id="owner-password" type="password" name="new-password" required minLength={12} maxLength={4096} autoComplete="new-password" value={password} onChange={e => setPassword(e.target.value)} disabled={busy}/>
-    <label htmlFor="owner-confirm">Repeat the password</label><input id="owner-confirm" type="password" required minLength={12} maxLength={4096} autoComplete="new-password" value={confirm} onChange={e => setConfirm(e.target.value)} disabled={busy}/>
+    <label htmlFor="owner-password">Password (at least 12 characters)</label><input id="owner-password" type={visible ? 'text' : 'password'} name="new-password" required minLength={12} maxLength={4096} autoComplete="new-password" value={password} onChange={e => setPassword(e.target.value)} disabled={busy}/>
+    <label htmlFor="owner-confirm">Repeat the password</label><input id="owner-confirm" type={visible ? 'text' : 'password'} required minLength={12} maxLength={4096} autoComplete="new-password" value={confirm} onChange={e => setConfirm(e.target.value)} disabled={busy}/>
+    <div className="row">
+      <button type="button" disabled={busy} onClick={() => { const value = generatePassword(); setPassword(value); setConfirm(value); }}>Generate password</button>
+      <button type="button" disabled={busy} aria-pressed={visible} onClick={() => setVisible(!visible)}>{visible ? 'Hide password' : 'Show password'}</button>
+    </div>
+    <label htmlFor="password-strength">Password strength: {strength.label}</label>
+    <meter id="password-strength" min={0} max={3} low={2} high={3} optimum={3} value={strength.value} aria-describedby="password-guidance" />
+    <p id="password-guidance">{strength.hint} This estimate does not check leaked passwords.</p>
     {editCode ? <>
       <label htmlFor="owner-code">Setup code</label>
       <input id="owner-code" required autoComplete="one-time-code" spellCheck={false} pattern="[A-Za-z0-9_\-]{43}" title="The 43-character code from agent-player setup" value={code} onChange={e => setCode(e.target.value)} disabled={busy}/>

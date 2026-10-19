@@ -54,7 +54,7 @@ function redactor(secrets) {
  * cwd, env (from backendEnv), secrets (values to redact), onLog(line), onExit({ code, signal }) after ready,
  * spawn (tests), readyTimeoutMs.
  */
-function startBackend({ node, args, cwd, env, secrets = [], onLog = () => {}, onExit = () => {}, spawn = nodeSpawn, readyTimeoutMs = READY_TIMEOUT_MS }) {
+function startBackend({ node, args, cwd, env, secrets = [], onLog = () => {}, onExit = () => {}, spawn = nodeSpawn, readyTimeoutMs = READY_TIMEOUT_MS, signal }) {
   const redact = redactor([env.AGENT_PLAYER_LAUNCH_TOKEN, ...secrets]);
   const tail = [];
   const log = line => {
@@ -76,30 +76,40 @@ function startBackend({ node, args, cwd, env, secrets = [], onLog = () => {}, on
     stream.on('end', () => { if (rest) log(rest); rest = ''; });
   }
   let exited = false;
+  let timedOut = false;
   const exitedPromise = new Promise(resolve => child.once('exit', (code, signal) => { exited = true; resolve({ code, signal }); }));
 
   return new Promise((resolve, reject) => {
-    let ready = false;
-    const fail = message => {
+    let ready = false, failed = false;
+    const cancel = () => { timedOut = true; stopChild(child, () => exited, exitedPromise, 2000).then(() => fail('Startup cancelled.', 'STARTUP_CANCELLED')); };
+    const fail = (message, code) => {
+      if (failed) return;
+      failed = true;
       clearTimeout(timer);
+      signal?.removeEventListener('abort', cancel);
       const error = new Error(message);
       error.logTail = tail.slice();
+      if (code) error.code = code;
       reject(error);
     };
     const timer = setTimeout(() => {
       if (ready) return;
-      fail('The backend did not start in time.');
-      stopChild(child, () => exited, exitedPromise, 2000);
+      timedOut = true;
+      // Finish cleanup before allowing a retry to touch the same workspace.
+      stopChild(child, () => exited, exitedPromise, 2000).then(() => fail('The backend did not start in time.', 'STARTUP_TIMEOUT'));
     }, readyTimeoutMs);
+    signal?.addEventListener('abort', cancel, { once: true });
+    if (signal?.aborted) cancel();
     child.once('error', error => { if (!ready) fail(`The backend could not be started (${error.code || 'error'}).`); });
     child.on('message', message => {
-      if (ready || !message || message.type !== 'listening' || !Number.isInteger(message.port) || message.port < 1 || message.port > 65535) return;
+      if (ready || failed || timedOut || signal?.aborted || !message || message.type !== 'listening' || !Number.isInteger(message.port) || message.port < 1 || message.port > 65535) return;
       if (message.host !== undefined && message.host !== '127.0.0.1') {
         fail('The backend is not bound to 127.0.0.1.');
         stopChild(child, () => exited, exitedPromise, 2000);
         return;
       }
       ready = true;
+      signal?.removeEventListener('abort', cancel);
       clearTimeout(timer);
       let stopping = false;
       exitedPromise.then(result => { if (!stopping) onExit(result); });
@@ -112,7 +122,7 @@ function startBackend({ node, args, cwd, env, secrets = [], onLog = () => {}, on
         stop: (graceMs = STOP_GRACE_MS) => { stopping = true; return stopChild(child, () => exited, exitedPromise, graceMs); },
       });
     });
-    exitedPromise.then(({ code, signal }) => { if (!ready) fail(`The backend stopped while starting (${signal || `exit code ${code}`}).`); });
+    exitedPromise.then(({ code, signal }) => { if (!ready && !timedOut) fail(`The backend stopped while starting (${signal || `exit code ${code}`}).`); });
   });
 }
 

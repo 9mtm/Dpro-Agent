@@ -26,6 +26,8 @@ export interface StartupSummary {
 export const BACKGROUND_JOBS: ReadonlyArray<{ id: string; off: string }> = [
   { id: 'skills-watcher', off: 'skillsRegistry.watch() not called (skills are still loaded once)' },
   { id: 'cron-engine', off: 'CronEngine.scheduleJob records the job but creates no node-cron task' },
+  { id: 'automatic-project-import', off: 'automatic project-file timer and startup catch-up not started' },
+  { id: 'local-import-recovery', off: 'resumePendingImports not called (explicit owner import requests still work)' },
   { id: 'memory-jobs', off: 'weekly-summary/retention jobs not ensured or scheduled' },
   { id: 'evolution-scheduler', off: 'initializeEvolutionScheduler not called (and the cron engine guard)' },
   { id: 'agent-cron', off: 'startAgentCronService not called; registerAgentCron creates no task' },

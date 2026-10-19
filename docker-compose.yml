@@ -1,34 +1,6 @@
 version: '3.8'
 
 services:
-  # Frontend Service (Next.js)
-  frontend:
-    build:
-      context: .
-      dockerfile: Dockerfile.frontend
-    image: agent-player-frontend:latest
-    container_name: agent-player-frontend
-    ports:
-      - "41521:41521"
-    environment:
-      - NODE_ENV=production
-      - PORT=41521
-      - NEXT_PUBLIC_API_URL=http://backend:41522
-    volumes:
-      - public-storage:/app/public/storage:rw
-    networks:
-      - agent-player-network
-    depends_on:
-      backend:
-        condition: service_healthy
-    restart: unless-stopped
-    healthcheck:
-      test: ["CMD", "node", "-e", "require('http').get('http://localhost:41521', (r) => process.exit(r.statusCode === 200 ? 0 : 1))"]
-      interval: 30s
-      timeout: 10s
-      retries: 3
-      start_period: 40s
-
   # Backend Service (Fastify + Python)
   backend:
     build:

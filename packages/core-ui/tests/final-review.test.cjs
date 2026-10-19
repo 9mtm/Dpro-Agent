@@ -35,7 +35,7 @@ async function setup(handler) {
   const chat = new ChatController(client, () => 'fiction-key');
   return { client, chat, calls };
 }
-function render(client) { return renderToStaticMarkup(React.createElement(AuthBoundary, { client }, 'Fixture')); }
+function render(client) { return renderToStaticMarkup(React.createElement(AuthBoundary, { client, initialPage: 'account' }, 'Fixture')); }
 test('AuthBoundary constructs mock only without injection, including injected live failure', async () => {
   let constructions = 0;
   const exports = {};

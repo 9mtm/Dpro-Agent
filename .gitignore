@@ -133,3 +133,6 @@ docker-compose.extra.yml
 *.zip
 agent-player-files.zip
 temp-release/
+
+# Reproducible desktop backend runtime
+!packages/backend/package-lock.json

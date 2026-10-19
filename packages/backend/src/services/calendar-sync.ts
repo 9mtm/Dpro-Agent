@@ -1,3 +1,4 @@
+import { safeConsole } from './safe-error-log.js';
 /**
  * Calendar Sync Service
  * Handles syncing with Google Calendar and importing from iCal/WebCal URLs
@@ -105,7 +106,7 @@ export async function syncCalendarSource(sourceId: string): Promise<void> {
       throw error;
     }
   } catch (error) {
-    console.error(`[CalendarSync] Failed to sync source ${sourceId}:`, error);
+    safeConsole.error(`[CalendarSync] Failed to sync source ${sourceId}:`, error);
     throw error;
   }
 }

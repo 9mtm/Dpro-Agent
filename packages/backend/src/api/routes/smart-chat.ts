@@ -1,3 +1,4 @@
+import { safeConsole } from '../../services/safe-error-log.js';
 /**
  * Smart Chat API - Uses Agent System
  * Enhanced chat with intelligent prompt building, skill selection, and learning
@@ -104,9 +105,9 @@ export async function smartChatRoutes(fastify: FastifyInstance) {
       }
 
       console.log('[SmartChat] 🧠 Processing with Agent System');
-      console.log('[SmartChat]   Message:', message.slice(0, 50) + '...');
-      console.log('[SmartChat]   Session:', sessionId);
-      console.log('[SmartChat]   History:', history.length, 'messages');
+      safeConsole.log('[SmartChat]   Message:', message.slice(0, 50) + '...');
+      safeConsole.log('[SmartChat]   Session:', sessionId);
+      safeConsole.log('[SmartChat]   History:', history.length, 'messages');
 
       try {
         // Clean userPreferences to match expected type
@@ -185,9 +186,9 @@ export async function smartChatRoutes(fastify: FastifyInstance) {
       });
 
       console.log('[SmartChat] 📚 Feedback recorded');
-      console.log('[SmartChat]   Skill:', skillUsed);
-      console.log('[SmartChat]   Success:', success);
-      console.log('[SmartChat]   User feedback:', userFeedback);
+      safeConsole.log('[SmartChat]   Skill:', skillUsed);
+      safeConsole.log('[SmartChat]   Success:', success);
+      safeConsole.log('[SmartChat]   User feedback:', userFeedback);
 
       return { success: true };
     } catch (error: any) {

@@ -1,3 +1,4 @@
+import { safeConsole } from './safe-error-log.js';
 /**
  * Python Environment Setup
  *
@@ -13,8 +14,9 @@ import https from 'https';
 import http from 'http';
 import path from 'path';
 import fs from 'fs';
-import { execSync } from 'child_process';
-import { clearCache } from './python-env.js';
+import { execFileSync } from 'child_process';
+import { extractPythonArchive } from './python-archive.js';
+import { clearCache, PYTHON_SCRIPTS_DIR } from './python-env.js';
 
 // ─── Configuration ───────────────────────────────────────────────────────────
 
@@ -22,7 +24,7 @@ const PYTHON_VERSION = process.env.PYTHON_EMBED_VERSION || '3.12.8';
 
 const DATA_DIR = dataPath('python');
 const SETUP_FLAG = path.join(DATA_DIR, '.setup-complete');
-const REQUIREMENTS_PATH = path.join(process.cwd(), 'python-scripts', 'requirements.txt');
+const REQUIREMENTS_PATH = path.join(PYTHON_SCRIPTS_DIR, 'requirements.txt');
 
 // Python embeddable ZIP URLs by platform/arch
 function getEmbeddableUrl(): string {
@@ -133,10 +135,7 @@ async function setupWindows(): Promise<void> {
     // Step 2: Extract using PowerShell (built into Windows 10+)
     console.log('\n[Setup] Extracting Python...');
     fs.mkdirSync(extractDir, { recursive: true });
-    execSync(
-      `powershell -NoProfile -Command "Expand-Archive -Path '${zipPath}' -DestinationPath '${extractDir}' -Force"`,
-      { stdio: 'inherit', timeout: 120_000 }
-    );
+    extractPythonArchive(zipPath, extractDir);
     console.log('  Extraction complete.');
 
     // Clean up ZIP to save space
@@ -167,7 +166,7 @@ async function setupWindows(): Promise<void> {
     }
 
     console.log('\n[Setup] Installing pip...');
-    execSync(`"${pythonExe}" "${getPipPath}" --no-warn-script-location`, {
+    execFileSync(pythonExe, [getPipPath, '--no-warn-script-location'], {
       stdio: 'inherit',
       timeout: 300_000,
     });
@@ -177,22 +176,22 @@ async function setupWindows(): Promise<void> {
 
   // Step 5: Install Python packages
   console.log('\n[Setup] Installing Python packages from requirements.txt...');
-  execSync(
-    `"${pythonExe}" -m pip install -r "${REQUIREMENTS_PATH}" --no-warn-script-location -q`,
+  execFileSync(
+    pythonExe, ['-m', 'pip', 'install', '-r', REQUIREMENTS_PATH, '--no-warn-script-location', '-q'],
     { stdio: 'inherit', timeout: 600_000 }
   );
 
   // Step 6: Install desktop control packages (Windows-specific)
   console.log('\n[Setup] Installing desktop control packages...');
-  execSync(
-    `"${pythonExe}" -m pip install pyautogui pywin32 --no-warn-script-location -q`,
+  execFileSync(
+    pythonExe, ['-m', 'pip', 'install', 'pyautogui', 'pywin32', '--no-warn-script-location', '-q'],
     { stdio: 'inherit', timeout: 300_000 }
   );
 
   // Step 7: Install gTTS (reliable TTS fallback)
   console.log('\n[Setup] Installing TTS packages...');
-  execSync(
-    `"${pythonExe}" -m pip install gTTS --no-warn-script-location -q`,
+  execFileSync(
+    pythonExe, ['-m', 'pip', 'install', 'gTTS', '--no-warn-script-location', '-q'],
     { stdio: 'inherit', timeout: 120_000 }
   );
 
@@ -206,18 +205,17 @@ async function setupUnix(): Promise<void> {
   const targetDir = path.join(DATA_DIR, platKey);
   const venvDir = path.join(targetDir, 'venv');
   const venvPython = path.join(venvDir, 'bin', 'python3');
-  const venvPip = path.join(venvDir, 'bin', 'pip');
 
   fs.mkdirSync(targetDir, { recursive: true });
 
   // Step 1: Find system python3
   let systemPython = 'python3';
   try {
-    execSync(`"${systemPython}" --version`, { stdio: 'ignore', timeout: 2000 });
+    execFileSync(systemPython, ['--version'], { stdio: 'ignore', timeout: 2000 });
   } catch {
     // Try 'python' as fallback
     try {
-      execSync('"python" --version', { stdio: 'ignore', timeout: 2000 });
+      execFileSync('python', ['--version'], { stdio: 'ignore', timeout: 2000 });
       systemPython = 'python';
     } catch {
       throw new Error(
@@ -231,7 +229,7 @@ async function setupUnix(): Promise<void> {
   }
 
   // Step 2: Check version >= 3.10
-  const versionOutput = execSync(`"${systemPython}" --version`, { timeout: 2000 })
+  const versionOutput = execFileSync(systemPython, ['--version'], { timeout: 2000 })
     .toString().trim();
   console.log(`\n[Setup] Found: ${versionOutput}`);
 
@@ -249,7 +247,7 @@ async function setupUnix(): Promise<void> {
   // Step 3: Create venv
   if (!fs.existsSync(venvPython)) {
     console.log('\n[Setup] Creating virtual environment...');
-    execSync(`"${systemPython}" -m venv "${venvDir}"`, {
+    execFileSync(systemPython, ['-m', 'venv', venvDir], {
       stdio: 'inherit',
       timeout: 120_000,
     });
@@ -260,21 +258,21 @@ async function setupUnix(): Promise<void> {
 
   // Step 4: Upgrade pip
   console.log('\n[Setup] Upgrading pip...');
-  execSync(`"${venvPip}" install --upgrade pip -q`, {
+  execFileSync(venvPython, ['-m', 'pip', 'install', '--upgrade', 'pip', '-q'], {
     stdio: 'inherit',
     timeout: 120_000,
   });
 
   // Step 5: Install packages
   console.log('\n[Setup] Installing Python packages from requirements.txt...');
-  execSync(`"${venvPip}" install -r "${REQUIREMENTS_PATH}" -q`, {
+  execFileSync(venvPython, ['-m', 'pip', 'install', '-r', REQUIREMENTS_PATH, '-q'], {
     stdio: 'inherit',
     timeout: 600_000,
   });
 
   // Step 6: Install desktop control packages (no pywin32 on Unix)
   console.log('\n[Setup] Installing desktop control packages...');
-  execSync(`"${venvPip}" install pyautogui gTTS -q`, {
+  execFileSync(venvPython, ['-m', 'pip', 'install', 'pyautogui', 'gTTS', '-q'], {
     stdio: 'inherit',
     timeout: 300_000,
   });
@@ -320,7 +318,7 @@ export async function setupPythonEnvironment(): Promise<void> {
     console.log('  You can now run: npm run dev');
     console.log('');
   } catch (err: any) {
-    console.error(`\n[Setup] FAILED: ${err.message}`);
+    safeConsole.error(`\n[Setup] FAILED: ${err.message}`);
     throw err;
   }
 }

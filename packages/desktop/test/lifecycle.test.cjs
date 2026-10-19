@@ -64,7 +64,7 @@ test('redactor removes secrets from log lines', () => {
   assert.equal(r('a secret-value-123 b secret-value-123'), 'a [redacted] b [redacted]');
 });
 
-test('starts on a random loopback port, needs the token, stops cleanly', async () => {
+test('starts on a random loopback port, needs the token, stops cleanly', async t => {
   const dir = tmp();
   const env = fakeEnv(dir);
   const lines = [];
@@ -84,7 +84,7 @@ test('starts on a random loopback port, needs the token, stops cleanly', async (
   assert.ok(!lines.join('\n').includes(env.AGENT_PLAYER_LAUNCH_TOKEN));
 });
 
-test('a backend that ignores the stop request is killed after the grace period', async () => {
+test('a backend that ignores the stop request is killed after the grace period', async t => {
   const dir = tmp();
   const backend = await startBackend({ node: process.execPath, args: [FAKE], cwd: dir, env: fakeEnv(dir, { FAKE_MODE: 'ignore-stop' }) });
   const result = await backend.stop(300);
@@ -92,7 +92,7 @@ test('a backend that ignores the stop request is killed after the grace period',
   assert.equal(alive(backend.pid), false);
 });
 
-test('a crash while starting is reported with a redacted log tail', async () => {
+test('a crash while starting is reported with a redacted log tail', async t => {
   const dir = tmp();
   const env = fakeEnv(dir, { FAKE_MODE: 'crash' });
   await assert.rejects(startBackend({ node: process.execPath, args: [FAKE], cwd: dir, env }), error => {
@@ -102,7 +102,7 @@ test('a crash while starting is reported with a redacted log tail', async () => 
   });
 });
 
-test('no ready message in time: start fails and the process is gone', async () => {
+test('no ready message in time: start fails and the process is gone', async t => {
   const dir = tmp();
   const pids = [];
   const spawn = (...a) => { const c = require('node:child_process').spawn(...a); pids.push(c.pid); return c; };
@@ -111,19 +111,20 @@ test('no ready message in time: start fails and the process is gone', async () =
   assert.equal(alive(pids[0]), false);
 });
 
-test('a backend that reports a non-loopback address is refused', async () => {
+test('a backend that reports a non-loopback address is refused', async t => {
   const dir = tmp();
   await assert.rejects(startBackend({ node: process.execPath, args: [FAKE], cwd: dir, env: fakeEnv(dir, { FAKE_MODE: 'wrong-host' }) }), /not bound to 127\.0\.0\.1/);
 });
 
-test('missing Node runtime: clear start error', async () => {
+test('missing Node runtime: clear start error', async t => {
   const dir = tmp();
   await assert.rejects(startBackend({ node: path.join(dir, 'no-node'), args: [FAKE], cwd: dir, env: fakeEnv(dir) }), /could not be started|stopped while starting/);
 });
 
-test('local runtime: bridge + backend up, setup code in the fragment only, everything down after stop', async () => {
+test('local runtime: bridge + backend up, setup code in the fragment only, everything down after stop', async t => {
   const dir = tmp();
   const runtime = createLocalRuntime({ node: process.execPath, args: [FAKE], cwd: dir, dataDir: path.join(dir, 'data'), createBridge: fakeBridge, baseEnv: { PATH: process.env.PATH } });
+  t.after(() => runtime.stop());
   const started = await runtime.start();
   assert.equal(runtime.state, 'running');
   const url = new URL(started.url);
@@ -132,7 +133,7 @@ test('local runtime: bridge + backend up, setup code in the fragment only, every
   assert.equal(started.setupCode, true);
   const stored = JSON.parse(fs.readFileSync(path.join(dir, 'data', SETUP_TOKEN_FILE), 'utf8'));
   assert.equal(stored.hash, createHash('sha256').update(url.hash.slice(7)).digest('hex'));
-  assert.equal((fs.statSync(path.join(dir, 'data', SETUP_TOKEN_FILE)).mode & 0o777), 0o600);
+  if (process.platform !== 'win32') assert.equal((fs.statSync(path.join(dir, 'data', SETUP_TOKEN_FILE)).mode & 0o777), 0o600);
   // Through the bridge the token is added; the page never needs it.
   const through = await get(Number(url.port));
   assert.equal(through.status, 200);
@@ -145,37 +146,40 @@ test('local runtime: bridge + backend up, setup code in the fragment only, every
   await assert.rejects(get(started.backendPort));
 });
 
-test('local runtime: no setup code once the owner exists', async () => {
+test('local runtime: no setup code once the owner exists', async t => {
   const dir = tmp();
   const dataDir = path.join(dir, 'data');
   fs.mkdirSync(dataDir, { recursive: true });
   fs.writeFileSync(path.join(dataDir, SETUP_FLAG_FILE), '');
   const runtime = createLocalRuntime({ node: process.execPath, args: [FAKE], cwd: dir, dataDir, createBridge: fakeBridge, baseEnv: { PATH: process.env.PATH } });
+  t.after(() => runtime.stop());
   const started = await runtime.start();
   assert.equal(new URL(started.url).hash, '');
   assert.equal(fs.existsSync(path.join(dataDir, SETUP_TOKEN_FILE)), false);
   await runtime.stop();
 });
 
-test('local runtime: a failed start leaves no bridge port and no process', async () => {
+test('local runtime: a failed start leaves no bridge port and no process', async t => {
   const dir = tmp();
   let bridge;
   const createBridge = o => (bridge = fakeBridge(o));
   const runtime = createLocalRuntime({ node: process.execPath, args: [FAKE], cwd: dir, dataDir: path.join(dir, 'data'), createBridge, baseEnv: { PATH: process.env.PATH }, extraEnv: { FAKE_MODE: 'crash' } });
+  t.after(() => runtime.stop());
   await assert.rejects(runtime.start());
   assert.equal(bridge.listening, false);
   assert.equal(runtime.state, 'idle');
 });
 
-test('local runtime: an unexpected backend exit is reported, the bridge answers 503', async () => {
+test('local runtime: an unexpected backend exit is reported, the bridge answers 503', async t => {
   const dir = tmp();
   let exited;
   const gone = new Promise(r => { exited = r; });
   const runtime = createLocalRuntime({ node: process.execPath, args: [FAKE], cwd: dir, dataDir: path.join(dir, 'data'), createBridge: fakeBridge, baseEnv: { PATH: process.env.PATH }, onBackendExit: exited });
+  t.after(() => runtime.stop());
   const started = await runtime.start();
   process.kill(runtime.backendPid, 'SIGKILL');
   const result = await gone;
-  assert.equal(result.signal, 'SIGKILL');
+  if (process.platform === 'win32') assert.notEqual(result.code, 0); else assert.equal(result.signal, 'SIGKILL');
   assert.equal((await get(Number(new URL(started.url).port))).status, 503);
   await runtime.stop();
 });
@@ -199,5 +203,37 @@ test('log file is 0600 and cut when too large', () => {
   log.close();
   const text = fs.readFileSync(file, 'utf8');
   assert.ok(!text.includes('xxx') && text.includes('hello'));
-  assert.equal(fs.statSync(file).mode & 0o777, 0o600);
+  if (process.platform !== 'win32') assert.equal(fs.statSync(file).mode & 0o777, 0o600);
+});
+
+test('silent native startup timeout reaps first child before one successful retry', async t => {
+  const dir=tmp(), pids=[];
+  const spawn=(node,args,opts)=>{
+    if(pids.length) assert.equal(alive(pids[0]),false);
+    const child=require('node:child_process').spawn(node,pids.length ? args : ['-e','setInterval(()=>{},1000)'],opts);
+    pids.push(child.pid);return child;
+  };
+  const runtime=createLocalRuntime({node:process.execPath,args:[FAKE],cwd:dir,dataDir:dir,createBridge:fakeBridge,spawn,readyTimeoutMs:250});
+  t.after(() => runtime.stop());
+  try {await runtime.start();assert.equal(pids.length,2);assert.equal(runtime.state,'running');}
+  finally {await runtime.stop();}
+  assert.ok(pids.every(pid=>!alive(pid)));
+});
+
+test('silent startup retry is bounded and leaves no child alive', async t => {
+  const dir=tmp(),pids=[];
+  const spawn=(node,args,opts)=>{const c=require('node:child_process').spawn(node,['-e','setInterval(()=>{},1000)'],opts);pids.push(c.pid);return c;};
+  const runtime=createLocalRuntime({node:process.execPath,args:[FAKE],cwd:dir,dataDir:dir,createBridge:fakeBridge,spawn,readyTimeoutMs:150});
+  t.after(() => runtime.stop());
+  await assert.rejects(runtime.start(),/did not start in time/);assert.equal(pids.length,2);assert.ok(pids.every(pid=>!alive(pid)));
+});
+
+test('stop during silent startup cancels without launching a retry', async t => {
+  const dir=tmp(),pids=[];
+  let launched;const launch=new Promise(r=>launched=r);
+  const spawn=(node,args,opts)=>{const c=require('node:child_process').spawn(node,['-e','setInterval(()=>{},1000)'],opts);pids.push(c.pid);launched();return c;};
+  const runtime=createLocalRuntime({node:process.execPath,args:[FAKE],cwd:dir,dataDir:dir,createBridge:fakeBridge,spawn,readyTimeoutMs:5000});
+  t.after(() => runtime.stop());
+  const pending=assert.rejects(runtime.start(),/cancelled/);await launch;await runtime.stop();assert.ok(pids.every(pid=>!alive(pid)));await pending;
+  assert.equal(pids.length,1);assert.ok(pids.every(pid=>!alive(pid)));
 });

@@ -1,30 +1,67 @@
-# Gitleaks Ignore File
-# Use this to ignore specific findings by commit SHA, file path, or secret hash
-
-# Ignore default setup credentials in database migrations
-packages/backend/src/db/database.ts:*:owner@localhost
-packages/backend/src/db/database.ts:*:admin123
-
-# Ignore example API keys in documentation
-README.md:*
-docs/**:*
-EXTENSIONS_REGISTRY.md:*
-
-# Ignore test fixtures
-**/__tests__/**:*
-**/__mocks__/**:*
-**/test/**:*
-**/tests/**:*
-
-# Ignore migration files with default setup data
-packages/backend/src/db/migrations/*.sql:*
-
-# Ignore lock files (contain package checksums)
-pnpm-lock.yaml:*
-package-lock.json:*
-yarn.lock:*
-
-# Ignore build outputs
-.next/**:*
-dist/**:*
-build/**:*
+# Individually reviewed historical findings; new commits and lines remain scanned.
+# Disposable owner-setup password for example.invalid test identity.
+cf0e83c55ad0bfc7299d271986463eef33123dcd:packages/core-ui/tests/owner-setup.test.cjs:generic-api-key:19
+# Synthetic redaction fixture: alphabet followed by digits, not an issued token.
+099be1bd5e980e8432f476311da504ce9d84fa03:packages/backend/test/chat-memory.test.mjs:github-pat:68
+# Synthetic redaction fixture: alphabet followed by digits, not an issued token.
+099be1bd5e980e8432f476311da504ce9d84fa03:packages/backend/test/chat-memory.test.mjs:github-pat:80
+# Synthetic redaction fixture: alphabet followed by digits, not an issued token.
+099be1bd5e980e8432f476311da504ce9d84fa03:packages/backend/test/chat-memory.test.mjs:github-pat:97
+# Synthetic redaction fixture: alphabet followed by digits, not an issued token.
+099be1bd5e980e8432f476311da504ce9d84fa03:packages/backend/test/chat-memory.test.mjs:github-pat:110
+# Synthetic redaction fixture: alphabet followed by digits, not an issued token.
+5c712ac5a3b2803f895fbd629a478bbfd3458486:packages/backend/test/chat-memory.test.mjs:github-pat:115
+# Idempotency-Key request identifier in mock bridge test, not a credential.
+0c1420f842c363e2e39e2b72752082d3d661cfd7:packages/core-ui/tests/stage1-bridge.test.cjs:generic-api-key:92
+# Synthetic redaction fixture: alphabet followed by digits, not an issued token.
+169c24d2da2c3deab363174383926d69ed9ebcac:packages/backend/test/small-agent-hardening.test.mjs:github-pat:47
+# Synthetic redaction fixture: alphabet followed by digits, not an issued token.
+169c24d2da2c3deab363174383926d69ed9ebcac:packages/backend/test/small-agent-hardening.test.mjs:github-pat:186
+# Dynamic test environment assignment from generated run1 fields, no literal secret.
+eb7ae1a68970f6c329699198b1dc9f4ea5f19a50:packages/backend/test/secrets-bootstrap.test.mjs:generic-api-key:155
+# Documentation command with a named token placeholder, not a credential.
+c4585123e18858b1c34981e16c0b9f6ac507227b:packages/backend/extensions/call-center/README.md:curl-auth-header:78
+# Documentation command with a named token placeholder, not a credential.
+c4585123e18858b1c34981e16c0b9f6ac507227b:packages/backend/extensions/call-center/docs/PROVIDER_TESTING_GUIDE.md:curl-auth-header:237
+# Exact document-content fixture verified against official alpacahq/alpaca-py upstream tests; incidental pattern, not an AWS credential.
+561efe78294aeba5774f599f12ac863463b37808:docs/alpaca-py-master/tests/broker/broker_client/test_accounts_routes.py:aws-access-token:592
+# Historical local session JWT expired at epoch 1772704985; current verification enforces expiry.
+0ac45cc17f8f73ba8bae1218276f46122a86c292:.claude/settings.local.json:jwt:50
+# Public pagination cursor in archived SDK response fixture, not an authentication key.
+561efe78294aeba5774f599f12ac863463b37808:docs/alpaca-py-master/tests/data/test_corporate_actions.py:generic-api-key:211
+# Public pagination cursor in archived SDK response fixture, not an authentication key.
+561efe78294aeba5774f599f12ac863463b37808:docs/alpaca-py-master/tests/data/test_historical_option_data.py:generic-api-key:60
+# Public pagination cursor in archived SDK response fixture, not an authentication key.
+561efe78294aeba5774f599f12ac863463b37808:docs/alpaca-py-master/tests/data/test_historical_option_data.py:generic-api-key:287
+# Public pagination cursor in archived SDK response fixture, not an authentication key.
+561efe78294aeba5774f599f12ac863463b37808:docs/alpaca-py-master/tests/data/test_historical_news_data.py:generic-api-key:13
+# Public pagination cursor in archived SDK response fixture, not an authentication key.
+561efe78294aeba5774f599f12ac863463b37808:docs/alpaca-py-master/tests/data/test_historical_news_data.py:generic-api-key:55
+# Public pagination cursor in archived SDK response fixture, not an authentication key.
+561efe78294aeba5774f599f12ac863463b37808:docs/alpaca-py-master/tests/data/test_historical_stock_data.py:generic-api-key:60
+# Public pagination cursor in archived SDK response fixture, not an authentication key.
+561efe78294aeba5774f599f12ac863463b37808:docs/alpaca-py-master/tests/data/test_historical_stock_data.py:generic-api-key:127
+# Public pagination cursor in archived SDK response fixture, not an authentication key.
+561efe78294aeba5774f599f12ac863463b37808:docs/alpaca-py-master/tests/data/test_historical_stock_data.py:generic-api-key:324
+# Public pagination cursor in archived SDK response fixture, not an authentication key.
+561efe78294aeba5774f599f12ac863463b37808:docs/alpaca-py-master/tests/data/test_historical_stock_data.py:generic-api-key:488
+# Empty quoted API-key values; generic detector spans neighboring variable names.
+9651b096c72ecd0c7b7ce9cffb75b6a2616b06a6:.env.example:generic-api-key:49
+# Documentation command with a named token placeholder, not a credential.
+9651b096c72ecd0c7b7ce9cffb75b6a2616b06a6:packages/backend/SMTP_SETUP.md:curl-auth-header:107
+# Documentation command with a named token placeholder, not a credential.
+9651b096c72ecd0c7b7ce9cffb75b6a2616b06a6:packages/backend/SMTP_SETUP.md:curl-auth-header:111
+# Documentation command with a named token placeholder, not a credential.
+9651b096c72ecd0c7b7ce9cffb75b6a2616b06a6:packages/backend/SMTP_SETUP.md:curl-auth-header:115
+# Abbreviated JWT documentation placeholder with ellipsis, not a valid signed token.
+f49fb6d6ddb1922becc5f7372d2c2679e4422eaf:docs/02-api/API_ENDPOINTS_COMPLETE.md:generic-api-key:89
+# Documentation command with a named token placeholder, not a credential.
+f49fb6d6ddb1922becc5f7372d2c2679e4422eaf:docs/02-api/API_ENDPOINTS_COMPLETE.md:curl-auth-header:409
+# Documentation command with a named token placeholder, not a credential.
+f49fb6d6ddb1922becc5f7372d2c2679e4422eaf:backend/test/agents/OLLAMA_TESTING_GUIDE.md:curl-auth-header:89
+# Historical OpenAI credential rejected with HTTP401 invalid_api_key on 2026-10-17; secret alert1 resolved revoked.
+54147b0aaac0873396c94a9a6327f74dbc55f623:backend/.envv:openai-api-key:6
+# Abbreviated JWT documentation placeholder with ellipsis, not a valid signed token.
+2adf090c2ec4cdb5c8a458aa76bf8af405d0752a:docs/api-testing/auth.mdc:generic-api-key:37
+# Abbreviated JWT documentation placeholder with ellipsis, not a valid signed token.
+2adf090c2ec4cdb5c8a458aa76bf8af405d0752a:docs/api-testing/auth.mdc:generic-api-key:38

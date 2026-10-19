@@ -31,7 +31,8 @@ export function AgentsDestination({ client, active = false, onOpenMemory, focusC
     return () => { unsubscribe(); c.dispose(); p.dispose(); h.dispose(); w.dispose(); };
   }, [client]);
   // Opening the page shows the team at once (one read the first time the page is shown).
-  useEffect(() => { if (active && owner && controller && controller.getSnapshot().phase === 'idle' && !controller.getSnapshot().agents.length) void controller.list(); }, [active, owner, controller]);
+  useEffect(() => { if (active && session.phase === 'authenticated' && controller && controller.getSnapshot().phase === 'idle' && !controller.getSnapshot().agents.length) void controller.list(); }, [active, session.phase, controller]);
+  if (open && controller && !owner) return <MemberAgent controller={controller} agentId={open} onBack={() => setOpen(null)}/>;
   if (open && controller && personality) return <section aria-label="Agents">
     <AgentCard client={client} agentId={open} agents={controller} personality={personality} onBack={() => { setOpen(null); void controller.list(); }} onOpenMemory={onOpenMemory}/>
   </section>;
@@ -45,6 +46,19 @@ export function AgentsDestination({ client, active = false, onOpenMemory, focusC
     {owner && hire && hiring && !building && <HireAgent controller={hire} onClose={() => { setHiring(false); if (hire.getSnapshot().step === 'done') void controller?.list(); }}/>}
     {!hiring && !building && (controller ? <TeamGrid controller={controller} onOpen={setOpen}/> : <p className="fine-print" role="status">Loading your team…</p>)}
     {owner && !hiring && !building && <ConnectorsSection client={client} active={active} focus={focusConnectors}/>}
+  </section>;
+}
+
+/** Members can inspect the readable directory without requesting owner-only configuration. */
+export function MemberAgent({ controller, agentId, onBack }: { controller: AgentsController; agentId: string; onBack: () => void }) {
+  const s = useSyncExternalStore(controller.subscribe, controller.getSnapshot, controller.getSnapshot);
+  const agent = s.agents.find(a => a.id === agentId);
+  return <section aria-label="Agent overview">
+    <button type="button" onClick={onBack}>Team</button>
+    <h2><bdi>{agent?.name ?? 'Agent unavailable'}</bdi></h2>
+    {agent?.description && <p dir="auto">{agent.description}</p>}
+    <h3>Tools & permissions</h3>
+    <p>Only the workspace owner can view or change tool permissions. Ask the owner to configure this agent.</p>
   </section>;
 }
 

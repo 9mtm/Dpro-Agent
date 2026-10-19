@@ -1,10 +1,10 @@
 export type LocalSource = 'claude-code' | 'codex' | 'antigravity' | 'gemini-cli';
 export const LOCAL_SOURCES: readonly LocalSource[];
 export type LocalSession = { id: string; source: LocalSource; cwd: string | null; title: string; startedAt: string | null; updatedAt: string; bytes: number; turns: number; imported: { importedAt: string; proposed: number } | null };
-export type ImportJob = { id: string; total: number; done: number; proposed: number; errors: number; status: 'running' | 'done' | 'error'; notice: string | null };
+export type ImportJob = { id: string; total: number; done: number; proposed: number; errors: number; status: 'running' | 'done' | 'error' | 'paused'; notice: string | null; automatic?: boolean };
 export const LOCAL_IMPORT_PATH: '/api/memory/import/local';
 export const MAX_IMPORT_SESSIONS: number;
-export function localImportPath(path: string): { kind: 'local' } | { kind: 'job'; id: string } | null;
+export function localImportPath(path: string): { kind: 'local' | 'documents' | 'automatic' } | { kind: 'job' | 'resume' | 'pause' | 'preview' | 'document'; id: string } | null;
 export function localImportRoute(path: string): boolean;
 export function allowedLocalImport(method: string, path: string, body?: unknown): boolean;
 export function localImportResponse(path: string, status: number, body: unknown): unknown;

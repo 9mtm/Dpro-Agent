@@ -226,13 +226,12 @@ test('Cancel cannot bypass conflict review; dispose prevents new reads/writes', 
   s.c.dispose(); const count = s.calls.length; await s.c.list(); await s.c.select('sample-main'); await s.c.generate(); await s.c.save();
   assert.equal(s.calls.length, count);
 });
-test('live password-manager fields and POST form; mock keeps names absent and autocomplete off', async () => {
+test('signed-out live and mock entry keep the account form behind the public shell', async () => {
   for (const mode of ['live', 'mock']) {
     const client = new SessionClient({ [mode]: createLoginMock() }); client.selectMode(mode); await client.discoverSetup();
     const html = renderToStaticMarkup(React.createElement(AuthBoundary, { client }, 'fixture'));
-    assert.match(html, /method="post"/);
-    if (mode === 'live') { assert.match(html, /autoComplete="username"[^>]*name="username"/); assert.match(html, /autoComplete="current-password"[^>]*name="password"/); }
-    else { assert.doesNotMatch(html, /name="password"|name="username"/); assert.match(html, /autoComplete="off"/); }
+    assert.match(html, /Welcome to Dpro/);
+    assert.doesNotMatch(html, /name="password"|name="username"|method="post"/);
   }
 });
 

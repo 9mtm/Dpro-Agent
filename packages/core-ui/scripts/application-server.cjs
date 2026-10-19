@@ -133,6 +133,9 @@ function project(target, status, body) {
     const u = body?.user;
     if (!record(u) || !['id', 'email', 'username', 'role'].every(k => typeof u[k] === 'string')) throw Error();
     const user = Object.fromEntries(['id', 'email', 'username', 'role'].map(k => [k, u[k]]));
+    // The name the owner typed at setup (display only); dropped when missing or odd.
+    const fullName = typeof u.full_name === 'string' ? u.full_name.trim() : '';
+    if (fullName && fullName.length <= 200) user.full_name = fullName;
     if (target.endsWith('/me')) return { user };
     if (typeof body.token !== 'string' || !/^[A-Za-z0-9._~-]{1,8192}$/.test(body.token)) throw Error();
     if (!validDeviceToken(body.deviceToken)) throw Error();

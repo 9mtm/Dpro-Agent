@@ -1,3 +1,4 @@
+import { safeConsole } from '../services/safe-error-log.js';
 /**
  * Plugin Registry
  * Manages registered plugins
@@ -39,7 +40,7 @@ export class PluginRegistry extends EventEmitter implements IPluginRegistry {
   unregister(pluginId: string): void {
     const plugin = this.plugins.get(pluginId);
     if (!plugin) {
-      console.warn(`[PluginRegistry] Plugin ${pluginId} not found`);
+      safeConsole.warn(`[PluginRegistry] Plugin ${pluginId} not found`);
       return;
     }
 

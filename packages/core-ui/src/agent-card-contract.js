@@ -34,6 +34,7 @@ const traits = x => record(x) && Object.keys(x).length === traitNames.length && 
 
 /** The card or memory path this request names, or null. */
 export function cardPath(path) {
+  if (/^\/api\/memory\/page(?:\?cursor=[A-Za-z0-9_-]{1,1024})?$/.test(path)) return { kind: 'memory-page' };
   let m = /^\/api\/agents\/([^/?#]+)\/personality\/(current|versions|lock|unlock|rollback)$/.exec(path);
   if (m) return validAgentId(m[1]) ? { kind: `persona-${m[2]}`, agent: m[1] } : null;
   if (path === MODELS_PATH) return { kind: 'models' };
@@ -64,6 +65,7 @@ export function allowedAgentCard(method, path, body) {
   const p = cardPath(path);
   if (!p) return false;
   switch (p.kind) {
+    case 'memory-page': return method === 'GET' && body === undefined;
     case 'models': return method === 'GET' && body === undefined;
     case 'persona-current': return method === 'GET' && body === undefined;
     case 'persona-versions':
@@ -119,6 +121,10 @@ export function agentCardResponse(path, status, body) {
   }
   if (!record(body)) fail();
   switch (p.kind) {
+    case 'memory-page': {
+      if (!Array.isArray(body.memories) || body.memories.length > 100 || !Number.isSafeInteger(body.total) || body.total < 0 || !(body.nextCursor === null || (typeof body.nextCursor === 'string' && /^[A-Za-z0-9_-]{1,1024}$/.test(body.nextCursor)))) fail();
+      return { memories: body.memories.map(memoryItem), nextCursor: body.nextCursor, total: body.total };
+    }
     case 'models': {
       if (!Array.isArray(body.models)) fail();
       // Runs twice on the live path (bridge, then browser): already-projected rows ("ollama", "label") pass unchanged.

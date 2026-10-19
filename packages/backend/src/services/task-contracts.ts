@@ -123,11 +123,10 @@ function normalizeSchema(raw: unknown, where: string, depth = 0): SchemaLite {
   if (raw.properties !== undefined) {
     if (out.type !== 'object') fail(`${where}.properties is only for objects`);
     if (!isPlainObject(raw.properties) || Object.keys(raw.properties).length > 50) fail(`${where}.properties must be an object (max 50 fields)`);
-    out.properties = {};
-    for (const [k, v] of Object.entries(raw.properties)) {
+    out.properties = Object.fromEntries(Object.entries(raw.properties).map(([k, v]) => {
       if (!k || k.length > 100) fail(`${where}.properties: invalid field name`);
-      out.properties[k] = normalizeSchema(v, `${where}.properties.${k}`, depth + 1);
-    }
+      return [k, normalizeSchema(v, `${where}.properties.${k}`, depth + 1)];
+    }));
   }
   if (raw.items !== undefined) {
     if (out.type !== 'array') fail(`${where}.items is only for arrays`);
@@ -435,9 +434,9 @@ export function schemaErrors(value: unknown, s: SchemaLite, path = '$'): string[
   const errs: string[] = [];
   if (s.type === 'object') {
     const obj = value as Record<string, unknown>;
-    for (const k of s.required ?? []) if (!(k in obj) || obj[k] === undefined) errs.push(`${path}.${k} is required`);
+    for (const k of s.required ?? []) if (!Object.hasOwn(obj, k) || obj[k] === undefined) errs.push(`${path}.${k} is required`);
     for (const [k, sub] of Object.entries(s.properties ?? {})) {
-      if (k in obj && obj[k] !== undefined) errs.push(...schemaErrors(obj[k], sub, `${path}.${k}`));
+      if (Object.hasOwn(obj, k) && obj[k] !== undefined) errs.push(...schemaErrors(obj[k], sub, `${path}.${k}`));
     }
   }
   if (s.type === 'array') {

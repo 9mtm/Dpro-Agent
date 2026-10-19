@@ -1,0 +1,35 @@
+import test from 'node:test';
+import assert from 'node:assert/strict';
+import fs from 'node:fs';
+import path from 'node:path';
+import os from 'node:os';
+import { randomBytes, randomUUID } from 'node:crypto';
+const root=fs.mkdtempSync(path.join(os.tmpdir(),'dpro-import-dedupe-'));
+process.env.AGENT_PLAYER_DATA_DIR=path.join(root,'data');process.env.DATABASE_PATH=path.join(root,'data','agent-player.db');
+process.env.JWT_SECRET=randomBytes(64).toString('hex');process.env.ENCRYPTION_KEY=randomBytes(32).toString('hex');
+const {getDatabase,closeDatabase}=await import('../src/db/database.ts');const db=getDatabase();await db.initialize();
+const {getMemoryStorage}=await import('../src/memory/storage.ts');await getMemoryStorage().initialize();
+db.prepare("INSERT INTO users(id,email,username,password_hash,role,status) VALUES('dedupe-owner','dedupe@example.invalid','dedupe','fixture','owner','active')").run();
+const fact='The Aurora release requires two maintainers to approve deployment.';
+const insert=db.prepare("INSERT INTO memories(id,user_id,type,content,created_at,drawer_kind) VALUES(?,'dedupe-owner','fact',?,?,'owner')");
+db.transaction(()=>{insert.run(randomUUID(),fact,'2000-01-01T00:00:00.000Z');for(let i=0;i<2001;i++)insert.run(randomUUID(),'Fictional unrelated record '+randomBytes(24).toString('hex'),'2026-01-01T00:00:00.000Z')});
+const docs=path.join(root,'project');fs.mkdirSync(docs);fs.writeFileSync(path.join(docs,'CLAUDE.md'),'# Approval policy\n'+fact);
+const {scanProjectDocuments}=await import('../src/memory/import/project-documents.ts');
+const L=await import('../src/memory/import/local-import.ts');const {q}=await import('../src/repositories/sql-steps.ts');
+const wait=async id=>{for(let n=0;n<200;n++){const j=await L.getJob('dedupe-owner',id);if(j.status!=='running')return j;await new Promise(r=>setTimeout(r,10))}throw Error('Import stalled')};
+test.after(async()=>{await L.stopLocalImports();closeDatabase();fs.rmSync(root,{recursive:true,force:true,maxRetries:10,retryDelay:100})});
+test('a paraphrased project fact older than 2000 other memories is not imported again',async()=>{
+ const id=(await scanProjectDocuments('dedupe-owner',[docs])).documents[0].id;
+ const extract=async()=>[{title:'Aurora approvals',content:'Two maintainers must approve the Aurora release deployment.',scope:'owner',evidence:fact}];
+ const j=await wait((await L.startImport('dedupe-owner',[id],{home:root,extract,automatic:true})).id);
+ assert.equal(j.status,'done');assert.equal(j.proposed,0);assert.equal(j.errors,0);assert.equal(db.prepare('SELECT COUNT(*) n FROM memory_file_proposals').get().n,0);
+ let replayCalls=0;const replay=await wait((await L.startImport('dedupe-owner',[id],{home:root,extract:async()=>{replayCalls++;throw Error('Repeated extraction')}})).id);assert.equal(replay.status,'done');assert.equal(replay.proposed,0);assert.equal(replayCalls,0);
+});
+test('a failed duplicate check preserves its cursor and safely resumes the same project file',async t=>{
+ fs.writeFileSync(path.join(docs,'CLAUDE.md'),'# Approval policy\n'+fact+'\nFormatting update.');
+ const id=(await scanProjectDocuments('dedupe-owner',[docs])).documents[0].id;
+ const original=q.all;const mocked=t.mock.method(q,'all',async(sql,...args)=>{if(sql.startsWith('SELECT content FROM memories'))throw Error('Synthetic read failure');return original(sql,...args)});
+ let calls=0;const extract=async()=>{calls++;return []};let job=await wait((await L.startImport('dedupe-owner',[id],{home:root,extract})).id);
+ assert.equal(job.status,'error');assert.equal(job.done,0);assert.equal(calls,0);assert.equal(db.prepare('SELECT COUNT(*) n FROM local_agent_imports WHERE session_id=?').get(id).n,0);
+ mocked.mock.restore();await L.resumeImport('dedupe-owner',job.id,{home:root,extract});job=await wait(job.id);assert.equal(job.status,'done');assert.equal(job.done,1);assert.equal(calls,1);
+});

@@ -1,3 +1,4 @@
+import { safeConsole } from '../services/safe-error-log.js';
 /**
  * Session Manager
  *
@@ -118,7 +119,7 @@ export class SessionManager {
     // Cache in memory
     this.sessions.set(session.sessionId, session);
 
-    console.log(`[SessionManager] Created session ${session.sessionId} for user ${userId}`);
+    safeConsole.log(`[SessionManager] Created session ${session.sessionId} for user ${userId}`);
 
     return session;
   }

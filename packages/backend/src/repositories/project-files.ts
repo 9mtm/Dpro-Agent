@@ -6,6 +6,7 @@
  */
 import { execFile } from 'node:child_process';
 import fs from 'node:fs/promises';
+import { readRegularFile, FileReadError } from '../services/read-regular-file.js';
 import path from 'node:path';
 
 export class ProjectPathError extends Error {}
@@ -38,6 +39,11 @@ async function inside(folder: string, rel: string): Promise<string> {
   try { real = await fs.realpath(path.join(root, rel)); } catch { throw new ProjectPathError('Not found'); }
   if (real !== root && !real.startsWith(root + path.sep)) throw new ProjectPathError('Outside the project folder');
   return real;
+}
+
+async function secretTarget(folder: string, real: string): Promise<boolean> {
+  const root = await fs.realpath(folder);
+  return secretPath(path.relative(root, real).split(path.sep).join('/'));
 }
 
 const gitEnv = () => ({ PATH: process.env.PATH ?? '/usr/bin:/bin', HOME: process.env.HOME ?? '', GIT_TERMINAL_PROMPT: '0', GIT_OPTIONAL_LOCKS: '0', LC_ALL: 'C' });
@@ -82,7 +88,7 @@ export async function gitChanges(folder: string): Promise<{ branch: string | nul
   }
   // Untracked text files count as all-added lines.
   await Promise.all(changes.filter(c => c.status === 'untracked' && !secretPath(c.path)).slice(0, 200).map(async c => {
-    try { const real = await inside(folder, c.path); const st = await fs.stat(real); if (!st.isFile() || st.size > MAX_FILE_BYTES) return; const t = await fs.readFile(real, 'utf8'); if (t.includes('\0')) return; c.added = t ? t.split('\n').length - (t.endsWith('\n') ? 1 : 0) : 0; c.removed = 0; } catch { /* stays unknown */ }
+    try { const real = await inside(folder, c.path); if (await secretTarget(folder, real)) return; const { data } = await readRegularFile(real, MAX_FILE_BYTES, { root: folder }); const t = data.toString('utf8'); if (t.includes('\0')) return; c.added = t ? t.split('\n').length - (t.endsWith('\n') ? 1 : 0) : 0; c.removed = 0; } catch { /* stays unknown */ }
   }));
   return { branch: branch?.trim() || null, changes, truncated: f.length / 2 > MAX_CHANGES };
 }
@@ -97,10 +103,12 @@ export async function gitFileDiff(folder: string, rawRel: unknown): Promise<{ pa
   if (!diff) {
     // Untracked: show the whole file as added.
     try {
-      const real = await inside(folder, rel); const st = await fs.stat(real);
+      const real = await inside(folder, rel);
+      if (await secretTarget(folder, real)) return { path: rel, diff: '', truncated: false, binary: false, hidden: true };
+      const { data, stat: st, truncated } = await readRegularFile(real, MAX_FILE_BYTES, { root: folder, truncate: true });
       if (st.isFile()) {
-        if (st.size > MAX_FILE_BYTES) return { path: rel, diff: '', truncated: true, binary: false, hidden: false };
-        const t = await fs.readFile(real, 'utf8');
+        if (truncated) return { path: rel, diff: '', truncated: true, binary: false, hidden: false };
+        const t = data.toString('utf8');
         if (t.includes('\0')) return { path: rel, diff: '', truncated: false, binary: true, hidden: false };
         const lines = t.split('\n'); if (t.endsWith('\n')) lines.pop();
         diff = `--- /dev/null\n+++ b/${rel}\n@@ -0,0 +1,${lines.length} @@\n${lines.map(l => `+${l}`).join('\n')}\n`;
@@ -137,14 +145,16 @@ export async function readFolderFile(folder: string, rawRel: unknown): Promise<{
   const rel = cleanRel(rawRel);
   if (!rel) throw new ProjectPathError('Pick a file');
   const real = await inside(folder, rel);
-  const st = await fs.stat(real);
-  if (!st.isFile()) throw new ProjectPathError('Not a file');
-  if (secretPath(rel)) return { path: rel, text: null, size: st.size, binary: false, hidden: true, truncated: false };
-  const fh = await fs.open(real, 'r');
+  if (secretPath(rel) || await secretTarget(folder, real)) {
+    const st = await fs.stat(real);
+    return { path: rel, text: null, size: st.size, binary: false, hidden: true, truncated: false };
+  }
   try {
-    const buf = Buffer.alloc(Math.min(st.size, MAX_FILE_BYTES));
-    await fh.read(buf, 0, buf.length, 0);
-    if (buf.includes(0)) return { path: rel, text: null, size: st.size, binary: true, hidden: false, truncated: false };
-    return { path: rel, text: buf.toString('utf8'), size: st.size, binary: false, hidden: false, truncated: st.size > MAX_FILE_BYTES };
-  } finally { await fh.close(); }
+    const { data, stat: st, truncated } = await readRegularFile(real, MAX_FILE_BYTES, { root: folder, truncate: true });
+    if (data.includes(0)) return { path: rel, text: null, size: st.size, binary: true, hidden: false, truncated: false };
+    return { path: rel, text: data.toString('utf8'), size: st.size, binary: false, hidden: false, truncated };
+  } catch (error) {
+    if (error instanceof FileReadError) throw new ProjectPathError(error.message);
+    throw error;
+  }
 }

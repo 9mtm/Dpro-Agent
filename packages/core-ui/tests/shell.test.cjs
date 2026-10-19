@@ -133,7 +133,9 @@ test('entry source exception rejects direct calls, alternate origins, missing gu
 });
 test('source boundary: only injected session transport may network; no browser storage or HTML sinks', () => {
   for (const name of fs.readdirSync(path.join(root, 'src'))) {
-    const source = fs.readFileSync(path.join(root, 'src', name), 'utf8');
+    let source = fs.readFileSync(path.join(root, 'src', name), 'utf8');
+    // Only a validated, non-sensitive theme preference may persist in browser storage.
+    if (name === 'app-navigation.ts') source = source.replace("localStorage.getItem('dpro.theme')", 'undefined').replace("localStorage.setItem('dpro.theme', value)", 'undefined');
     // dev-session-keep.ts alone may use session storage, and only for the local test build.
     if (name === 'dev-session-keep.ts') assert.doesNotMatch(source, /\b(XMLHttpRequest|WebSocket|EventSource|localStorage|indexedDB|dangerouslySetInnerHTML)\b|document\.cookie/, name);
     else assert.doesNotMatch(source, /\b(XMLHttpRequest|WebSocket|EventSource|localStorage|sessionStorage|indexedDB|dangerouslySetInnerHTML)\b|document\.cookie/, name);

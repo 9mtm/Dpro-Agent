@@ -40,21 +40,33 @@ function closeServer(server) {
 function createLocalRuntime(options) {
   const { node, args, cwd, dataDir, createBridge, onLog = () => {}, onBackendExit = () => {}, extraEnv, baseEnv, spawn, readyTimeoutMs } = options;
   let backend = null, bridge = null, state = 'idle';
+  let startupAbort, pendingBackend;
 
   async function start() {
     if (state !== 'idle') throw new Error(`Cannot start while ${state}`);
     state = 'starting';
+    startupAbort = new AbortController();
     try {
       fs.mkdirSync(dataDir, { recursive: true, mode: 0o700 });
       const token = newLaunchToken();
       bridge = createBridge({ upstreamPort: () => (backend && backend.running ? backend.port : null), launchToken: token });
       const uiPort = await listen(bridge);
       const origin = `http://${HOST}:${uiPort}`;
-      backend = await startBackend({
-        node, args, cwd, spawn, readyTimeoutMs, onLog,
+      const launch = () => (pendingBackend = startBackend({
+        node, args, cwd, spawn, readyTimeoutMs, onLog, signal: startupAbort.signal,
         env: backendEnv({ base: baseEnv, dataDir, token, allowedOrigin: origin, extra: extraEnv }),
         onExit: result => { if (state === 'running') onBackendExit(result); },
-      });
+      }));
+      try { backend = await launch(); }
+      catch (error) {
+        // A silent native startup can stall in getcwd before application code.
+        // Retry once, only after the first child is fully reaped. Never retry
+        // crashes or starts which emitted logs (they may have performed work).
+        if (state !== 'starting' || error.code !== 'STARTUP_TIMEOUT' || error.logTail?.length) throw error;
+        onLog('Silent backend startup timed out; retrying once with the same workspace.');
+        backend = await launch();
+      }
+      if (state !== 'starting') { await backend.stop(); throw new Error('Startup cancelled.'); }
       const code = issueSetupCode(dataDir);
       state = 'running';
       return { origin, backendPort: backend.port, url: `${origin}/${code ? `#setup=${code}` : ''}`, setupCode: code !== null };
@@ -75,6 +87,8 @@ function createLocalRuntime(options) {
   async function stop() {
     if (state === 'idle' || state === 'stopped') return null;
     state = 'stopping';
+    startupAbort?.abort();
+    await pendingBackend?.catch(() => {});
     const result = await stopAll();
     state = 'stopped';
     return result;

@@ -1,3 +1,4 @@
+import { safeConsole } from '../services/safe-error-log.js';
 /**
  * Extension Runner
  * Loads, initializes, and manages extensions at runtime
@@ -200,7 +201,7 @@ export class ExtensionRunner {
          updated_at = ${now}`,
       extensionId);
 
-    console.log(`[ExtensionRunner] ✅ Extension "${extensionId}" enabled (restart required for routes)`);
+    safeConsole.log(`[ExtensionRunner] ✅ Extension "${extensionId}" enabled (restart required for routes)`);
   }
 
   /**
@@ -222,7 +223,7 @@ export class ExtensionRunner {
 
     this.loadedExtensions.delete(extensionId);
 
-    console.log(`[ExtensionRunner] ❌ Extension "${extensionId}" disabled`);
+    safeConsole.log(`[ExtensionRunner] ❌ Extension "${extensionId}" disabled`);
   }
 
   /**

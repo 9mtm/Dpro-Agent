@@ -14,6 +14,7 @@ import type { Memory, MemoryType, ImportanceLevel, MultiTierLayer } from '../../
 import { repositories } from '../../repositories/index.js';
 import { requestMeta } from '../../repositories/audit.js';
 import { ScopeError, sendScopeError } from '../../repositories/scope.js';
+import { MemoryCursorError } from '../../memory/display-page.js';
 
 const MAX_CONTENT = 50_000;
 const MAX_METADATA_JSON = 64 * 1024;
@@ -101,9 +102,16 @@ export async function memoryRoutes(fastify: FastifyInstance) {
     if (!actorOf(request)) return reply.code(401).send({ error: 'Authentication required' });
   });
 
-  /**
-   * GET /api/memory - Get all memories for a user
-   */
+  fastify.get<{ Querystring: { cursor?: string } }>('/api/memory/page', async (request, reply) => {
+    if (Object.keys(request.query).some(k => k !== 'cursor') || (request.query.cursor !== undefined && typeof request.query.cursor !== 'string')) return reply.code(400).send({ error: 'Invalid memory cursor' });
+    try { return await memoryRepo.displayPage(actorOf(request), request.query.cursor); }
+    catch (err) {
+      if (err instanceof MemoryCursorError) return reply.code(400).send({ error: 'Invalid memory cursor' });
+      return memoryError(reply, err);
+    }
+  });
+
+  /** GET /api/memory - compatibility list; embeddings remain internal. */
   fastify.get('/api/memory', async (request, reply) => {
     let memories;
     try {
@@ -113,7 +121,7 @@ export async function memoryRoutes(fastify: FastifyInstance) {
     return {
       success: true,
       count: memories.length,
-      memories
+      memories: memories.map(({ embedding, embeddingModel, ...item }) => item)
     };
   });
 

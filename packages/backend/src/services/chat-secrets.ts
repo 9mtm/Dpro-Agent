@@ -62,10 +62,7 @@ export class ChatSecretsError extends Error {
 
 export const secretRef = (type: string, id: string): string => `[SECRET:${type}:${id}]`;
 const credentialName = (type: string, id: string): string => `chat:${type}:${id}`;
-const newId = (): string => {
-  const bytes = randomBytes(10);
-  return [...bytes].map((b) => 'abcdefghijklmnopqrstuvwxyz0123456789'[b % 36]).join('');
-};
+const newId = (): string => randomBytes(10).toString('hex');
 
 function credentialTypeOf(type: RedactionType): CredentialType {
   if (type === 'password' || type === 'url_credentials' || type === 'basic_auth') return CredentialType.PASSWORD;

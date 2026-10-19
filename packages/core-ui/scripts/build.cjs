@@ -40,7 +40,10 @@ async function main(args = process.argv.slice(2)) {
     const { build } = await import('vite');
     await build({ configFile: false, root, base: '/', envDir: false, publicDir: false,
       define: { __LIVE_ENTRY_CANDIDATE__: JSON.stringify(entryMode === 'live-candidate'), __DEV_QUICK_LOGIN__: JSON.stringify(devAccounts) },
-      plugins: [{ name: 'entry-provenance', transformIndexHtml: () => [{ tag: 'meta', attrs: { name: 'core-ui-entry', content: entryMode }, injectTo: 'head' }] }],
+      plugins: [{ name: 'entry-provenance', transformIndexHtml: () => [
+        { tag: 'meta', attrs: { name: 'core-ui-entry', content: entryMode }, injectTo: 'head' },
+        { tag: 'meta', attrs: { name: 'core-ui-dev-quick-login', content: devQuickLogin ? 'enabled' : 'disabled' }, injectTo: 'head' },
+      ] }],
       css: { postcss: { plugins: [] } },
       build: { outDir: output, emptyOutDir: false, license: true } });
     copyNotices(output);

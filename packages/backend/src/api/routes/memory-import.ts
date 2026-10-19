@@ -32,8 +32,10 @@ import { requestMeta } from '../../repositories/audit.js';
 import { ScopeError, actorOrReply, requireOwner } from '../../repositories/scope.js';
 import { ImportError, MAX_TOTAL_BYTES } from '../../memory/import/pipeline.js';
 import { MemoryFileError } from '../../memory/memory-files.js';
-import { listLocalSessions } from '../../memory/import/local-agents.js';
-import { MAX_SESSIONS_PER_IMPORT, getJob, importedSessions, runningJob, startImport } from '../../memory/import/local-import.js';
+import { listLocalSessions, findSession, readSession } from '../../memory/import/local-agents.js';
+import { automaticImportSettings, configureAutomaticImport, runDueAutomaticImports } from '../../memory/import/automatic-project-import.js';
+import { scanProjectDocuments, previewProjectDocument } from '../../memory/import/project-documents.js';
+import { MAX_SESSIONS_PER_IMPORT, getJob, importedSessions, latestImportJob, pauseImport, resumeImport, startImport } from '../../memory/import/local-import.js';
 import { isLoopbackPeer } from './terminal.js';
 import { redactImportText } from '../../memory/import/redact.js';
 
@@ -112,11 +114,29 @@ export async function memoryImportRoutes(fastify: FastifyInstance) {
     if (!isLoopbackPeer(request)) { reply.code(403).send({ error: 'Reading local agent conversations works only on this computer', code: 'not_loopback' }); return null; }
     return owner;
   };
+  fastify.get('/api/memory/import/local/automatic',{config},async(request,reply)=>{
+    const owner=localOwner(request,reply);if(!owner)return reply;return {settings:await automaticImportSettings(owner.userId!)};
+  });
+  fastify.put('/api/memory/import/local/automatic',{config},async(request,reply)=>{
+    const owner=localOwner(request,reply);if(!owner)return reply;
+    try{const settings=await configureAutomaticImport(owner.userId!,body(request));audit(request,owner,'memory_import.automatic','-',{enabled:settings.enabled,intervalMinutes:settings.intervalMinutes});if(settings.enabled)void runDueAutomaticImports().catch(()=>{});return {settings};}
+    catch{return reply.code(400).send({code:'invalid_input'});}
+  });
+  fastify.post('/api/memory/import/local/documents', { config }, async (request, reply) => {
+    const owner=localOwner(request,reply);if(!owner)return reply;
+    try {const result=await scanProjectDocuments(owner.userId!,body(request).auto===true?{auto:true,...(body(request).cursor!==undefined?{cursor:body(request).cursor}:{})}:body(request).roots);const done=await importedSessions(owner.userId!);return { ...result, documents:result.documents.map(d=>({...d,imported:done.has(d.id)})) };}
+    catch {return reply.code(400).send({code:'invalid_input'});}
+  });
+  fastify.get<{Params:{id:string}}>('/api/memory/import/local/documents/:id', {config},async(request,reply)=>{
+    const owner=localOwner(request,reply);if(!owner)return reply;
+    try {const doc=await previewProjectDocument(owner.userId!,request.params.id);return doc??reply.code(404).send({code:'not_found'});}
+    catch {return reply.code(409).send({code:'document_changed'});}
+  });
   fastify.get('/api/memory/import/local', { config }, async (request, reply) => {
     const owner = localOwner(request, reply);
     if (owner === null) return reply;
     const [sessions, done] = await Promise.all([listLocalSessions(), importedSessions(owner.userId!)]);
-    const job = runningJob(owner.userId!);
+    const job = await latestImportJob(owner.userId!);
     // Titles come from the first message: secrets are removed from them too.
     return { sessions: sessions.map((x) => ({ ...x, title: redactImportText(x.title).text, imported: done.get(x.id) ?? null })), archive: '~/.dpro/imports', ...(job ? { job } : {}) };
   });
@@ -127,15 +147,39 @@ export async function memoryImportRoutes(fastify: FastifyInstance) {
     if (!Array.isArray(ids) || !ids.length || ids.length > MAX_SESSIONS_PER_IMPORT || !ids.every((x) => typeof x === 'string' && /^[0-9a-f]{32}$/.test(x)) || new Set(ids).size !== ids.length) {
       return reply.code(400).send({ error: `Choose 1-${MAX_SESSIONS_PER_IMPORT} conversations`, code: 'invalid_input' });
     }
-    if (runningJob(owner.userId!)) return reply.code(409).send({ error: 'An import is already running', code: 'import_running' });
-    const job = startImport(owner.userId!, ids as string[]);
+    let job;
+    try { job = await startImport(owner.userId!, ids as string[]); }
+    catch (err: any) { if (err.code === 'import_running') return reply.code(409).send({ error: 'An import is already running', code: 'import_running' }); throw err; }
     audit(request, owner, 'memory_import.local', job.id, { sessions: ids.length });
     return reply.code(202).send({ job });
+  });
+  fastify.post<{ Params: { id: string } }>('/api/memory/import/local/jobs/:id/pause', { config }, async (request, reply) => {
+    const owner = localOwner(request, reply); if (!owner) return reply;
+    const job = await pauseImport(owner.userId!, request.params.id);
+    return job ? reply.code(202).send({ job }) : reply.code(404).send({ code: 'not_found' });
+  });
+  fastify.post<{ Params: { id: string } }>('/api/memory/import/local/jobs/:id/resume', { config }, async (request, reply) => {
+    const owner = localOwner(request, reply); if (!owner) return reply;
+    const job = await resumeImport(owner.userId!, request.params.id);
+    return job ? reply.code(202).send({ job }) : reply.code(404).send({ code: 'not_found' });
+  });
+  fastify.get<{ Params: { id: string } }>('/api/memory/import/local/sessions/:id', { config }, async (request, reply) => {
+    const owner = localOwner(request, reply); if (!owner) return reply;
+    const ref = await findSession(request.params.id);
+    if (!ref) return reply.code(404).send({ code: 'not_found' });
+    const session = await readSession(ref);
+    let budget = 20000;
+    const messages: { role: string; text: string }[] = [];
+    for (const turn of session.turns.slice(0, 20)) {
+      const text = redactImportText(turn.text).text.slice(0, Math.min(2000, budget));
+      if (!text) continue; messages.push({ role: turn.role, text }); budget -= text.length; if (!budget) break;
+    }
+    return { id: request.params.id, source: ref.source, messages, truncated: session.turns.length > messages.length || session.turns.some(t => t.text.length > 2000) };
   });
   fastify.get<{ Params: { id: string } }>('/api/memory/import/local/jobs/:id', { config }, async (request, reply) => {
     const owner = localOwner(request, reply);
     if (owner === null) return reply;
-    const job = getJob(owner.userId!, request.params.id);
+    const job = await getJob(owner.userId!, request.params.id);
     return job ? { job } : reply.code(404).send({ error: 'Not found', code: 'not_found' });
   });
 

@@ -1,3 +1,4 @@
+import { safeConsole } from '../../services/safe-error-log.js';
 /**
  * Channels API Routes
  * Manage messaging channels
@@ -184,7 +185,7 @@ export async function channelsRoutes(fastify: FastifyInstance) {
         message: 'Message sent',
       };
     } catch (error: any) {
-      console.error('[Channels API] ❌ Send failed:', error);
+      safeConsole.error('[Channels API] ❌ Send failed:', error);
       // SECURITY: Use centralized error handler to prevent info disclosure (H-09)
       return handleError(reply, error, 'internal', '[Channels] Send message failed');
     }

@@ -139,6 +139,7 @@ test('input is validated per step', async () => {
     { step: 'provider', data: { aiProvider: 'google' } },
     { step: 'provider', data: { aiProvider: 'ollama', ollamaUrl: 'http://10.0.0.5:11434' } },
     { step: 'provider', data: { aiProvider: 'ollama', ollamaUrl: 'http://evil.example:11434' } },
+    { step: 'provider', data: { aiProvider: 'ollama', ollamaUrl: 'http://127.0.0.1:11434/' + '../'.repeat(1000) } },
     { step: 'provider', data: { aiProvider: 'ollama', apiKey: 'sk-should-not-be-here' } },
     { step: 'provider', data: { aiProvider: 'anthropic', aiModel: 'claude-x' } },
     { step: 'provider', data: { aiProvider: 'openai', apiKey: 'has space in it' } },

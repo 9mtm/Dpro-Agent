@@ -1,3 +1,4 @@
+import { safeConsole } from '../../../src/services/safe-error-log.js';
 /**
  * Campaign Manager
  * Auto-dialer for outbound call campaigns (sales, notifications, surveys)
@@ -68,7 +69,7 @@ class CampaignManager {
       // Get created campaign
       const campaign = await this.db.get(`SELECT * FROM call_campaigns WHERE id = ?`, [id]);
 
-      console.log(`[CampaignManager] Created campaign: ${name} (${id})`);
+      safeConsole.log(`[CampaignManager] Created campaign: ${name} (${id})`);
       return campaign;
     } catch (error) {
       console.error('[CampaignManager] Error creating campaign:', error);
@@ -107,7 +108,7 @@ class CampaignManager {
         added++;
       }
 
-      console.log(`[CampaignManager] Added ${added} contacts to campaign ${campaignId}`);
+      safeConsole.log(`[CampaignManager] Added ${added} contacts to campaign ${campaignId}`);
       return added;
     } catch (error) {
       console.error('[CampaignManager] Error adding contacts:', error);
@@ -129,7 +130,7 @@ class CampaignManager {
       }
 
       if (campaign.status === 'running') {
-        console.log(`[CampaignManager] Campaign already running: ${campaignId}`);
+        safeConsole.log(`[CampaignManager] Campaign already running: ${campaignId}`);
         return true;
       }
 
@@ -144,10 +145,10 @@ class CampaignManager {
       // Start auto-dialer
       this.runAutoDialer(campaignId);
 
-      console.log(`[CampaignManager] Started campaign: ${campaign.name} (${campaignId})`);
+      safeConsole.log(`[CampaignManager] Started campaign: ${campaign.name} (${campaignId})`);
       return true;
     } catch (error) {
-      console.error('[CampaignManager] Error starting campaign:', error);
+      safeConsole.error('[CampaignManager] Error starting campaign:', error);
       throw error;
     }
   }
@@ -167,7 +168,7 @@ class CampaignManager {
       // Stop auto-dialer
       this.stopAutoDialer(campaignId);
 
-      console.log(`[CampaignManager] Paused campaign: ${campaignId}`);
+      safeConsole.log(`[CampaignManager] Paused campaign: ${campaignId}`);
       return true;
     } catch (error) {
       console.error('[CampaignManager] Error pausing campaign:', error);
@@ -190,7 +191,7 @@ class CampaignManager {
       // Restart auto-dialer
       this.runAutoDialer(campaignId);
 
-      console.log(`[CampaignManager] Resumed campaign: ${campaignId}`);
+      safeConsole.log(`[CampaignManager] Resumed campaign: ${campaignId}`);
       return true;
     } catch (error) {
       console.error('[CampaignManager] Error resuming campaign:', error);
@@ -241,7 +242,7 @@ class CampaignManager {
     if (intervalId) {
       clearInterval(intervalId);
       this.activeDialers.delete(campaignId);
-      console.log(`[CampaignManager] Stopped auto-dialer for ${campaignId}`);
+      safeConsole.log(`[CampaignManager] Stopped auto-dialer for ${campaignId}`);
     }
   }
 
@@ -374,7 +375,7 @@ class CampaignManager {
         [status, call_result, call_duration_seconds, notes, call_session_id, next_retry_at, contactId]
       );
 
-      console.log(`[CampaignManager] Updated contact ${contactId}: ${status}${call_result ? ` - ${call_result}` : ''}`);
+      safeConsole.log(`[CampaignManager] Updated contact ${contactId}: ${status}${call_result ? ` - ${call_result}` : ''}`);
     } catch (error) {
       console.error('[CampaignManager] Error updating contact result:', error);
       throw error;
@@ -425,7 +426,7 @@ class CampaignManager {
         }
       };
     } catch (error) {
-      console.error('[CampaignManager] Error getting campaign stats:', error);
+      safeConsole.error('[CampaignManager] Error getting campaign stats:', error);
       throw error;
     }
   }

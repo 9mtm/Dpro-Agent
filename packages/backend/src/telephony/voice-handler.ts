@@ -1,3 +1,4 @@
+import { safeConsole } from '../services/safe-error-log.js';
 import type { FastifyRequest, FastifyReply } from 'fastify';
 import { one, run, sql } from '../repositories/sql-steps.js';
 import { nowText, secondsSinceText } from '../db/pg/dialect.js';
@@ -526,5 +527,5 @@ async function queueRecordingDownload(callSid: string, recordingUrl: string): Pr
   // 2. Save to .data/storage/cdn/recordings/
   // 3. Create storage_files entry
   // 4. Update call_sessions.recording_file_id
-  console.log(`[Telephony] Queued recording download for call ${callSid}: ${recordingUrl}`);
+  safeConsole.log(`[Telephony] Queued recording download for call ${callSid}: ${recordingUrl}`);
 }

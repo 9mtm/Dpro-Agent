@@ -1423,3 +1423,43 @@ button.status-item:hover { background:var(--row-hover); color:var(--text); }
 .app-shell [data-message-id][data-highlight] { animation:hit-flash 2.4s ease-out; border-radius:6px; }
 @keyframes hit-flash { 0%, 35% { box-shadow:0 0 0 2px color-mix(in srgb,var(--accent) 55%,transparent); background:color-mix(in srgb,var(--accent) 8%,transparent); } 100% { box-shadow:0 0 0 2px transparent; background:transparent; } }
 @media (prefers-reduced-motion: reduce) { .app-shell [data-message-id][data-highlight] { animation:none; box-shadow:0 0 0 2px color-mix(in srgb,var(--accent) 55%,transparent); } }
+
+/* Public workspace keeps private destinations unmounted until authentication. */
+.public-content { overflow:auto; }
+.public-welcome { max-width:650px; margin:clamp(36px,10vh,120px) auto; padding:32px; }
+.public-welcome h1 { font-size:32px; line-height:1.2; margin:8px 0 18px; letter-spacing:-.6px; }
+.public-welcome p { max-width:55ch; }
+.public-welcome button { margin:12px 12px 12px 0; }
+.public-account { max-width:650px; margin:32px auto; padding:16px; }
+.public-account .auth-workspace { margin:16px 0; max-width:none; }
+.public-shell .nav-item:disabled { opacity:.65; cursor:not-allowed; }
+.app-settings { max-width:780px; padding:28px; }
+.app-settings section { padding:20px 0; border-bottom:1px solid var(--border); }
+.app-settings h1 { margin:0; font-size:24px; }
+.app-settings h2 { font-size:17px; margin:0 0 12px; }
+.app-settings select { display:block; margin:8px 0; min-width:240px; }
+.app-settings dl { display:grid; grid-template-columns:120px 1fr; gap:6px 16px; }
+.app-settings dd { margin:0; }
+.account-menu { position:relative; }
+.account-menu summary { list-style:none; cursor:pointer; }
+.account-menu[open] > div { position:absolute; bottom:100%; left:0; right:0; padding:8px; background:var(--surface); border:1px solid var(--border); border-radius:6px; box-shadow:0 6px 20px #0002; z-index:20; }
+.account-menu[open] > div button { display:block; width:100%; text-align:left; }
+
+/* Conversation selection and read-only import preview. */
+.app-shell .local-import-row { display:grid; grid-template-columns:20px minmax(0,1fr); align-items:center; gap:10px; padding:6px; }
+.app-shell .local-import-open { display:flex; flex-direction:column; align-items:flex-start; gap:5px; width:100%; padding:8px; border:0; background:transparent; color:var(--text); text-align:start; box-shadow:none; }
+.app-shell .local-import-open:hover { background:var(--surface-2,rgba(100,130,180,.08)); }
+.app-shell .local-import-preview { margin:16px 0; padding:16px; border:1px solid var(--stroke-1,#ccd5df); border-radius:12px; }
+.app-shell .local-import-preview header { display:flex; align-items:center; justify-content:space-between; gap:12px; }
+.app-shell .local-import-messages { max-height:420px; overflow:auto; display:grid; gap:12px; }
+.app-shell .local-import-messages article { padding:12px; border:1px solid var(--stroke-1,#ccd5df); border-radius:10px; }
+.app-shell .local-import-messages article[data-role="user"] { background:rgba(80,130,200,.08); }
+.app-shell .local-import-messages p { white-space:pre-wrap; overflow-wrap:anywhere; }
+
+/* Shared compact pane tabs follow the desktop design tokens. */
+.app-shell .pane-tabs { display:flex; gap:16px; border-block-end:1px solid var(--stroke-3); overflow-x:auto; }
+.app-shell .pane-tabs [role="tab"] { flex-shrink:0; min-block-size:28px; padding:0 4px; border:0; border-radius:0; background:transparent; box-shadow:none; color:var(--text-2); font-size:11px; font-weight:500; border-block-end:2px solid transparent; }
+.app-shell .pane-tabs [role="tab"][aria-selected="true"] { color:var(--text); border-block-end-color:var(--accent); }
+.memory-pagination { display:flex; align-items:center; gap:8px; flex-wrap:wrap; margin-block:8px; }
+.memory-pagination .fine-print { margin-inline-end:auto; }
+@media(max-width:768px) { .app-shell .pane-tabs [role="tab"] { min-block-size:44px; } }

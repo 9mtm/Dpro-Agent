@@ -1,3 +1,4 @@
+import { safeConsole } from '../services/safe-error-log.js';
 /**
  * Plugin Loader
  * Loads and validates plugins from directories and manifests
@@ -136,7 +137,7 @@ export class PluginLoader implements IPluginLoader {
    * Uninstall a plugin
    */
   async uninstall(pluginId: string): Promise<void> {
-    console.log(`[PluginLoader] 🗑️  Uninstalling plugin: ${pluginId}`);
+    safeConsole.log(`[PluginLoader] 🗑️  Uninstalling plugin: ${pluginId}`);
 
     const plugin = this.loadedPlugins.get(pluginId);
     if (!plugin) {

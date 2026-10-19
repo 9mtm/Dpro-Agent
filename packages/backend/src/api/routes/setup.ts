@@ -1,4 +1,5 @@
 import { dataPath, dataRoot } from '../../config/data-root.js';
+import { validSetupEmail } from '../../auth/setup-input.js';
 import { FastifyInstance, FastifyRequest, FastifyReply } from 'fastify';
 import { exec } from 'child_process';
 import { promisify } from 'util';
@@ -238,8 +239,7 @@ export default async function setupRoutes(fastify: FastifyInstance) {
       }
 
       // Email validation
-      const emailRegex = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
-      if (!emailRegex.test(email)) {
+      if (!validSetupEmail(email)) {
         return reply.status(400).send({
           error: 'Invalid email',
           code: 'invalid_email',

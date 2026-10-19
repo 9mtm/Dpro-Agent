@@ -47,7 +47,7 @@ test('compiled opt-in injects live only and shows no fictional workspace; nothin
   // Owner decision 2026-10-15: real data only; the page opens the real sign-in (on mount) instead of a fixture.
   assert.doesNotMatch(renderToStaticMarkup(React.createElement(App, { client })), /Use live sign-in|Fixture workspace|Nothing here yet/);
   client.selectMode('live');
-  assert.match(renderToStaticMarkup(React.createElement(App, { client })), /Check setup status/);
+  assert.match(renderToStaticMarkup(React.createElement(App, { client })), /Welcome to Dpro/);
   assert.equal(b.calls.length, 0);
 });
 for (const value of ['http://localhost:42522', 'http://[::1]:42522', 'http://127.0.0.2:42522', 'http://127.0.0.1', 'http://127.0.0.1:0', 'http://127.0.0.1:042522', 'http://127.0.0.1:65536', 'https://127.0.0.1:42522', 'null', 'https://example.invalid', origin + '/', origin + '?live=true']) test(`wrong origin fails before mounting: ${value}`, () => {

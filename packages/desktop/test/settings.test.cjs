@@ -27,7 +27,7 @@ test('settings: default local, saved 0600, bad file falls back to local', () => 
   assert.deepEqual(loadSettings(dir), { mode: 'local', remoteUrl: null });
   saveSettings(dir, { mode: 'remote', remoteUrl: 'https://dpro.example.com/' });
   assert.deepEqual(loadSettings(dir), { mode: 'remote', remoteUrl: 'https://dpro.example.com' });
-  assert.equal(fs.statSync(path.join(dir, FILE)).mode & 0o777, 0o600);
+  if (process.platform !== 'win32') assert.equal(fs.statSync(path.join(dir, FILE)).mode & 0o777, 0o600);
   saveSettings(dir, { mode: 'remote', remoteUrl: 'http://evil.example.com' });
   assert.deepEqual(loadSettings(dir), { mode: 'local', remoteUrl: null });
   fs.writeFileSync(path.join(dir, FILE), '{not json');

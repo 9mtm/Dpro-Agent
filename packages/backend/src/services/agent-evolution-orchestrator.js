@@ -1,3 +1,4 @@
+import { safeConsole } from './safe-error-log.js';
 /**
  * Agent Evolution Orchestrator
  *
@@ -44,7 +45,7 @@ export async function evolveAgent(agentId) {
     };
   }
 
-  console.log(`[Evolution] Starting evolution cycle for agent: ${agentId}`);
+  safeConsole.log(`[Evolution] Starting evolution cycle for agent: ${agentId}`);
 
   // CORE-01d: personality drift is proposal-only. Verified task-run outcomes
   // may file one pending proposal (system actor, source 'evolution'); the
@@ -62,7 +63,7 @@ async function personalityDriftStep(agentId) {
       ? { status: 'proposed', proposalId: outcome.proposal.id, delta: outcome.proposal.delta }
       : { status: 'skipped', reason: outcome.reason, ...(outcome.proposalId ? { proposalId: outcome.proposalId } : {}) };
   } catch (error) {
-    console.error(`[Evolution] Personality proposal step failed for ${agentId}:`, error);
+    safeConsole.error(`[Evolution] Personality proposal step failed for ${agentId}:`, error);
     return { status: 'error', error: String(error?.message ?? error).slice(0, 200) };
   }
 }
@@ -148,7 +149,7 @@ async function runConfigEvolution(agentId, config) {
       },
     };
   } catch (error) {
-    console.error(`[Evolution] Error evolving agent ${agentId}:`, error);
+    safeConsole.error(`[Evolution] Error evolving agent ${agentId}:`, error);
     return {
       agentId,
       error: error.message,

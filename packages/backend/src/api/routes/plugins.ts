@@ -1,3 +1,4 @@
+import { safeConsole } from '../../services/safe-error-log.js';
 /**
  * Plugins API Routes
  * Manage plugins and extensions
@@ -84,7 +85,7 @@ export async function pluginsRoutes(fastify: FastifyInstance) {
           message: `Plugin ${id} enabled`,
         };
       } catch (error: any) {
-        console.error('[Plugins API] ❌ Enable failed:', error);
+        safeConsole.error('[Plugins API] ❌ Enable failed:', error);
         // SECURITY: Use centralized error handler to prevent info disclosure (H-09)
         return handleError(reply, error, 'internal', '[Plugins] Enable failed');
       }
@@ -105,7 +106,7 @@ export async function pluginsRoutes(fastify: FastifyInstance) {
           message: `Plugin ${id} disabled`,
         };
       } catch (error: any) {
-        console.error('[Plugins API] ❌ Disable failed:', error);
+        safeConsole.error('[Plugins API] ❌ Disable failed:', error);
         // SECURITY: Use centralized error handler to prevent info disclosure (H-09)
         return handleError(reply, error, 'internal', '[Plugins] Disable failed');
       }
@@ -126,7 +127,7 @@ export async function pluginsRoutes(fastify: FastifyInstance) {
           message: `Plugin ${id} reloaded`,
         };
       } catch (error: any) {
-        console.error('[Plugins API] ❌ Reload failed:', error);
+        safeConsole.error('[Plugins API] ❌ Reload failed:', error);
         // SECURITY: Use centralized error handler to prevent info disclosure (H-09)
         return handleError(reply, error, 'internal', '[Plugins] Reload failed');
       }
@@ -147,7 +148,7 @@ export async function pluginsRoutes(fastify: FastifyInstance) {
           message: `Plugin ${id} uninstalled`,
         };
       } catch (error: any) {
-        console.error('[Plugins API] ❌ Uninstall failed:', error);
+        safeConsole.error('[Plugins API] ❌ Uninstall failed:', error);
         // SECURITY: Use centralized error handler to prevent info disclosure (H-09)
         return handleError(reply, error, 'internal', '[Plugins] Uninstall failed');
       }

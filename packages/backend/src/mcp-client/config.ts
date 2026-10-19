@@ -152,7 +152,7 @@ export function checkSecretMap(raw: unknown, kind: 'env' | 'headers'): Record<st
   if (typeof raw !== 'object' || Array.isArray(raw)) throw new McpConfigError(`${kind} must be an object`);
   const entries = Object.entries(raw as Record<string, unknown>);
   if (entries.length > MAX_ENV_ENTRIES) throw new McpConfigError(`${kind} allows at most ${MAX_ENV_ENTRIES} entries`);
-  const out: Record<string, string> = {};
+  const safe: Array<[string, string]> = [];
   for (const [name, value] of entries) {
     if (kind === 'env') {
       if (!ENV_NAME_PATTERN.test(name)) throw new McpConfigError(`invalid env name "${name.slice(0, 64)}"`);
@@ -164,9 +164,9 @@ export function checkSecretMap(raw: unknown, kind: 'env' | 'headers'): Record<st
     if (typeof value !== 'string' || value.length > MAX_SECRET_VALUE_CHARS || /[\r\n\u0000]/.test(value)) {
       throw new McpConfigError(`${kind} "${name}" must be a single-line string`);
     }
-    out[name] = value;
+    safe.push([name, value]);
   }
-  return out;
+  return Object.fromEntries(safe);
 }
 
 /**

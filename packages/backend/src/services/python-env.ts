@@ -11,11 +11,14 @@
 
 import { dataPath } from '../config/data-root.js';
 import path from 'path';
+import { fileURLToPath } from 'node:url';
 import fs from 'fs';
-import { spawn, execSync, type ChildProcess, type SpawnOptions } from 'child_process';
+import { spawn, execFileSync, type ChildProcess, type SpawnOptions } from 'child_process';
 
 // ─── Constants ───────────────────────────────────────────────────────────────
 
+// Bundled scripts are independent of the selected writable data workspace.
+export const PYTHON_SCRIPTS_DIR = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..', '..', 'python-scripts');
 const DATA_DIR = dataPath('python');
 const SETUP_FLAG = path.join(DATA_DIR, '.setup-complete');
 
@@ -79,7 +82,7 @@ function findSystemPython(): string | null {
   if (process.platform !== 'win32') {
     // Linux/Mac: just try python3
     try {
-      execSync('"python3" --version', { stdio: 'ignore', timeout: 2000 });
+      execFileSync('python3', ['--version'], { stdio: 'ignore', timeout: 2000 });
       return 'python3';
     } catch {
       return null;
@@ -102,7 +105,7 @@ function findSystemPython(): string | null {
 
   for (const candidate of candidates) {
     try {
-      execSync(`"${candidate}" --version`, { stdio: 'ignore', timeout: 2000 });
+      execFileSync(candidate, ['--version'], { stdio: 'ignore', timeout: 2000 });
       return candidate;
     } catch {
       // Try next
@@ -217,7 +220,7 @@ export function getStatus(): PythonEnvStatus {
 
   let version: string | null = null;
   try {
-    version = execSync(`"${pythonPath}" --version`, { timeout: 3000 })
+    version = execFileSync(pythonPath, ['--version'], { timeout: 3000 })
       .toString()
       .trim()
       .replace('Python ', '');

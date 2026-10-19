@@ -45,24 +45,37 @@ export function getTokenFilePath(env: NodeJS.ProcessEnv = process.env): string {
 
 interface StoredSession { createdBy: string; token: string; backendUrl?: string }
 
+const MAX_SESSION_FILE_BYTES = 64 * 1024;
+
+/** Validate and read one opened file, so a path swap cannot bypass permission checks. */
+function readPrivateJson(file: string, permissionError: string): any | null {
+  let fd: number;
+  try { fd = fs.openSync(file, fs.constants.O_RDONLY | (fs.constants.O_NONBLOCK ?? 0)); } catch { return null; }
+  try {
+    const stat = fs.fstatSync(fd);
+    if (!stat.isFile() || stat.size > MAX_SESSION_FILE_BYTES) return null;
+    if (process.platform !== 'win32' && (stat.mode & 0o077) !== 0) throw new SessionError(permissionError);
+    const buffer = Buffer.alloc(MAX_SESSION_FILE_BYTES + 1);
+    let used = 0;
+    while (used < buffer.length) {
+      const count = fs.readSync(fd, buffer, used, buffer.length - used, null);
+      if (count === 0) break;
+      used += count;
+    }
+    if (used > MAX_SESSION_FILE_BYTES) return null;
+    return JSON.parse(buffer.subarray(0, used).toString('utf8'));
+  } catch (error) {
+    if (error instanceof SessionError) throw error;
+    return null;
+  } finally {
+    fs.closeSync(fd);
+  }
+}
+
 function readSessionFile(env: NodeJS.ProcessEnv): StoredSession | null {
   const file = getTokenFilePath(env);
-  let stat: fs.Stats;
-  try {
-    stat = fs.statSync(file);
-  } catch {
-    return null;
-  }
-  // The CLI writes the file 0600. A file others can read is not used.
-  if (process.platform !== 'win32' && (stat.mode & 0o077) !== 0) {
-    throw new SessionError(`The Agent Player token file is readable by other users; run "chmod 600 ${file}" or "agent-player login" again.`);
-  }
-  try {
-    const data = JSON.parse(fs.readFileSync(file, 'utf-8'));
-    if (data && data.createdBy === MARKER && typeof data.token === 'string' && data.token) return data as StoredSession;
-  } catch {
-    // unreadable: not signed in
-  }
+  const data = readPrivateJson(file, `The Agent Player token file is readable by other users; run "chmod 600 ${file}" or "agent-player login" again.`);
+  if (data && data.createdBy === MARKER && typeof data.token === 'string' && data.token) return data as StoredSession;
   return null;
 }
 
@@ -105,22 +118,9 @@ export interface InstanceIdentity { id: string; secret: string }
 /** The backend identity the backend wrote next to the token file (0600), or throws SessionError. */
 export function loadInstance(env: NodeJS.ProcessEnv = process.env): InstanceIdentity {
   const file = path.join(getConfigDir(env), INSTANCE_FILE_NAME);
-  let stat: fs.Stats;
-  try {
-    stat = fs.statSync(file);
-  } catch {
-    throw new SessionError(NO_INSTANCE);
-  }
-  if (process.platform !== 'win32' && (stat.mode & 0o077) !== 0) {
-    throw new SessionError(`The Agent Player instance file is readable by other users; run "chmod 600 ${file}" or restart the backend.`);
-  }
-  try {
-    const data = JSON.parse(fs.readFileSync(file, 'utf-8'));
-    if (data && data.createdBy === INSTANCE_MARKER && typeof data.id === 'string' && typeof data.secret === 'string' && /^[0-9a-f]{64}$/i.test(data.secret)) {
-      return { id: data.id, secret: data.secret };
-    }
-  } catch {
-    // unreadable
+  const data = readPrivateJson(file, `The Agent Player instance file is readable by other users; run "chmod 600 ${file}" or restart the backend.`);
+  if (data && data.createdBy === INSTANCE_MARKER && typeof data.id === 'string' && typeof data.secret === 'string' && /^[0-9a-f]{64}$/i.test(data.secret)) {
+    return { id: data.id, secret: data.secret };
   }
   throw new SessionError(NO_INSTANCE);
 }

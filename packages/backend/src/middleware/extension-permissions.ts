@@ -1,3 +1,5 @@
+import { safeConsole } from '../services/safe-error-log.js';
+import { extensionResourcePath } from '../plugins/resource-path.js';
 /**
  * Extension Permissions Middleware
  * Validates extension capabilities before allowing API access
@@ -37,16 +39,20 @@ const PERMISSION_METADATA: Record<PermissionType, { risk: 'low' | 'medium' | 'hi
  * Read extension manifest and extract permissions
  */
 export function getExtensionPermissions(extensionId: string): PermissionType[] {
+  if (typeof extensionId !== 'string' || !/^[A-Za-z0-9][A-Za-z0-9._-]{0,127}$/.test(extensionId) || extensionId.includes('..')) return [];
   const extensionsDir = resolve('./extensions');
-
-  // Try both manifest filename formats
-  let manifestPath = join(extensionsDir, extensionId, 'agentplayer.plugin.json');
-  if (!existsSync(manifestPath)) {
-    manifestPath = join(extensionsDir, extensionId, 'agent-player.plugin.json');
+  let manifestPath: string;
+  try {
+    manifestPath = extensionResourcePath(extensionsDir, join(extensionId, 'agentplayer.plugin.json'));
+    if (!existsSync(manifestPath)) {
+      manifestPath = extensionResourcePath(extensionsDir, join(extensionId, 'agent-player.plugin.json'));
+    }
+  } catch {
+    return [];
   }
 
   if (!existsSync(manifestPath)) {
-    console.warn(`[Permissions] ⚠️  Manifest not found for extension: ${extensionId}`);
+    safeConsole.warn(`[Permissions] ⚠️  Manifest not found for extension: ${extensionId}`);
     return [];
   }
 
@@ -60,7 +66,9 @@ export function getExtensionPermissions(extensionId: string): PermissionType[] {
     }
 
     // Modern format: manifest.permissions or manifest.capabilities
-    const permissions = manifest.permissions || manifest.capabilities || [];
+    const rawPermissions = manifest.permissions ?? manifest.capabilities ?? [];
+    if (!Array.isArray(rawPermissions) || rawPermissions.some(value => typeof value !== 'string')) return [];
+    const permissions = [...rawPermissions];
 
     // Always grant storage permission (sandboxed)
     if (!permissions.includes('storage')) {
@@ -69,7 +77,7 @@ export function getExtensionPermissions(extensionId: string): PermissionType[] {
 
     return permissions;
   } catch (error) {
-    console.error(`[Permissions] ❌ Failed to read manifest for ${extensionId}:`, error);
+    safeConsole.error(`[Permissions] ❌ Failed to read manifest for ${extensionId}:`, error);
     return [];
   }
 }

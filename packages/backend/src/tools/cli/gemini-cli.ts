@@ -1,3 +1,4 @@
+import { safeConsole } from '../../services/safe-error-log.js';
 /**
  * Gemini CLI Tool
  *
@@ -90,7 +91,7 @@ export const geminiCliTool: Tool = {
     // unless AGENT_EXEC_TOOLS=true (S0-Q.5)
     if (!isExecToolsEnabled()) return execToolRefusal('gemini_cli');
 
-    console.log(`[GeminiCLI] 🚀 Sending prompt (${prompt.length} chars)`);
+    safeConsole.log(`[GeminiCLI] 🚀 Sending prompt (${prompt.length} chars)`);
     if (model) console.log(`[GeminiCLI]   Model: ${model}`);
 
     const gemini = await findGeminiExecutable();

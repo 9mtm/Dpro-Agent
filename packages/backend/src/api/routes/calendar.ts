@@ -1,3 +1,4 @@
+import { safeConsole } from '../../services/safe-error-log.js';
 /**
  * Calendar API Routes
  * Manages calendar events, sources, and external calendar sync (Google Calendar, iCal)
@@ -514,7 +515,7 @@ export async function registerCalendarRoutes(fastify: FastifyInstance) {
 
       // Run sync in background
       syncCalendarSource(id).catch((error) => {
-        console.error(`[Calendar] Sync failed for source ${id}:`, error);
+        safeConsole.error(`[Calendar] Sync failed for source ${id}:`, error);
       });
 
       return { success: true, message: 'Sync started' };
