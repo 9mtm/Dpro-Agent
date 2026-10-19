@@ -58,19 +58,13 @@ export function ChatAvatar({ turns, agentId, agentName, onClose }: { turns: read
     if (choices.speak && voice && text) post({ operation: 'speak', text, voiceId: voice.id, language: voice.language ?? 'ar' });
   }, [last?.key, last?.status, phase === 'loading', voices, choices.speak, choices.voiceId]);
   const voice = voices.find(v => v.id === choices.voiceId);
-  // Full screen fills the Dpro window and also asks the system for real full screen where it is allowed.
-  // While the package Settings window is open the frame gets the whole window too, so the window has room.
-  const box = useRef<HTMLElement>(null), [full, setFull] = useState(false);
-  useEffect(() => { const sync = () => { if (!document.fullscreenElement) setFull(false); }; document.addEventListener('fullscreenchange', sync); return () => document.removeEventListener('fullscreenchange', sync); }, []);
-  useEffect(() => { if (!full) return; const esc = (e: KeyboardEvent) => { if (e.key === 'Escape') setFull(false); }; window.addEventListener('keydown', esc); return () => window.removeEventListener('keydown', esc); }, [full]);
-  const toggleFull = () => { if (full) { setFull(false); if (document.fullscreenElement) void document.exitFullscreen().catch(() => {}); } else { setFull(true); void box.current?.requestFullscreen?.().catch(() => { /* the window-filling view stays */ }); } };
-  const wide = full || settingsOpen;
-  return <section ref={box} className={`chat-avatar${wide ? ' is-full' : ''}`} aria-label={`${agentName} avatar`} style={wide ? undefined : { height: HEIGHT[choices.size] }}>
+  // Settings is the package's own window; while it is open the frame fills the Dpro window so it has room.
+  const wide = settingsOpen;
+  return <section className={`chat-avatar${wide ? ' is-full' : ''}`} aria-label={`${agentName} avatar`} style={wide ? undefined : { height: HEIGHT[choices.size] }}>
     <iframe ref={frame} title={`${agentName} avatar`} className="chat-avatar-frame" src={`/genvr/avatar.html#${channel.current}`} sandbox="allow-scripts allow-same-origin"/>
-    {settingsOpen ? null : <div className="chat-avatar-bar">
+    {wide ? null : <div className="chat-avatar-bar">
       <span className={`chat-avatar-state is-${phase}`} role="status"><span aria-hidden="true" className="dot"/>{agentName} · {LABEL[phase]}</span>
       <span className="chat-avatar-voice">{choices.speak ? voice ? `Voice: ${voice.name}` : 'Choose a voice in Settings to hear replies' : 'Speech off'}</span>
-      <button type="button" className="tool" aria-pressed={full} onClick={toggleFull}>{full ? 'Exit full screen' : 'Full screen'}</button>
       <button type="button" className="tool" aria-label="Hide avatar" onClick={onClose}>✕</button>
     </div>}
     {notice ? <p className="chat-avatar-notice" role="alert">{notice}</p> : null}

@@ -12,7 +12,7 @@ const NAME='genvr-local';
 const DESCRIPTION='Bundled GenVR local authoring';
 /** Live MCP connection file written by the local Studio host (core-ui scripts/genvr-studio-host.cjs). */
 export const studioConnectionFile=()=>path.resolve(process.env.DPRO_GENVR_CONNECTION||path.join(os.homedir(),'.genvr','dpro-studio','studio-connection.json'));
-const PACKAGE_HASH='8d0dfefb011d03d12e7a4c1552d4fb060a99bf06a8ed149c2fdaad75c4fa0b15';
+const PACKAGE_HASH='9c5aa9e1e333cba7c99f5ee4e17c40af9d84bc770ff722f504d3a5ad511ded91';
 let queue:Promise<unknown>=Promise.resolve();
 /** Register the pinned bundled authoring server; keep all normal execution and grant gates. */
 export function ensureGenvrMcp(ownerId:string) {

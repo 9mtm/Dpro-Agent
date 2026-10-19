@@ -182,8 +182,8 @@ export function ChatView({ controller, mode, productName = 'Dpro Agent', client,
     setCardForm({ title: seed?.title ?? draft.title, description: seed ? [seed.description, draft.description].filter(Boolean).join('\n\n') : draft.description, agents: ids, priority: seed?.priority ?? 'normal', key: Date.now() });
   };
   // The agent's face beside the conversation (GenVR avatar frame); remembered on this device.
-  const [avatarOn, setAvatarOn] = useState(() => avatarShown.on);
-  const toggleAvatar = () => setAvatarOn(on => (avatarShown.on = !on));
+  const avatarOn = useSyncExternalStore(avatarShown.subscribe, avatarShown.get, avatarShown.get);
+  const toggleAvatar = avatarShown.toggle;
   const folderProject = project?.folder ? project.id : null;
   useEffect(() => { panes?.setProject(folderProject); }, [panes, folderProject]);
   const paneButtons: { name: PaneName; icon: UiIconName; label: string }[] = [
@@ -824,5 +824,8 @@ function Copy({ text, label }: { text: string; label: string }): ReactNode {
     <UiIcon name={state === 'done' ? 'check' : 'copy'} size={13}/>
   </button>;
 }
-/** Whether the chat avatar is shown; kept in memory for this session (no browser storage). */
-const avatarShown = { on: false };
+/** Whether the chat avatar is shown; one shared value for every chat view, kept in memory for this session (no browser storage). */
+const avatarShown = (() => {
+  let on = false; const listeners = new Set<() => void>();
+  return { get: () => on, subscribe: (listener: () => void) => { listeners.add(listener); return () => { listeners.delete(listener); }; }, toggle: () => { on = !on; listeners.forEach(listener => listener()); } };
+})();
