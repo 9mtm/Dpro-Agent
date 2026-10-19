@@ -290,6 +290,8 @@ function buildMenu() {
 }
 
 async function boot() {
+  // From source the dock shows Electron's icon; a packaged app has the Dpro icon from build/.
+  if (!app.isPackaged && process.platform === 'darwin') { try { app.dock?.setIcon(path.join(__dirname, '..', 'build', 'icon.png')); } catch { /* keep the default */ } }
   fs.mkdirSync(settingsDir(), { recursive: true, mode: 0o700 });
   hardenSession();
   buildMenu();

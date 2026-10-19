@@ -1596,3 +1596,6 @@ button.status-item:hover { background:var(--row-hover); color:var(--text); }
 .connection-publish h4 { margin:0; }
 .connection-form { display:grid; gap:8px; border:1px solid var(--stroke-3, var(--border)); border-radius:6px; padding:10px 12px; }
 .connections .settings-facts dd { overflow-wrap:anywhere; }
+.app-shell :is(.page-column,.page-ui) .connections label.check { display:flex; gap:8px; align-items:flex-start; justify-content:flex-start; inline-size:auto; max-inline-size:none; font-size:12.5px; color:var(--text-2); }
+.app-shell :is(.page-column,.page-ui) .connections label.check input { inline-size:auto; flex:none; margin-block-start:3px; }
+.app-shell :is(.page-column,.page-ui) .connections .connection-form .field { display:grid; gap:3px; }
