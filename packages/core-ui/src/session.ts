@@ -1,4 +1,5 @@
 import {approvalRoute,allowedApproval,approvalResponse} from './approvals-contract.js';
+import { allowedConnections, connectionsRoute, connectionsResponse } from './connections-contract.js';
 import {allowedTemplates,templatePath,templatesResponse} from './specialty-contract.js';
 import { allowedMcpImport, mcpImportPath, mcpImportResponse } from './mcp-import-contract.js';
 import { allowedSkillLibrary, skillLibraryPath, skillLibraryResponse } from './skill-library-contract.js';
@@ -62,6 +63,7 @@ function user(value: unknown): User {
 // Reject before URL normalization. No generic URL, header, key or mutation escape hatch.
 export function allowedRequest(method: string, path: string, body?: unknown): boolean {
   if (approvalRoute(path)) return allowedApproval(method,path,body);
+  if (connectionsRoute(path)) return allowedConnections(method,path,body);
   if (mcpImportPath(path)) return allowedMcpImport(method,path,body);
   if (templatePath(path)) return allowedTemplates(method,path,body);
   if (skillLibraryPath(path)) return allowedSkillLibrary(method,path,body);
@@ -121,6 +123,7 @@ function projectResponse(path: string, response: WireResponse): WireResponse {
   if (cardRoute(path)) return { status: response.status, body: agentCardResponse(path, response.status, response.body) };
   if (terminalRoute(path)) return { status: response.status, body: terminalResponse(path, response.status, response.body) };
   if (approvalRoute(path)) return {status:response.status,body:approvalResponse(path,response.status,response.body)};
+  if (connectionsRoute(path)) return { status: response.status, body: connectionsResponse(path, response.status, response.body) };
   if (mcpImportPath(path)) return { status: response.status, body: mcpImportResponse(path,response.status,response.body) };
   if (templatePath(path)) return {status:response.status,body:templatesResponse(path,response.status,response.body)};
   if (skillLibraryPath(path)) return { status: response.status, body: skillLibraryResponse(path,response.status,response.body) };
@@ -377,7 +380,7 @@ export class SessionClient {
     if (conversationPath(request.path)?.kind === 'approval' && this.#state.user?.role !== 'owner') throw new SessionFailure('blocked');
     if ((conversationRoute(request.path) || chatSearchRoute(request.path) || chatExportRoute(request.path) || chatSecretsRoute(request.path)) && this.#state.user?.role === 'guest') throw new SessionFailure('blocked');
     if (request.path === CLEANUP_PATH && this.#state.user?.role !== 'owner') throw new SessionFailure('blocked');
-    if ((request.path === '/api/chat/project-folders' || approvalRoute(request.path) || templatePath(request.path) || mcpImportPath(request.path) || channelRoute(request.path) || connectorRoute(request.path) || localImportRoute(request.path) || chatBoardRoute(request.path) || chatMemoryRoute(request.path)) && this.#state.user?.role !== 'owner') throw new SessionFailure('blocked');
+    if ((request.path === '/api/chat/project-folders' || approvalRoute(request.path) || connectionsRoute(request.path) || templatePath(request.path) || mcpImportPath(request.path) || channelRoute(request.path) || connectorRoute(request.path) || localImportRoute(request.path) || chatBoardRoute(request.path) || chatMemoryRoute(request.path)) && this.#state.user?.role !== 'owner') throw new SessionFailure('blocked');
     if (terminalRoute(request.path) && (this.#state.user?.role !== 'owner' || terminalPath(request.path)?.kind === 'stream')) throw new SessionFailure('blocked');
     if (request.method === 'PUT' && !conversationRoute(request.path) && this.#state.user?.role !== 'owner') throw new SessionFailure('blocked');
     if (request.method === 'POST' && request.path.startsWith('/api/memory/') && this.#state.user?.role !== 'owner') throw new SessionFailure('blocked');

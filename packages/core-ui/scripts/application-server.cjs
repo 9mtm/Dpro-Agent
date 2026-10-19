@@ -1,4 +1,5 @@
 const {approvalRoute,allowedApproval,approvalResponse}=require('../src/approvals-contract.js');
+const { allowedConnections, connectionsRoute, connectionsResponse } = require('../src/connections-contract.js');
 const {allowedTemplates,templatePath,templatesResponse}=require('../src/specialty-contract.js');
 const { allowedMcpImport, mcpImportPath, mcpImportResponse } = require('../src/mcp-import-contract.js');
 const { allowedSkillLibrary, skillLibraryPath, skillLibraryResponse } = require('../src/skill-library-contract.js');
@@ -58,6 +59,7 @@ const agent = x => {
 };
 function allowed(method, target, body) {
   if (approvalRoute(target)) return allowedApproval(method,target,body);
+  if (connectionsRoute(target)) return allowedConnections(method,target,body);
   if (mcpImportPath(target)) return allowedMcpImport(method,target,body);
   if (templatePath(target)) return allowedTemplates(method,target,body);
   if (skillLibraryPath(target)) return allowedSkillLibrary(method,target,body);
@@ -114,6 +116,7 @@ function project(target, status, body) {
   if (cardRoute(target)) return agentCardResponse(target, status, body);
   if (terminalRoute(target)) return terminalResponse(target, status, body);
   if (approvalRoute(target)) return approvalResponse(target,status,body);
+  if (connectionsRoute(target)) return connectionsResponse(target,status,body);
   if (mcpImportPath(target)) return mcpImportResponse(target,status,body);
   if (templatePath(target)) return templatesResponse(target,status,body);
   if (skillLibraryPath(target)) return skillLibraryResponse(target,status,body);

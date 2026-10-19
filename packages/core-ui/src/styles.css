@@ -1576,3 +1576,23 @@ button.status-item:hover { background:var(--row-hover); color:var(--text); }
 .app-shell .chat-panel .coding-sessions .catalogue-filters label {flex-basis:100%}
 
 .app-shell .conversation-controls {position:sticky;inset-block-start:0;z-index:4;background:var(--sidebar);padding-block-end:4px;min-inline-size:0}
+
+/* Settings → Connections */
+.connections .connection-card { margin-block-start:12px; padding:14px 16px; border:1px solid var(--stroke-3, var(--border)); border-radius:6px; background:var(--surface); display:grid; gap:10px; }
+.connection-head { display:flex; justify-content:space-between; align-items:flex-start; gap:16px; }
+.connection-head .fine-print { margin:2px 0 0; }
+.connection-state { flex-shrink:0; font-size:11px; padding:2px 8px; border-radius:999px; border:1px solid var(--border); color:var(--muted); }
+.connection-state.is-connected { color:#1a7f37; border-color:color-mix(in srgb,#1a7f37 40%,transparent); background:color-mix(in srgb,#1a7f37 8%,transparent); }
+.connection-state.is-connecting { color:var(--accent); border-color:color-mix(in srgb,var(--accent) 40%,transparent); background:color-mix(in srgb,var(--accent) 8%,transparent); }
+.connection-state.is-expired, .connection-state.is-error { color:var(--danger); border-color:color-mix(in srgb,var(--danger) 40%,transparent); }
+.shell[data-theme="dark"] .connection-state.is-connected { color:#4ac26b; }
+.connection-pending { display:grid; gap:8px; }
+.connection-pending p { margin:0; }
+.connection-code { font:600 22px/1.2 ui-monospace, SFMono-Regular, Menlo, monospace; letter-spacing:.12em; }
+.connection-actions { display:flex; flex-wrap:wrap; gap:8px; align-items:center; }
+.connection-actions a.button { display:inline-flex; align-items:center; padding:5px 12px; border-radius:4px; text-decoration:none; }
+.connection-actions a.button.primary { background:var(--accent); color:var(--on-accent); }
+.connection-publish { border-block-start:1px solid var(--stroke-3, var(--border)); padding-block-start:10px; display:grid; gap:8px; }
+.connection-publish h4 { margin:0; }
+.connection-form { display:grid; gap:8px; border:1px solid var(--stroke-3, var(--border)); border-radius:6px; padding:10px 12px; }
+.connections .settings-facts dd { overflow-wrap:anywhere; }
