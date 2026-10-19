@@ -3,7 +3,7 @@ name: genvr-character-builder
 description: "Plan simple agent avatars and respect the supported GenVR character capabilities"
 metadata:
   agent-player:
-    version: "1.0.0"
+    version: "1.1.0"
     author: "Mohamed Alarade"
     category: "creative"
     tags: ["genvr", "avatars", "agents"]
@@ -17,16 +17,15 @@ base data, recipes and validated clothing slots; do not copy or rebuild its mesh
 Source reference: Genvr project `.claude/skills/genvr-character-builder/SKILL.md`.
 
 Use stable existing agent IDs. An avatar is an appearance, not a second agent, a new account,
-a tool grant or a change of personality, memory or role. In the host, the user chooses agents
-under Create space or Manage agents and can randomize or change a simple avatar preset.
-Appearance is saved per signed-in account and agent; membership belongs to each space.
-The current host previews are simple schematic figures, not catalog garment assets.
+a tool grant or a change of personality, memory or role. Linking agents to characters is not done
+from the GenVR spaces page; the owner decides where that lives.
 
-Discover actual tools before acting. The released standalone MCP 0.3.0-preview.1 has no
-create_character, set_character_body, add_character_item or preview_character tools. The
-platform character skill describes some planned interfaces; never fabricate their availability.
-The embedded Studio exposes its own character editor, but no public host API for spawning
-multiple live agent characters. Report this limit instead of claiming they are in the scene.
+Discover actual tools before acting. With the live Studio connection (3d-world-sdk 0.3.0-preview.12):
+`user_avatar_library` lists built-in and private characters and assigns one to `self` (My avatar);
+`list_avatar_motions` and `present_avatar` preview actions and expressions (see the SDK skill
+`genvr-avatar-presentation`). There are still no create_character / set_character_body tools: never
+fabricate them. Private characters come from the owner's own imports and stay on the device; never
+upload or publish them. Several independent imported cast members in one scene are not guaranteed.
 
 When a supported character API arrives, use its real schema and approved library item IDs,
 start from simple/classic presets and basic clothing, validate skeleton/slot compatibility,

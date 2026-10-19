@@ -3,7 +3,7 @@ name: genvr-world-builder
 description: "Build and verify local GenVR spaces through explicitly granted authoring tools"
 metadata:
   agent-player:
-    version: "1.0.0"
+    version: "1.1.0"
     author: "Mohamed Alarade"
     category: "creative"
     tags: ["genvr", "spaces", "mcp"]
@@ -12,8 +12,8 @@ metadata:
 
 # Local GenVR space builder
 
-Consumer adaptation of the Genvr world-builder workflow for 3d-world-sdk 0.3.0-preview.1.
-Source reference: Genvr project `.claude/skills/genvr-world-builder/SKILL.md`.
+Fallback copy. When the GenVR SDK is installed, Dpro loads the SDK's own `genvr-world-builder`
+(places and games, with references) instead of this file and keeps it updated with each SDK version.
 This guide supplies instructions, not permissions or a live connection.
 
 1. Read the tools available to this agent. Use only tools explicitly granted by the owner.

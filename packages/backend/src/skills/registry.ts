@@ -96,7 +96,8 @@ export class SkillsRegistry extends EventEmitter implements ISkillsRegistry {
           // Recurse into subdirectories
           const subFiles = await this.findSkillFiles(fullPath);
           files.push(...subFiles);
-        } else if (entry.isFile() && entry.name.endsWith('.md')) {
+        } else if (entry.isFile() && entry.name === 'SKILL.md') {
+          // Only SKILL.md is a skill; READMEs and reference files beside it are not.
           files.push(fullPath);
         }
       }
