@@ -120,7 +120,7 @@ export function createConversationsMock(options: { stepMs?: number } = {}) {
       const summary = calls.length ? `\n\n<details>\n<summary>Tool calls (${calls.length})</summary>\n\n${calls.map((t: any) => `- \`${t.name}\` — ${t.isError ? 'error' : 'ok'}`).join('\n')}\n\n</details>` : '';
       return `\n---\n\n### ${m.role === 'user' ? 'You' : 'Main agent'} · ${m.createdAt.slice(0, 16)}\n\n${m.content}${summary}\n`;
     });
-    const markdown = `# ${c.title ?? 'Conversation'}\n\n- Date: ${c.createdAt.slice(0, 16)}\n- Agent: Main agent\n${blocks.join('')}\n---\n\n_Exported from Dpro._\n`;
+    const markdown = `# ${c.title ?? 'Conversation'}\n\n- Date: ${c.createdAt.slice(0, 16)}\n- Agent: Main agent\n${blocks.join('')}\n---\n\n_Exported from Dpro Agent._\n`;
     return { status: 200, body: { filename: `${(c.title ?? 'conversation').replace(/[^\p{L}\p{N} _.-]+/gu, ' ').trim() || 'conversation'}.md`, markdown, turns: turns.length, totalTurns: turns.length, truncated: false, redacted: 0 } };
   }
 

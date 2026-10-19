@@ -140,3 +140,15 @@ test('browser transport: a 202 run start is a success with its projected body', 
   assert.equal(r.body.runId, RID);
   assert.equal(r.body.internal, undefined);
 });
+
+test('folder picker contract bounds requests and strips filesystem metadata',()=>{
+ for(const allow of [allowedRequest,allowed]){
+  assert.equal(allow('POST','/api/chat/project-folders',{}),true);
+  assert.equal(allow('POST','/api/chat/project-folders',{path:'/fiction/work'}),true);
+  assert.equal(allow('POST','/api/chat/project-folders',{path:'/fiction',execute:true}),false);
+  assert.equal(allow('GET','/api/chat/project-folders'),false);
+ }
+ const path='/api/chat/project-folders';const row={path:'/fiction',parent:null,selectable:false,truncated:false,entries:[{name:'Work',path:'/fiction/Work',private:'hidden'}],private:'hidden'};
+ assert.ok(!JSON.stringify(conversationResponse(path,200,row)).includes('hidden'));
+ assert.throws(()=>conversationResponse(path,200,{...row,entries:[{name:'../secret',path:'/secret'}]}));
+});

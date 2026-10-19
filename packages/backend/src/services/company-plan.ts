@@ -65,6 +65,12 @@ export const DEPARTMENTS: readonly DepartmentInfo[] = Object.freeze([
   { id: 'research', label: 'Research', summary: 'Finds and summarises information.', titles: { manager: 'Research lead', specialist: 'Researcher', evaluator: 'Fact checker' }, weight: 2 },
   { id: 'design', label: 'Design', summary: 'Visuals, layouts and brand assets.', titles: { manager: 'Design lead', specialist: 'Designer', evaluator: 'Design reviewer' }, weight: 2 },
   { id: 'legal', label: 'Legal', summary: 'Contracts and compliance questions.', titles: { manager: 'Legal lead', specialist: 'Legal assistant', evaluator: 'Compliance reviewer' }, weight: 1 },
+  { id: 'infrastructure', label: 'Infrastructure', summary: 'Servers, networks, cloud platforms and reliable operations.', titles: { manager: 'Infrastructure lead', specialist: 'Infrastructure specialist', evaluator: 'Infrastructure reviewer' }, weight: 2 },
+  { id: 'data', label: 'Data', summary: 'Data pipelines, databases, analytics and governance.', titles: { manager: 'Data lead', specialist: 'Data specialist', evaluator: 'Data reviewer' }, weight: 2 },
+  { id: 'education', label: 'Education and languages', summary: 'Teaching, tutoring, language learning and course design.', titles: { manager: 'Education and languages lead', specialist: 'Education and languages specialist', evaluator: 'Education and languages reviewer' }, weight: 2 },
+  { id: 'production', label: 'Creative production', summary: 'Virtual performance, video, voice and media production.', titles: { manager: 'Creative production lead', specialist: 'Creative production specialist', evaluator: 'Creative production reviewer' }, weight: 2 },
+  { id: 'wellness', label: 'Fitness and wellness', summary: 'Exercise, mobility, activity and habit coaching.', titles: { manager: 'Fitness and wellness lead', specialist: 'Fitness and wellness specialist', evaluator: 'Fitness and wellness reviewer' }, weight: 2 },
+
 ].map((d) => Object.freeze(d)));
 
 const GENERIC_TITLE: Readonly<Record<AgentRole, string>> = Object.freeze({

@@ -13,5 +13,5 @@ test('live signed-out boundary renders immediate welcome without private network
 });
 test('public settings exposes appearance/about and a sign-in gate, never account details or unsupported updater',()=>{
  const html=renderToStaticMarkup(React.createElement(AppSettings,{signedIn:false,preference:'system',onTheme(){},onAccount(){}}));
- assert.match(html,/Use system appearance/);assert.match(html,/Sign in to manage agents/);assert.match(html,/Automatic updates are not available/);assert.doesNotMatch(html,/Google|password_hash|token|Check for Updates/);
+ assert.match(html,/Use system appearance/);assert.match(html,/Models &amp; tools/);assert.match(html,/Settings sections/);assert.doesNotMatch(html,/aria-label="Application information"/);const about=renderToStaticMarkup(React.createElement(AppSettings,{signedIn:false,preference:'system',onTheme(){},onAccount(){},aboutOnly:true}));assert.match(about,/Automatic updates are not available/);assert.doesNotMatch(html,/Google|password_hash|token|Check for Updates/);
 });

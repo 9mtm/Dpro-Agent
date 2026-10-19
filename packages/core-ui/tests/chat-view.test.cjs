@@ -149,6 +149,8 @@ test('Stop pauses the queue; Send now sends the waiting message', async t => {
 test('projects: create one, chats go into it, the chat shows the project bar; moving and removing', async t => {
   const { c } = await fixture(t);
   await c.load(); await new Promise(r => setTimeout(r, 30));
+  assert.match(await c.createProject({ name: 'App', folder: '', repoUrl: '' }), /working folder/);
+  assert.equal(c.getSnapshot().projects.length, 0);
   assert.match(await c.createProject({ name: 'App', folder: 'relative', repoUrl: '' }), /folder/);
   assert.equal(await c.createProject({ name: 'App', folder: '/fiction/app', repoUrl: 'https://github.com/example/app' }), null);
   const p = c.getSnapshot().projects[0];
@@ -165,6 +167,7 @@ test('projects: create one, chats go into it, the chat shows the project bar; mo
   assert.match(html, /github\.com\/example\/app/);
   const list = renderToStaticMarkup(React.createElement(ConversationList, { controller: c, onOpen: () => {} }));
   assert.match(list, /\+ New project/);
+  assert.match(list, /New general chat/);
   await c.moveToProject(conv.id, '');
   assert.equal(c.getSnapshot().conversations.find(x => x.id === conv.id).projectId, null);
   await c.removeProject(p.id);

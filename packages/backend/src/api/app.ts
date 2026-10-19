@@ -1,3 +1,4 @@
+import { mcpImportRoutes } from './routes/mcp-import.js';
 /**
  * Agent Player Fastify app factory.
  *
@@ -26,11 +27,15 @@ import { settingsRoutes } from './routes/settings.js';
 import { agentsStatusRoutes } from './routes/agents-status.js';
 import { pluginsRoutes } from './routes/plugins.js';
 import { channelsRoutes } from './routes/channels.js';
+import { specialtyTemplateRoutes } from './routes/specialty-templates.js';
+import { skillLibraryRoutes } from './routes/skill-library.js';
 import { skillsRoutes } from './routes/skills.js';
 import { schedulerRoutes } from './routes/scheduler.js';
 import { memoryRoutes } from './routes/memory.js';
 import { memoryFilesRoutes } from './routes/memory-files.js';
 import { memoryLearningRoutes } from './routes/memory-learning.js';
+import { genvrRoutes } from './routes/genvr.js';
+import { agentConnectRoutes } from './routes/agent-connect.js';
 import { memoryImportRoutes } from './routes/memory-import.js';
 import { credentialsRoutes } from './routes/credentials.js';
 // import { onboardingRoutes } from './routes/onboarding.js'; // S0-Q.14: disabled, see below
@@ -297,11 +302,16 @@ export async function buildServer(options: BuildServerOptions = {}): Promise<Fas
   await fastify.register(agentsStatusRoutes); // 📊 Agents Status
   await fastify.register(pluginsRoutes); // 🔌 Plugins System
   await fastify.register(channelsRoutes); // 📱 Channels System
-  await fastify.register(skillsRoutes); // 🛠️ Skills System
+  await fastify.register(skillsRoutes);
+  await fastify.register(mcpImportRoutes);
+  await fastify.register(skillLibraryRoutes);
+  await fastify.register(specialtyTemplateRoutes); // 🛠️ Skills System
   await fastify.register(schedulerRoutes); // ⏰ Scheduler System
   await fastify.register(memoryRoutes); // 🧠 Memory System
   await fastify.register(memoryFilesRoutes); // CORE-04: owner-only memory files + reviewed proposals
   await fastify.register(memoryLearningRoutes); // CORE-05: owner-only weekly learning summary
+  await fastify.register(agentConnectRoutes);
+  await fastify.register(genvrRoutes);
   await fastify.register(memoryImportRoutes); // CLI-02: owner-only safe import (preview -> quarantine proposals)
   await fastify.register(credentialsRoutes); // 🔐 Credentials System
   // SECURITY (S0-Q.14): the /api/onboarding/* routes started the interactive

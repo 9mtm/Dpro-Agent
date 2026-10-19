@@ -129,8 +129,8 @@ export function agentCardResponse(path, status, body) {
       if (!Array.isArray(body.models)) fail();
       // Runs twice on the live path (bridge, then browser): already-projected rows ("ollama", "label") pass unchanged.
       // CHAT-PRO-02 G: LM Studio models keep their own provider and must carry the `lmstudio:` id prefix.
-      const list = body.models.filter(m => record(m) && modelId(m.id) && ['local', 'ollama', 'claude', 'lmstudio'].includes(m.provider) && (m.provider === 'lmstudio') === m.id.startsWith('lmstudio:')).slice(0, 200)
-        .map(m => ({ id: m.id, provider: m.provider === 'claude' || m.provider === 'lmstudio' ? m.provider : 'ollama', label: str(String(m.label ?? m.name ?? m.id).replace(/^[^A-Za-z0-9]+/u, ''), 80), size: str(m.size, 20) }));
+      const list = body.models.filter(m => record(m) && modelId(m.id) && ['local', 'ollama', 'claude', 'lmstudio','subscription'].includes(m.provider) && (m.provider==='subscription') === /^subscription:(claude|codex)(?::[a-f0-9]{32})?$/.test(m.id) && (m.provider === 'lmstudio') === m.id.startsWith('lmstudio:')).slice(0, 200)
+        .map(m => ({ id: m.id, provider: m.provider === 'claude' || m.provider === 'lmstudio' || m.provider==='subscription' ? m.provider : 'ollama', label: str(String(m.label ?? m.name ?? m.id).replace(/^[^A-Za-z0-9]+/u, ''), 80), size: str(m.size, 20) }));
       return { models: list };
     }
     case 'persona-current': {

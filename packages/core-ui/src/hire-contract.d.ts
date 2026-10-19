@@ -35,3 +35,5 @@ export const permissionModes: readonly ['off','ask','allow'];
 export const riskyCategories: readonly ['money','install','delete'];
 export function permissionsAgentId(path: string): string | null;
 export function validPermissionsBody(x: unknown): boolean;
+
+export function validSpecialties(rows:unknown,count:number):boolean;

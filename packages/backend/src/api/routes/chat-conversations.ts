@@ -1,3 +1,5 @@
+import {subscriptionModel,subscriptionEnabled} from '../../services/subscription-chat.js';
+import {projectFolders} from '../../services/project-folder-picker.js';
 /**
  * Saved conversations and resumable chat runs (CHAT-REBUILD-01).
  *
@@ -142,18 +144,22 @@ export async function chatConversationRoutes(fastify: FastifyInstance) {
 
   fastify.post('/api/chat/conversations', async (request: Req, reply) => {
     const b: any = request.body ?? {};
+    if (b.model !== undefined && (typeof b.model !== 'string' || (b.model !== '' && !MODEL.test(b.model)))) return bad(reply, 'invalid model');
+    if (subscriptionModel(b.model) && (request as any).chatUserRole !== 'owner') return reply.code(403).send({code:'forbidden'});
     if (b.title !== undefined && (typeof b.title !== 'string' || b.title.length > TITLE_CHARS)) return bad(reply, 'title must be text of at most 120 characters');
     if (b.agentId !== undefined && b.agentId !== null && (typeof b.agentId !== 'string' || !AGENT_ID.test(b.agentId))) return bad(reply, 'invalid agentId');
     if (b.projectId !== undefined && b.projectId !== null && (typeof b.projectId !== 'string' || !(await findProject(caller(request), b.projectId)))) return bad(reply, 'unknown project');
-    return reply.code(201).send({ conversation: await createConversation(caller(request), { title: cleanTitle(b.title), agentId: b.agentId, projectId: b.projectId }) });
+    return reply.code(201).send({ conversation: await createConversation(caller(request), { title: cleanTitle(b.title), agentId: b.agentId, projectId: b.projectId, model: b.model }) });
   });
 
   fastify.put('/api/chat/conversations/:id', async (request: Req, reply) => {
     const b: any = request.body ?? {};
+    if (b.model !== undefined && (typeof b.model !== 'string' || (b.model !== '' && !MODEL.test(b.model)))) return bad(reply, 'invalid model');
+    if (subscriptionModel(b.model) && (request as any).chatUserRole !== 'owner') return reply.code(403).send({code:'forbidden'});
     if (b.title !== undefined && b.title !== null && (typeof b.title !== 'string' || b.title.length > TITLE_CHARS)) return bad(reply, 'title must be text of at most 120 characters');
     if (b.pinned !== undefined && typeof b.pinned !== 'boolean') return bad(reply, 'pinned must be true or false');
     if (b.projectId !== undefined && b.projectId !== null && (typeof b.projectId !== 'string' || !(await findProject(caller(request), b.projectId)))) return bad(reply, 'unknown project');
-    const c = await patchConversation(caller(request), request.params.id!, { title: cleanTitle(b.title), pinned: b.pinned, projectId: b.projectId });
+    const c = await patchConversation(caller(request), request.params.id!, { title: cleanTitle(b.title), pinned: b.pinned, projectId: b.projectId, model: b.model });
     return c ? { conversation: c } : notFound(reply);
   });
 
@@ -186,7 +192,8 @@ export async function chatConversationRoutes(fastify: FastifyInstance) {
     const userId = caller(request);
     const c = await findConversation(userId, request.params.id!);
     if (!c) return notFound(reply);
-    const b: any = request.body ?? {};
+    const b: any = {...(request.body as any ?? {})};
+    if(b.model===undefined&&c.model)b.model=c.model;
     if (typeof b.runId !== 'string' || !ID.test(b.runId)) return bad(reply, 'runId must be 8-128 characters (A-Z, a-z, 0-9, _ . : -)');
     if (typeof b.message !== 'string' || !b.message.trim() || b.message.length > MESSAGE_CHARS) return bad(reply, 'message must be 1-100000 characters');
     if (b.model !== undefined && (typeof b.model !== 'string' || !MODEL.test(b.model))) return bad(reply, 'invalid model');
@@ -205,6 +212,7 @@ export async function chatConversationRoutes(fastify: FastifyInstance) {
     }
     // CHAT-PRO-02 A: a project conversation reads the project folder and opens its memory drawer.
     const project = c.projectId ? await findProject(userId, c.projectId) : undefined;
+    if(subscriptionModel(b.model)&&(!subscriptionEnabled()||(request as any).chatUserRole!=='owner'||!project?.folder))return reply.code(400).send({code:'no_folder',error:'Choose a project folder for subscription chat.'});
     const prior = await listConversationMessages(c.id);
     if (prior.some((m) => m.runId === b.runId)) return reply.code(409).send({ error: 'runId already used', code: 'run_id_reused' });
     // CHAT-SECRETS-01: secrets go encrypted into the key store; the message keeps references only.
@@ -294,10 +302,16 @@ export async function chatConversationRoutes(fastify: FastifyInstance) {
     if (err instanceof ProjectInputError) return reply.code(400).send({ error: err.message, code: 'invalid_project' });
     throw err;
   };
+  fastify.post('/api/chat/project-folders', {config:{access:'owner'}}, async (request: Req,reply) => {
+    const b:any=request.body??{};
+    if(!b||typeof b!=='object'||Array.isArray(b)||Object.keys(b).some(k=>k!=='path')||(b.path!==undefined&&typeof b.path!=='string'))return reply.code(400).send({code:'invalid_project'});
+    try{return await projectFolders(b.path);}catch{return reply.code(400).send({code:'invalid_project'});}
+  });
   fastify.get('/api/chat/projects', { config: { access: 'owner' } }, async (request) => ({ projects: await listProjects(caller(request)) }));
   fastify.post('/api/chat/projects', { config: { access: 'owner' } }, async (request: Req, reply) => {
     const b: any = request.body ?? {};
     if (typeof b.name !== 'string' || (b.folder !== undefined && b.folder !== null && typeof b.folder !== 'string') || (b.repoUrl !== undefined && b.repoUrl !== null && typeof b.repoUrl !== 'string')) return bad(reply, 'name, folder and repoUrl must be text');
+    if (typeof b.folder !== 'string' || !b.folder.trim()) return reply.code(400).send({ code: 'invalid_project', error: 'Choose a working folder for this project. Use General chat without a folder.' });
     try { return reply.code(201).send({ project: await createProject(caller(request), { name: b.name, folder: b.folder, repoUrl: b.repoUrl }) }); } catch (err) { return projectError(reply, err); }
   });
   fastify.put('/api/chat/projects/:id', { config: { access: 'owner' } }, async (request: Req, reply) => {

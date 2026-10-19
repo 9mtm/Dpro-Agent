@@ -1,0 +1,9 @@
+{
+  "package": "3d-world-sdk",
+  "version": "0.3.0-preview.11",
+  "distribution": "https://registry.npmjs.org/3d-world-sdk/-/3d-world-sdk-0.3.0-preview.11.tgz",
+  "sha256": "1a911110ef157e1811b6b439f04aa59e4a1d6e2b5e5ec3741b0f6b1020ebdfee",
+  "license": "AGPL-3.0-only",
+  "prepare": "node scripts/prepare-genvr.cjs /absolute/path/to/3d-world-sdk-0.3.0-preview.11.tgz",
+  "integrity": "sha512-KeR3tmQ2G3oxVqBWzUeFttMhfgEp4KxequzK81kHj0If/DKX9DyA3QeTXMldXjcu/z5K0Cvqz91Phg1ssi9P3A=="
+}

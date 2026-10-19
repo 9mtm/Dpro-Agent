@@ -334,7 +334,7 @@ export function setAgentGrants(
   return sql().read(setAgentGrantsStep(agentId, input, by, available));
 }
 
-function* setAgentGrantsStep(
+export function* setAgentGrantsStep(
   agentId: string,
   input: { grants: unknown; parentAgentId?: unknown; expectedVersion?: number | null },
   by: string,

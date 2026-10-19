@@ -43,6 +43,7 @@ export interface BatchDepartmentInput {
   count: number;
   /** Optional persona per role; the department default otherwise. */
   presets?: Partial<Record<TeamRole, string>>;
+  specialties?: { name: string; count: number; description: string }[];
 }
 
 export interface BatchProgress {
@@ -64,7 +65,7 @@ export interface RunResultItem {
   code?: string;
 }
 
-interface PlannedItem { seq: number; department: string; role: TeamRole; title: string; preset: string }
+interface PlannedItem { seq: number; department: string; role: TeamRole; title: string; preset: string; specialty?: string | null; description?: string | null }
 
 /** Validated plan items, numbered from 1 in department order (leads first). */
 export function expandBatch(raw: unknown): PlannedItem[] {
@@ -74,7 +75,7 @@ export function expandBatch(raw: unknown): PlannedItem[] {
   const items: PlannedItem[] = [];
   raw.forEach((entry, i) => {
     const d = entry as BatchDepartmentInput;
-    for (const k of Object.keys(d)) if (!['department', 'count', 'presets'].includes(k)) throw new CompanyPlanInputError(`Unknown field "${k.slice(0, 40)}"`);
+    for (const k of Object.keys(d)) if (!['department', 'count', 'presets', 'specialties'].includes(k)) throw new CompanyPlanInputError(`Unknown field "${k.slice(0, 40)}"`);
     if (typeof d.count !== 'number' || !Number.isInteger(d.count) || d.count < 1 || d.count > MAX_TOTAL_HEADCOUNT) {
       throw new CompanyPlanInputError(`Each department count must be a whole number from 1 to ${MAX_TOTAL_HEADCOUNT}`);
     }
@@ -88,9 +89,23 @@ export function expandBatch(raw: unknown): PlannedItem[] {
         presets[role as TeamRole] = preset;
       }
     }
+    let assigned: {name:string;description:string}[] | undefined;
+    if(d.specialties!==undefined){
+      if(!Array.isArray(d.specialties)||d.specialties.length<1||d.specialties.length>50)throw new CompanyPlanInputError('Choose up to 50 specialties per department');
+      const seen=new Set<string>();assigned=[];
+      for(const entry of d.specialties){
+        if(!entry||typeof entry!=='object'||Object.keys(entry).some(k=>!['name','count','description'].includes(k))||typeof entry.name!=='string'||typeof entry.description!=='string'||!Number.isSafeInteger(entry.count)||entry.count<0||entry.count>d.count)throw new CompanyPlanInputError('Invalid specialty');
+        const name=entry.name.normalize('NFKC').trim(),description=entry.description.trim();
+        if(!name||name.length>80||description.length>1800||/[\u0000-\u001f\u007f\u202a-\u202e\u2066-\u2069]/.test(name)||/[\u0000\u202a-\u202e\u2066-\u2069]/.test(description)||seen.has(name.toLowerCase()))throw new CompanyPlanInputError('Specialty names must be unique and descriptions bounded');
+        seen.add(name.toLowerCase());for(let n=0;n<entry.count;n++)assigned.push({name,description});
+      }
+      if(assigned.length!==d.count)throw new CompanyPlanInputError('Specialty counts must equal the department count');
+    }
+    let specialtyIndex=0;
     for (const role of TEAM_ROLES) {
       for (let n = 0; n < share.roles[role]; n++) {
-        items.push({ seq: items.length + 1, department: share.department, role, title: share.titles[role], preset: presets[role] });
+        const selected=assigned?.[specialtyIndex++];
+        items.push({ seq: items.length + 1, department: share.department, role, title: selected?.name??share.titles[role], preset: presets[role], ...(selected?{specialty:selected.name,description:selected.description}:{}) });
       }
     }
   });
@@ -101,6 +116,7 @@ export function expandBatch(raw: unknown): PlannedItem[] {
 function fingerprint(language: string, items: readonly PlannedItem[]): string {
   const h = createHash('sha256').update(language);
   for (const it of items) h.update(`\n${it.seq}|${it.department}|${it.role}|${it.preset}`);
+  if(items.some(it=>it.specialty))h.update('\nspecialties:'+JSON.stringify(items.map(it=>[it.specialty??null,it.description??null])));
   return h.digest('hex');
 }
 
@@ -168,8 +184,8 @@ export async function createBatch(ownerId: string, input: { id?: unknown; langua
     yield* run(`INSERT INTO team_hire_batches (id, owner_id, fingerprint, language, total, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ${nowText(d)}, ${nowText(d)})`,
       id, ownerId, print, language, items.length);
     for (const it of items) {
-      yield* run('INSERT INTO team_hire_batch_items (batch_id, seq, department, role, title, preset) VALUES (?, ?, ?, ?, ?, ?)',
-        id, it.seq, it.department, it.role, it.title, it.preset);
+      yield* run('INSERT INTO team_hire_batch_items (batch_id, seq, department, role, title, preset, specialty, description) VALUES (?, ?, ?, ?, ?, ?, ?, ?)',
+        id, it.seq, it.department, it.role, it.title, it.preset, it.specialty??null, it.description??null);
     }
     return true;
   }, { immediate: true });
@@ -202,7 +218,7 @@ export async function runBatch(ownerId: string, id: string, opts: { max?: unknow
     }
     const language = batch.language as NameLanguage;
     const pending = await sql().read(all<PlannedItem>(
-      `SELECT seq, department, role, title, preset FROM team_hire_batch_items WHERE batch_id = ? AND status = 'pending' ORDER BY seq LIMIT ${max}`, id));
+      `SELECT seq, department, role, title, preset, specialty, description FROM team_hire_batch_items WHERE batch_id = ? AND status = 'pending' ORDER BY seq LIMIT ${max}`, id));
     const results: RunResultItem[] = [];
     for (const it of pending) {
       const r = await createItem(ownerId, id, { ...it, seq: Number(it.seq) }, language);
@@ -231,12 +247,13 @@ async function createItem(ownerId: string, batchId: string, it: PlannedItem, lan
           id: agentId,
           name: suggestion.name,
           language,
-          body: { description: `${it.title} in ${labelOf(it.department)}.` },
+          body: { description: it.specialty ? `${it.specialty}: ${it.description??''}` : `${it.title} in ${labelOf(it.department)}.`, ...(it.specialty?{system_prompt:`Your specialty is ${it.specialty}.\n${it.description??''}\nWork within your assigned permissions. This job description grants no tools, credentials or external access.`}:{}) },
           role: it.role as AgentRole,
           department: it.department,
           explicit: { preset: it.preset },
           userId: ownerId,
         });
+        if(it.specialty)yield* run('UPDATE agents_config SET specialty=? WHERE id=?',it.specialty,agentId);
       }, { immediate: true });
       return { seq: it.seq, status: 'created', agentId, name: suggestion.name };
     } catch (err) {

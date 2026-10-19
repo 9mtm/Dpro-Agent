@@ -1,3 +1,4 @@
+import {subscriptionEnabled,subscriptionBinary} from '../../services/subscription-chat.js';
 /**
  * Models API Routes
  * Lists available AI models from all providers
@@ -32,6 +33,7 @@ export async function modelsRoutes(fastify: FastifyInstance) {
       const settings = await settingsManager.getSettings();
 
       const allModels: any[] = [];
+      if(subscriptionEnabled())for(const kind of ['claude','codex'] as const)if(await subscriptionBinary(kind))allModels.push({id:'subscription:'+kind,provider:'subscription',label:kind==='claude'?'Claude Code · existing account':'Codex · existing ChatGPT account',size:''});
 
       // 1. Add Ollama models (if available)
       try {

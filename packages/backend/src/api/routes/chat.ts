@@ -1,6 +1,8 @@
 import { FakeRaw } from '../../services/chat-runs.js';
 import { vaultChatFrames } from '../../services/chat-secrets.js';
 import { currentChatRun } from '../../services/chat-run-context.js';
+import {subscriptionModel,subscriptionEnabled,runSubscription} from '../../services/subscription-chat.js';
+import { agentSkillsPrompt } from '../../skills/central-store.js';
 import { safeConsole } from '../../services/safe-error-log.js';
 /**
  * Chat API Routes
@@ -354,6 +356,19 @@ export async function executeChatTurn(reply: FastifyReply, input: ChatTurnInput)
       agentId, messages, stream, model, temperature, maxTokens, sessionId, systemPrompt, systemPromptAppend,
       memoryContext: bodyMemoryContext, memoryScope, chatContext, userId,
     } = input;
+    if(subscriptionModel(model)){
+      const owner=await sql().read(one<{role:string}>('SELECT role FROM users WHERE id=?',userId));
+      if(!subscriptionEnabled()||owner?.role!=='owner'||input.channelTurn||!input.fileReadRoot)return reply.code(403).send({code:'forbidden'});
+      const abort=new AbortController();reply.raw.once?.('close',()=>{if(!reply.raw.writableEnded)abort.abort();});
+      openSseStream(reply.raw);
+      try{
+        const history=messages.map(m=>`${m.role}: ${messageText(m.content)}`).join('\n\n').slice(-200000);
+        const answer=await runSubscription(model,input.fileReadRoot,'Work only inside the selected project directory. Do not access credentials, .env, .data, private keys or unrelated files. No git commit, push or publication. User conversation:\n'+history,abort.signal);
+        for(const content of chunkText(answer,ANSWER_FRAME_BYTES))if(!reply.raw.writableEnded)reply.raw.write(`data: ${JSON.stringify({content,done:false})}\n\n`);
+        if(!reply.raw.writableEnded)reply.raw.write(`data: ${JSON.stringify({content:'',done:true})}\n\n`);
+      }catch(error){if(!abort.signal.aborted&&!reply.raw.writableEnded)reply.raw.write(`data: ${JSON.stringify({type:'error',code:error instanceof Error&&error.message==='subscription_org_blocked'?'subscription_org_blocked':'model_unavailable',error:'The subscription CLI could not finish.'})}\n\n`);}
+      reply.raw.end();return reply;
+    }
     const channelTurn = input.channelTurn || undefined;
     // SECURITY (S0-Q.8): a channel-originated turn (Telegram/Discord/Agent Connect sender)
     // gets the restricted channel tool policy. It is bound to a server-created token,
@@ -414,6 +429,7 @@ export async function executeChatTurn(reply: FastifyReply, input: ChatTurnInput)
 
     // Build complete context: Base Prompt + Personality settings + Agent Memory File + Session Memory
     let resolvedSystemPrompt = baseSystemPrompt || '';
+    if (agentConfig?.id && agentConfig.id !== 'small-local-agent') resolvedSystemPrompt += await agentSkillsPrompt(agentConfig.id);
 
     if (behavior) {
       resolvedSystemPrompt = resolvedSystemPrompt

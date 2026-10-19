@@ -1,4 +1,5 @@
 import { RecoveryApprovals } from './RecoveryApprovals';
+import {CodingSessions} from './CodingSessions';
 import { useEffect, useLayoutEffect, useRef, useState, useSyncExternalStore } from 'react';
 import type { KeyboardEvent, ReactNode } from 'react';
 import type { ConversationsController } from './conversations';
@@ -48,7 +49,7 @@ const SUGGESTIONS = [
  * finished turn folds its work into "Worked for …". Behaviour lives in
  * ConversationsController; this file is layout and local view state only.
  */
-export function ChatView({ controller, mode, productName = 'Dpro', client, onAddConnector, onOpenCard, onOpenMemory }: { controller: ConversationsController; mode: 'live' | 'mock'; productName?: string; client?: SessionClient; onAddConnector?: () => void; onOpenCard?: (boardId: string, cardId: string) => void; onOpenMemory?: (drawerId: string, memoryId: string) => void }) {
+export function ChatView({ controller, mode, productName = 'Dpro Agent', client, onAddConnector, onOpenCard, onOpenMemory, onChooseContext, terminalRequest = 0 }: { controller: ConversationsController; mode: 'live' | 'mock'; productName?: string; terminalRequest?: number; client?: SessionClient; onChooseContext?:()=>void; onAddConnector?: () => void; onOpenCard?: (boardId: string, cardId: string) => void; onOpenMemory?: (drawerId: string, memoryId: string) => void }) {
   const s = useSyncExternalStore(controller.subscribe, controller.getSnapshot, controller.getSnapshot);
   const thread = useRef<HTMLDivElement>(null);
   const input = useRef<HTMLTextAreaElement>(null);
@@ -155,6 +156,7 @@ export function ChatView({ controller, mode, productName = 'Dpro', client, onAdd
   const [maximized, setMaximized] = useState(false);
   useEffect(() => { if (!client) return; const p = new PanesController(client); setPanes(p); const t = { tabs: new TerminalTabs(client), prefs: new TerminalPrefsController(client) }; setTerminal(t); return () => { p.dispose(); t.tabs.dispose(); t.prefs.dispose(); }; }, [client]);
   const owner = client?.getSnapshot().user?.role === 'owner';
+  useEffect(()=>{if(terminalRequest>0&&owner)setPane('terminal');},[terminalRequest,owner]);
   const [keysOpen, setKeysOpen] = useState<string | null>(null);
   // CHAT-PRO-02 I step 2: board cards made from this conversation.
   const [cardsCtl, setCardsCtl] = useState<ChatCardsController | null>(null);
@@ -188,7 +190,7 @@ export function ChatView({ controller, mode, productName = 'Dpro', client, onAdd
   return <div className="chat-layout" data-panel={pane ?? undefined} data-max={(maximized && pane === 'terminal') || undefined}>
   <div className="chat-screen">
     <div className="chat-topbar">
-      {project ? <ProjectBar name={project.name} folder={project.folder} repoUrl={project.repoUrl} git={s.git}/> : <span className="chat-topbar-spacer"/>}
+      {project ? <ProjectBar name={project.name} folder={project.folder} repoUrl={project.repoUrl} git={s.git}/> : <span className="project-bar-item" aria-label="Chat context">General chat · no project folder</span>}
       {client && s.activeId && s.threadPhase !== 'loading' && <ExportMenu key={s.activeId} client={client} conversationId={s.activeId} disabled={running}/>}
       {owner && cardsCtl && s.activeId && <button type="button" className="tool chat-to-board" onClick={() => cardForm ? setCardForm(null) : openCardForm()} aria-pressed={!!cardForm} title="Put this task on a board, with the agents it needs">
         <UiIcon name="board" size={14}/><span>Add to board</span></button>}
@@ -238,6 +240,9 @@ export function ChatView({ controller, mode, productName = 'Dpro', client, onAdd
           <button type="button" className="row-tool" aria-label={`Remove ${f.name}`} onClick={() => controller.detach(f.name)}><UiIcon name="trash" size={11}/></button></span>)}
         {attachError && <span className="attach-error" role="alert">{attachError}</span>}
       </div>}
+
+      {!s.activeId&&onChooseContext&&<button type="button" className="composer-context" onClick={onChooseContext}>{project?.folder?'Folder: '+project.name:'General chat · Choose a folder…'}</button>}
+      {s.model.startsWith('subscription:')&&<p className="fine-print">Uses your signed-in coding app in this project. Its native file tools are separate from agent skills and MCP grants. Stop cancels the local process.</p>}
       <form className="chat-composer" method="post" onSubmit={e => { e.preventDefault(); submit(); }}
         onDragOver={e => { if (e.dataTransfer.types.includes('Files')) e.preventDefault(); }} onDrop={e => { if (e.dataTransfer.files.length) { e.preventDefault(); void onFiles(e.dataTransfer.files); } }}>
         <label htmlFor="chat-input" className="sr-only">Message</label>
@@ -264,11 +269,13 @@ export function ChatView({ controller, mode, productName = 'Dpro', client, onAdd
                   {s.agents.filter(a => !a.primary).map(a => <option key={a.id} value={a.id}>{a.name}</option>)}
                 </select>}</label>
             : <span className="composer-hint">{agentName ? agentName : ''}</span>}
-          {s.models.length > 0 && <label className="composer-agent composer-model"><span className="sr-only">Model</span>
+          {(s.models.length > 0||s.model) && <label className="composer-agent composer-model"><span className="sr-only">Model</span>
             <select value={s.model} onChange={e => controller.selectModel(e.target.value)} onFocus={() => void controller.loadModels(true)} onMouseDown={() => void controller.loadModels(true)} title="Model for the next reply">
               <option value="">Agent's model</option>
+              {s.model&&!s.models.some(m=>m.id===s.model)&&<option value={s.model}>{/^subscription:(claude|codex):[a-f0-9]{32}$/.test(s.model)?(s.model.startsWith('subscription:codex:')?'Codex':'Claude Code')+' · previous session':'Saved model: '+s.model}</option>}
               {/* One list of what runs on this computer (Ollama and LM Studio alike): the owner just picks a name. */}
-              {s.models.some(m => m.provider !== 'claude') && <optgroup label="On this computer">{s.models.filter(m => m.provider !== 'claude').map(m => <option key={m.id} value={m.id}>{m.label}{m.size ? ` · ${m.size}` : ''}</option>)}</optgroup>}
+              {s.models.some(m => m.provider !== 'claude' && m.provider !== 'subscription') && <optgroup label="On this computer">{s.models.filter(m => m.provider !== 'claude' && m.provider !== 'subscription').map(m => <option key={m.id} value={m.id}>{m.label}{m.size ? ` · ${m.size}` : ''}</option>)}</optgroup>}
+              {s.models.some(m=>m.provider==='subscription')&&<optgroup label="Your signed-in coding apps">{s.models.filter(m=>m.provider==='subscription').map(m=><option key={m.id} value={m.id} disabled={!project?.folder}>{m.label}{!project?.folder?' · choose a folder':''}</option>)}</optgroup>}
               {s.models.some(m => m.provider === 'claude') && <optgroup label="Claude (paid)">{s.models.filter(m => m.provider === 'claude').map(m => <option key={m.id} value={m.id}>{m.label}</option>)}</optgroup>}
             </select></label>}
           {mic && <MicButton mic={mic}/>}
@@ -289,7 +296,7 @@ export function ChatView({ controller, mode, productName = 'Dpro', client, onAdd
 }
 
 /** Details of the open conversation: where it works, how big it is, what it produced. */
-function ChatSidePanel({ controller, client, onAddConnector, memory, onOpenMemory }: { controller: ConversationsController; client?: SessionClient; onAddConnector?: () => void; memory?: ChatMemoryController | null; onOpenMemory?: (drawerId: string, memoryId: string) => void }) {
+function ChatSidePanel({ controller, client, onAddConnector, memory, onOpenMemory }: { controller: ConversationsController; client?: SessionClient; onChooseContext?:()=>void; onAddConnector?: () => void; memory?: ChatMemoryController | null; onOpenMemory?: (drawerId: string, memoryId: string) => void }) {
   const s = useSyncExternalStore(controller.subscribe, controller.getSnapshot, controller.getSnapshot);
   const project = controller.activeProject();
   const conv = s.conversations.find(c => c.id === s.activeId);
@@ -312,6 +319,7 @@ function ChatSidePanel({ controller, client, onAddConnector, memory, onOpenMemor
         <div><dt><UiIcon name="brain" size={12}/></dt><dd>{agent} · {model}</dd></div>
       </dl>
     </section>
+    {client&&project?.folder&&<section className="panel-card"><h3>Local coding sessions</h3><p className="fine-print">Saved Dpro chats stay in the sidebar. Memory imports are managed in Memory.</p><CodingSessions key={project.id+':'+project.folder} client={client} controller={controller} folder={project.folder}/></section>}
     <section className="panel-card">
       <h3>Conversation</h3>
       <dl className="panel-list">
@@ -474,8 +482,8 @@ function AssistantTurn({ turn, last, onRetry, writer, recovery, onSuggest, onRem
           : work.map((p, i) => <PartView key={i} part={p}/>)}
         {answer.map((p, i) => <PartView key={`a${i}`} part={p}/>)}
         {turn.status === 'error' && <div className="chat-error" role="alert">
-          <strong>{turn.code === 'run_interrupted' ? 'Work interrupted by restart' : turn.code === 'lmstudio_not_running' ? 'LM Studio is not running' : turn.code === 'model_unavailable' ? 'The model could not be reached' : 'This reply failed'}</strong>
-          <span>{turn.code === 'run_interrupted' ? 'Your request and tool checkpoints are saved. Continue safely after reviewing them; previous actions are not replayed automatically.' : turn.code === 'lmstudio_not_running' ? 'Open LM Studio, load the model and start its local server (port 1234), then try again.' : turn.code === 'model_unavailable' ? 'Check that the model is running, then try again.' : 'Anything above was written before the failure.'}</span>
+          <strong>{turn.code === 'run_interrupted' ? 'Work interrupted by restart' : turn.code === 'subscription_org_blocked' ? 'Claude subscription access is disabled' : turn.code === 'lmstudio_not_running' ? 'LM Studio is not running' : turn.code === 'model_unavailable' ? 'The model could not be reached' : 'This reply failed'}</strong>
+          <span>{turn.code === 'run_interrupted' ? 'Your request and tool checkpoints are saved. Continue safely after reviewing them; previous actions are not replayed automatically.' : turn.code === 'subscription_org_blocked' ? 'Your organization has disabled Claude Code subscription access. Ask its administrator to enable access, or choose another signed-in coding app.' : turn.code === 'lmstudio_not_running' ? 'Open LM Studio, load the model and start its local server (port 1234), then try again.' : turn.code === 'model_unavailable' ? 'Check that the model is running, then try again.' : 'Anything above was written before the failure.'}</span>
           {last && onRetry && <button type="button" className="chat-error-action" onClick={onRetry}><UiIcon name="refresh" size={12}/>{turn.code === 'run_interrupted' ? 'Continue safely' : 'Try again'}</button>}
         </div>}
         {suggestions.map((g, i) => <CardSuggestionView key={i} suggestion={g} onCreate={onSuggest}/>)}

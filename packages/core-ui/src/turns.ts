@@ -12,7 +12,7 @@ export type Part =
 export type TurnStatus = 'running' | 'complete' | 'stopped' | 'error';
 export type Turn = Readonly<{
   key: string; role: 'user' | 'assistant'; content: string; parts: readonly Part[]; status: TurnStatus;
-  runId: string | null; durationMs: number | null; startedAt?: number; code?: 'model_unavailable' | 'lmstudio_not_running' | 'run_interrupted'; lastSeq: number; pending?: boolean;
+  runId: string | null; durationMs: number | null; startedAt?: number; code?: 'model_unavailable' | 'lmstudio_not_running' | 'run_interrupted' | 'subscription_org_blocked'; lastSeq: number; pending?: boolean;
   /** Client clock time of the run's start, from the first event's `at` (keeps durations right after a re-attach). */
   base?: number;
   /** CHAT-PRO-02 I: the agent that wrote this reply (absent = the conversation's agent). */

@@ -1,3 +1,5 @@
+import { AgentMcp } from './McpLibrary';
+import { AgentSkills } from './SkillLibrary';
 import { useEffect, useState, useSyncExternalStore } from 'react';
 import { AgentCardController, readable, TOOL_GROUPS, toolGroup } from './agent-card';
 import type { CardTab } from './agent-card';
@@ -11,7 +13,7 @@ import { validatedDisplayName } from './naming';
 import { UiIcon } from './ui-icons';
 
 const TABS: { key: CardTab; label: string }[] = [
-  { key: 'profile', label: 'Profile' }, { key: 'persona', label: 'Persona' }, { key: 'permissions', label: 'Permissions' }, { key: 'memory', label: 'Memory' },
+  { key: 'profile', label: 'Profile' }, { key: 'persona', label: 'Persona' }, { key: 'permissions', label: 'Permissions' }, { key: 'memory', label: 'Memory' }, { key: 'skills', label: 'Skills' }, { key: 'mcp', label: 'MCP' },
 ];
 const ROLE_LABEL: Record<string, string> = { '': 'No role', main: 'Main agent', manager: 'Manager', specialist: 'Specialist', evaluator: 'Evaluator' };
 const TRAIT: Record<TraitName, [string, string, string]> = {
@@ -60,6 +62,8 @@ export function CardView({ card, agents, personality, onBack, onOpenMemory }: { 
       {s.tab === 'profile' && <ProfileTab card={card} agents={agents} busy={busy}/>}
       {s.tab === 'persona' && <PersonaTab card={card} personality={personality} busy={busy}/>}
       {s.tab === 'permissions' && <PermissionsTab card={card} busy={busy}/>}
+      {s.tab === 'mcp' && <AgentMcp key={s.agentId} client={card.client} agentId={s.agentId}/>}
+      {s.tab === 'skills' && <AgentSkills key={s.agentId} client={card.client} agentId={s.agentId}/>}
       {s.tab === 'memory' && <MemoryTab card={card} onOpenMemory={onOpenMemory}/>}
     </>}
   </article>;

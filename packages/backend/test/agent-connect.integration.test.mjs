@@ -1,7 +1,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { createRequire } from 'node:module';
-import { registerChannelRoutes, stopChannel } from '../extensions/shared/channel-host.js';
+import { registerChannelRoutes, stopChannel, channelRuntimeState } from '../extensions/shared/channel-host.js';
 const requireBackend = createRequire(new URL('../package.json', import.meta.url));
 const Fastify = requireBackend('fastify');
 const Database = requireBackend('better-sqlite3');
@@ -97,4 +97,26 @@ test('conversation history excludes other external senders', async () => {
     await f.incoming(message('telegram', { id: '3' }));
     assert.equal(f.received[2][3].length, 2);
   } finally { await f.close(); }
+});
+
+test('shared extension runs two channels concurrently and disables only the chosen channel', async () => {
+ const db = new Database(':memory:');
+ db.exec("CREATE TABLE extension_configs (extension_id TEXT PRIMARY KEY, enabled INTEGER); INSERT INTO extension_configs VALUES ('agent-connect',1)");
+ const configs={ntfy:{configured:true,enabled:true},slack:{configured:true,enabled:true}};
+ const connectors={};const app=Fastify();
+ for(const id of ['ntfy','slack'])await app.register(async scope=>registerChannelRoutes(scope,{
+  db,getConfig:()=>configs[id],authorizeChannelRequest:()=> 'owner',log:()=>{},
+ },id,{extensionId:'agent-connect',isConfigured:c=>c.configured,createTransport:()=>({}),createConnector:()=>{
+  const connector={state:'disconnected',connect:async()=>{connector.state='connected'},disconnect:async()=>{connector.state='disconnected'}};
+  connectors[id]=connector;return connector;
+ }}),{prefix:'/'+id});
+ try {
+  await app.ready();
+  for(const id of ['ntfy','slack'])assert.equal((await app.inject({url:'/'+id+'/connect',method:'POST'})).statusCode,200);
+  assert.equal(channelRuntimeState('ntfy'),'connected');assert.equal(channelRuntimeState('slack'),'connected');
+  configs.ntfy.enabled=false;
+  assert.equal(channelRuntimeState('ntfy'),'disabled');assert.equal(channelRuntimeState('slack'),'connected');
+  assert.equal((await app.inject({url:'/ntfy/connect',method:'POST'})).statusCode,409);
+  assert.equal((await app.inject({url:'/slack/status'})).json().connected,true);
+ } finally {await app.close();db.close();}
 });

@@ -127,11 +127,11 @@ function* lockUnchanged(row: McpServerRow): Step<McpServerRow> {
 
 export interface ServerInput {
   name?: unknown; description?: unknown; transport?: unknown; command?: unknown; args?: unknown; url?: unknown;
-  allowRemote?: unknown; env?: unknown; headers?: unknown; timeoutMs?: unknown; maxResultBytes?: unknown;
+  allowRemote?: unknown; env?: unknown; headers?: unknown; timeoutMs?: unknown; startupTimeoutMs?: unknown; maxResultBytes?: unknown;
 }
 
 /** Add a server. It starts disabled; enabling is a separate, approved step. */
-export async function createServer(input: ServerInput, ownerId: string): Promise<McpServerView> {
+export async function createServer(input: ServerInput, ownerId: string, options: { dormantImport?: boolean } = {}): Promise<McpServerView> {
   const name = typeof input.name === 'string' ? input.name.trim() : '';
   if (!SERVER_NAME_PATTERN.test(name)) throw new McpConfigError('name must be 1-24 lowercase letters, digits or "-" (no "_")');
   const nameTaken = () => new McpPolicyError(`an MCP server named "${name}" already exists`, 409, 'name_taken');
@@ -140,6 +140,7 @@ export async function createServer(input: ServerInput, ownerId: string): Promise
   if (!MCP_TRANSPORTS.includes(transport)) throw new McpConfigError('transport must be stdio, http or sse');
   const description = str(input.description, 'description', MAX_DESCRIPTION_CHARS);
   const timeoutMs = clampTimeout(input.timeoutMs);
+  const startupTimeoutMs = input.startupTimeoutMs === undefined ? null : clampTimeout(input.startupTimeoutMs);
   const maxResultBytes = clampResultBytes(input.maxResultBytes);
   const allowRemote = input.allowRemote === true;
   let command: string | null = null;
@@ -148,7 +149,7 @@ export async function createServer(input: ServerInput, ownerId: string): Promise
   let env: Record<string, string> | undefined;
   let headers: Record<string, string> | undefined;
   if (transport === 'stdio') {
-    execRequired();
+    if (!options.dormantImport) execRequired();
     ({ command, args } = checkCommand(input.command, input.args));
     if (input.url !== undefined || input.headers !== undefined || allowRemote) throw new McpConfigError('url, headers and allowRemote are for http/sse servers');
     env = checkSecretMap(input.env, 'env');
@@ -167,10 +168,10 @@ export async function createServer(input: ServerInput, ownerId: string): Promise
       if (yield* getServerRowByNameStep(name)) throw nameTaken();
       yield* run(`
         INSERT INTO mcp_servers (id, name, description, transport, command, args, url, allow_remote, env_names, header_names,
-          secret_credential_id, enabled, launch_hash, timeout_ms, max_result_bytes, status, created_by, generation)
-        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 0, ?, ?, ?, 'disabled', ?, ?)
+          secret_credential_id, enabled, launch_hash, timeout_ms, max_result_bytes, status, created_by, generation, startup_timeout_ms)
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 0, ?, ?, ?, 'disabled', ?, ?, ?)
       `, id, name, description, transport, command, transport === 'stdio' ? JSON.stringify(args) : null, url, allowRemote ? 1 : 0,
-      JSON.stringify(secrets.envNames), JSON.stringify(secrets.headerNames), secrets.credentialId, hash, timeoutMs, maxResultBytes, ownerId, randomUUID());
+      JSON.stringify(secrets.envNames), JSON.stringify(secrets.headerNames), secrets.credentialId, hash, timeoutMs, maxResultBytes, ownerId, randomUUID(), startupTimeoutMs);
       // A former server with the same name never passes its grants on.
       return yield* revokeMcpGrantsStep(yield* grantedNamesWithPrefixStep(serverPrefix(name)));
     })());
@@ -194,6 +195,7 @@ export async function updateServer(id: string, input: ServerInput, ownerId: stri
   if (input.name !== undefined && input.name !== row.name) throw new McpConfigError('the name cannot be changed (it is part of the tool names)');
   if (input.transport !== undefined && input.transport !== row.transport) throw new McpConfigError('the transport cannot be changed; add a new server');
   const description = input.description !== undefined ? str(input.description, 'description', MAX_DESCRIPTION_CHARS) : row.description;
+  const startupTimeoutMs = input.startupTimeoutMs !== undefined ? clampTimeout(input.startupTimeoutMs) : row.startup_timeout_ms;
   const timeoutMs = input.timeoutMs !== undefined ? clampTimeout(input.timeoutMs) : row.timeout_ms;
   const maxResultBytes = input.maxResultBytes !== undefined ? clampResultBytes(input.maxResultBytes) : row.max_result_bytes;
 
@@ -225,11 +227,11 @@ export async function updateServer(id: string, input: ServerInput, ownerId: stri
     yield* lockUnchanged(row);
     yield* run(`
       UPDATE mcp_servers SET description = ?, command = ?, args = ?, url = ?, allow_remote = ?, env_names = ?, header_names = ?,
-        secret_credential_id = ?, launch_hash = ?, timeout_ms = ?, max_result_bytes = ?,
+        secret_credential_id = ?, launch_hash = ?, timeout_ms = ?, max_result_bytes = ?, startup_timeout_ms = ?,
         enabled = CASE WHEN ? = 1 THEN 0 ELSE enabled END, status = CASE WHEN ? = 1 THEN 'disabled' ELSE status END, updated_at = ${nowText(d)}
       WHERE id = ?
     `, description, command, row.transport === 'stdio' ? JSON.stringify(args) : null, url, allowRemote ? 1 : 0,
-    JSON.stringify(secrets.envNames), JSON.stringify(secrets.headerNames), secrets.credentialId, hash, timeoutMs, maxResultBytes,
+    JSON.stringify(secrets.envNames), JSON.stringify(secrets.headerNames), secrets.credentialId, hash, timeoutMs, maxResultBytes, startupTimeoutMs,
     disable ? 1 : 0, disable ? 1 : 0, id);
     if (!targetChanged) return [];
     // New target = new server generation: its tools must be discovered again

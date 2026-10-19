@@ -40,6 +40,7 @@ export function conversationPath(path) {
   if (approvalPath(path)) return { kind: 'approval' };
   if (path === CONVERSATIONS_PATH) return { kind: 'list' };
   if (path === TRANSCRIBE_PATH) return { kind: 'transcribe' };
+  if (path === '/api/chat/project-folders') return { kind: 'folder-picker' };
   if (path === PROJECTS_PATH) return { kind: 'projects' };
   let pm = /^\/api\/chat\/projects\/([^/?#]+)$/.exec(path);
   if (pm) return uuid(pm[1]) ? { kind: 'project', id: pm[1] } : null;
@@ -82,21 +83,23 @@ export function allowedConversation(method, path, body) {
   if (method === 'POST' && p.kind === 'transcribe') return record(body) && onlyKeys(body, ['audio', 'language']) && typeof body.audio === 'string' && body.audio.length > 0 && body.audio.length <= MAX_AUDIO_CHARS && /^[A-Za-z0-9+/]+={0,2}$/.test(body.audio)
     && (body.language === undefined || STT_LANGUAGES.includes(body.language));
   if (method === 'DELETE') return body === undefined && (p.kind === 'one' || p.kind === 'project');
+  if(method==='POST'&&p.kind==='folder-picker')return record(body)&&onlyKeys(body,['path'])&&(body.path===undefined||(typeof body.path==='string'&&body.path.length>0&&body.path.length<=4096&&!/[\x00-\x1f]/.test(body.path)));
   if (method === 'POST' && p.kind === 'projects') return record(body) && onlyKeys(body, ['name', 'folder', 'repoUrl']) && title(body.name) && body.name.trim().length > 0
     && (body.folder === undefined || folderOk(body.folder)) && (body.repoUrl === undefined || repoOk(body.repoUrl));
   if (method === 'PUT' && p.kind === 'project') return record(body) && Object.keys(body).length > 0 && onlyKeys(body, ['name', 'folder', 'repoUrl'])
     && (body.name === undefined || (title(body.name) && body.name.trim().length > 0)) && (body.folder === undefined || body.folder === null || folderOk(body.folder)) && (body.repoUrl === undefined || body.repoUrl === null || repoOk(body.repoUrl));
-  if (method === 'POST' && p.kind === 'list') return record(body) && onlyKeys(body, ['title', 'agentId', 'projectId']) && (body.title === undefined || title(body.title)) && (body.agentId === undefined || agentId(body.agentId)) && (body.projectId === undefined || uuid(body.projectId));
+  if (method === 'POST' && p.kind === 'list') return record(body) && onlyKeys(body, ['title', 'agentId', 'projectId', 'model']) && (body.title === undefined || title(body.title)) && (body.agentId === undefined || agentId(body.agentId)) && (body.projectId === undefined || uuid(body.projectId)) && savedModel(body.model);
   if (method === 'POST' && p.kind === 'runs') return record(body) && onlyKeys(body, ['runId', 'message', 'model', 'agentId']) && (body.agentId === undefined || agentId(body.agentId)) && validRunId(body.runId) && text(body.message, MAX_MESSAGE) && body.message.trim().length > 0
     && (body.model === undefined || (typeof body.model === 'string' && /^[A-Za-z0-9][A-Za-z0-9_.:@\/-]{0,99}$/.test(body.model)));
   if (method === 'POST' && p.kind === 'stop') return body === undefined;
-  if (method === 'PUT' && p.kind === 'one') return record(body) && Object.keys(body).length > 0 && onlyKeys(body, ['title', 'pinned', 'projectId']) && (body.projectId === undefined || body.projectId === null || uuid(body.projectId)) && (body.title === undefined || body.title === null || title(body.title)) && (body.pinned === undefined || typeof body.pinned === 'boolean');
+  if (method === 'PUT' && p.kind === 'one') return record(body) && Object.keys(body).length > 0 && onlyKeys(body, ['title', 'pinned', 'projectId', 'model']) && (body.projectId === undefined || body.projectId === null || uuid(body.projectId)) && (body.title === undefined || body.title === null || title(body.title)) && (body.pinned === undefined || typeof body.pinned === 'boolean') && savedModel(body.model);
   return false;
 }
 
+const savedModel=x=>x===undefined||x===''||(typeof x==='string'&&/^[A-Za-z0-9][A-Za-z0-9_.:@\/-]{0,99}$/.test(x));
 function conversation(x) {
   if (!record(x) || !uuid(x.id)) throw Error('protocol');
-  return { id: x.id, title: typeof x.title === 'string' ? x.title.slice(0, MAX_TITLE) : null, agentId: agentId(x.agentId) ? x.agentId : null, projectId: uuid(x.projectId) ? x.projectId : null,
+  return { ...(x.model!==undefined&&x.model!==''&&savedModel(x.model)?{model:x.model}:{}), id: x.id, title: typeof x.title === 'string' ? x.title.slice(0, MAX_TITLE) : null, agentId: agentId(x.agentId) ? x.agentId : null, projectId: uuid(x.projectId) ? x.projectId : null,
     pinned: x.pinned === true, preview: str(x.preview, 200), createdAt: str(x.createdAt, 40), updatedAt: str(x.updatedAt, 40) };
 }
 
@@ -146,6 +149,11 @@ export function conversationResponse(path, status, body) {
     return { code, ...(code === 'conversation_busy' && validRunId(body.runId) ? { runId: body.runId } : {}) };
   }
   if (!record(body)) throw Error('protocol');
+  if(p.kind==='folder-picker'){
+    const valid=x=>typeof x==='string'&&x.length>0&&x.length<=4096&&!/[\x00-\x1f]/.test(x);
+    if(!valid(body.path)||(body.parent!==null&&!valid(body.parent))||typeof body.selectable!=='boolean'||!Array.isArray(body.entries)||body.entries.length>500||typeof body.truncated!=='boolean')throw Error('protocol');
+    return {path:body.path,parent:body.parent,selectable:body.selectable,truncated:body.truncated,entries:body.entries.map(e=>{if(!record(e)||!valid(e.name)||/[\\/]/.test(e.name)||!valid(e.path)||![body.path.replace(/[\\/]$/,'')+'/'+e.name,body.path.replace(/[\\/]$/,'')+'\\'+e.name].includes(e.path))throw Error('protocol');return {name:e.name,path:e.path};})};
+  }
   if (p.kind === 'projects' && status === 200) { if (!Array.isArray(body.projects)) throw Error('protocol'); return { projects: body.projects.slice(0, 500).map(project) }; }
   if (p.kind === 'projects' || (p.kind === 'project' && record(body.project))) return { project: project(body.project) };
   if (p.kind === 'project') { if (body.ok !== true) throw Error('protocol'); return { ok: true }; }
@@ -200,7 +208,7 @@ export function projectRunEvent(x) {
   return e && num(x.at) !== undefined ? { ...e, at: num(x.at) } : e;
 }
 /** Typed reasons a run may end with (CHAT-PRO-02 G: LM Studio not running). */
-const END_CODES = ['model_unavailable', 'lmstudio_not_running'];
+const END_CODES = ['model_unavailable', 'lmstudio_not_running', 'subscription_org_blocked'];
 function projectEvent(x) {
   if (!record(x) || !Number.isSafeInteger(x.seq) || x.seq < 1) throw Error('protocol');
   const seq = x.seq;

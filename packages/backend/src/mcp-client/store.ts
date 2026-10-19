@@ -31,6 +31,7 @@ export interface McpServerRow {
   approved_launch_hash: string | null;
   approved_by: string | null;
   approved_at: string | null;
+  startup_timeout_ms: number | null;
   timeout_ms: number;
   max_result_bytes: number;
   status: string;
@@ -238,6 +239,7 @@ export interface McpServerView {
   launchApproved: boolean;
   approvedBy: string | null;
   approvedAt: string | null;
+  startupTimeoutMs: number;
   timeoutMs: number;
   maxResultBytes: number;
   status: string;
@@ -291,6 +293,7 @@ export function serverViewOf(row: McpServerRow, tools: McpToolRow[]): McpServerV
     launchApproved: row.transport === 'stdio' ? isLaunchApproved(row) : true,
     approvedBy: row.approved_by,
     approvedAt: row.approved_at,
+    startupTimeoutMs: row.startup_timeout_ms ?? row.timeout_ms,
     timeoutMs: row.timeout_ms,
     maxResultBytes: row.max_result_bytes,
     status: row.status,

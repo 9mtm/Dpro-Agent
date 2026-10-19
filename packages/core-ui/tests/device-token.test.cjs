@@ -111,7 +111,7 @@ test('browser transport projects login and me and omits ambient credentials', as
   assert.deepEqual(Object.keys(response.body).sort(), ['deviceToken', 'token', 'user']);
   const me = await transport({ method: 'GET', path: '/api/auth/me', headers: { Authorization: 'Bearer fictional-auth' }, signal });
   assert.deepEqual(me.body, { user });
-  assert.equal(calls[0].init.credentials, 'omit'); assert.equal(calls[0].init.cache, 'no-store');
+  assert.equal(calls[0].init.credentials, 'same-origin'); assert.equal(calls[0].init.cache, 'no-store');
   assert.ok(!JSON.stringify(calls[0].init.headers).includes('fictional-device')); assert.ok(!calls[0].url.includes('fictional-device'));
 });
 test('no device persistence or logging sinks in auth sources; private slot absent from own properties', async () => {

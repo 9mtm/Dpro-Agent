@@ -14,7 +14,7 @@ import type { Turn } from './turns';
 export type Conversation = WireConversation;
 export type Project = WireProject;
 export type AgentChoice = Readonly<{ id: string; name: string; primary?: boolean }>;
-export type ModelOption = Readonly<{ id: string; provider: 'ollama' | 'claude' | 'lmstudio'; label: string; size: string }>;
+export type ModelOption = Readonly<{ id: string; provider: 'ollama' | 'claude' | 'lmstudio' | 'subscription'; label: string; size: string }>;
 export type ConversationsState = Readonly<{
   access: 'ready' | 'denied';
   listPhase: 'idle' | 'loading' | 'ready' | 'error';
@@ -61,11 +61,13 @@ export function withAttachments(message: string, files: readonly { name: string;
   return [message || 'Please look at the attached files.', ...blocks].join('\n\n');
 }
 
-export class ConversationsController {
-  #state: ConversationsState = Object.freeze({
+const emptyState = (): ConversationsState => Object.freeze({
     access: 'ready', listPhase: 'idle', conversations: [], activeId: null, threadPhase: 'empty', turns: [], draft: '', agentId: '', replyAgent: '', agents: [], models: [], model: '', projects: [], projectFilter: '', git: null,
     runId: null, starting: false, stopping: false, reconnecting: false, queue: [], queuePaused: false, attachments: [], focus: null,
-  });
+});
+
+export class ConversationsController {
+  #state: ConversationsState = emptyState();
   #listeners = new Set<() => void>();
   #unsubscribe: () => void;
   #epoch: number;
@@ -86,7 +88,11 @@ export class ConversationsController {
   private publish(patch: Partial<ConversationsState>) { if (this.#disposed) return; this.#state = Object.freeze({ ...this.#state, ...patch }); this.#listeners.forEach(fn => fn()); }
   private clear() {
     this.#follow?.abort();
-    this.publish({ access: 'denied', conversations: [], activeId: null, turns: [], draft: '', runId: null, queue: [], threadPhase: 'empty', listPhase: 'idle', notice: undefined });
+    this.#openSeq++;
+    this.#history = [];
+    this.#modelsAt = 0;
+    this.#modelSaveFailures.clear();
+    this.publish({ ...emptyState(), access: 'denied', notice: undefined });
   }
   dispose() { this.#follow?.abort(); this.#unsubscribe(); this.#disposed = true; this.#listeners.clear(); }
 
@@ -118,8 +124,9 @@ export class ConversationsController {
   recall(): string | undefined { return this.#history.at(-1); }
 
   private async call(method: 'GET' | 'POST' | 'PUT' | 'DELETE', path: string, body?: unknown) {
+    if (!this.live()) return { status: 403, body: null };
     const r = await this.client.request(body === undefined ? { method, path } as never : { method, path, body } as never);
-    return r;
+    return this.live() ? r : { status: 403, body: null };
   }
 
   async load() {
@@ -145,7 +152,7 @@ export class ConversationsController {
    * started later shows up when the picker is opened.
    */
   async loadModels(refresh = false) {
-    if (this.client.getSnapshot().user?.role !== 'owner' || (this.#state.models.length && !refresh)) return;
+    if (!this.live() || this.client.getSnapshot().user?.role !== 'owner' || (this.#state.models.length && !refresh)) return;
     if (refresh && Date.now() - this.#modelsAt < 5000) return;
     this.#modelsAt = Date.now();
     try {
@@ -157,7 +164,7 @@ export class ConversationsController {
     } catch { /* the picker stays as it was */ }
   }
   async loadProjects() {
-    if (this.client.getSnapshot().user?.role !== 'owner') return;
+    if (!this.live() || this.client.getSnapshot().user?.role !== 'owner') return;
     try {
       const r = await this.call('GET', '/api/chat/projects');
       if (this.live() && r.status === 200 && record(r.body) && Array.isArray(r.body.projects)) this.publish({ projects: r.body.projects as Project[] });
@@ -165,12 +172,17 @@ export class ConversationsController {
   }
   /** Shows only one project's conversations ('' = all); a new chat goes into it. */
   filterProject(id: string) { if (id === '' || this.#state.projects.some(p => p.id === id)) this.publish({ projectFilter: id }); }
+  async browseProjectFolders(path?:string):Promise<{path:string;parent:string|null;selectable:boolean;truncated:boolean;entries:{name:string;path:string}[]}>{
+    const r=await this.call('POST','/api/chat/project-folders',path?{path}:{});
+    if(r.status!==200)throw Error('Folder unavailable');return r.body as never;
+  }
   /** Creates a project; resolves with an error message for the form, or null on success. */
   async createProject(input: { name: string; folder: string; repoUrl: string }): Promise<string | null> {
     const body: Record<string, string> = { name: input.name.trim() };
     if (input.folder.trim()) body.folder = input.folder.trim();
     if (input.repoUrl.trim()) body.repoUrl = input.repoUrl.trim();
     if (!body.name) return 'Give the project a name.';
+    if (!body.folder) return 'Choose a working folder for this project, or use General chat.';
     try {
       const r = await this.call('POST', '/api/chat/projects', body);
       if ((r.status === 201 || r.status === 200) && record(r.body) && record(r.body.project)) {
@@ -225,10 +237,29 @@ export class ConversationsController {
     } catch { this.publish({ git: null }); }
   }
 
-  selectModel(model: string) { if (model === '' || this.#state.models.some(m => m.id === model)) this.publish({ model }); }
+  resumeCodingSession(id:string,source:'claude-code'|'codex'){
+    const project=this.activeProject();if(!this.live()||!project?.folder||!/^[a-f0-9]{32}$/.test(id))return;
+    const model='subscription:'+(source==='claude-code'?'claude':'codex')+':'+id;this.filterProject(project.id);this.newChat();
+    this.publish({model,models:[...this.#state.models.filter(m=>m.id!==model),{id:model,provider:'subscription',label:(source==='codex'?'Codex':'Claude Code')+' · previous session',size:''}]});
+  }
+  #modelWrites: Promise<void> = Promise.resolve();
+  #pendingModelWrites = 0;
+  #modelSaveFailures = new Set<string>();
+  selectModel(model: string) {
+    if(!this.live() || !(model===''||this.#state.models.some(m=>m.id===model)))return;
+    this.publish({model});const id=this.#state.activeId;if(!id)return;
+    this.#pendingModelWrites++;
+    this.#modelWrites=this.#modelWrites.then(async()=>{
+      if(!this.live())return;
+      try{const r=await this.call('PUT',`/api/chat/conversations/${id}`,{model});
+        if(r.status!==200||!record(r.body)||!record(r.body.conversation))throw Error();
+        this.#modelSaveFailures.delete(id);if(this.live())this.replace(r.body.conversation as Conversation);
+      }catch{if(!this.live())return;this.#modelSaveFailures.add(id);if(this.live()&&this.#state.activeId===id)this.publish({notice:'The model choice was not saved. Choose it again before sending.'});}
+    }).finally(()=>{this.#pendingModelWrites--;});
+  }
 
   async loadAgents() {
-    if (this.client.getSnapshot().user?.role !== 'owner' || this.#state.agents.length) return;
+    if (!this.live() || this.client.getSnapshot().user?.role !== 'owner' || this.#state.agents.length) return;
     try {
       const r = await this.client.request({ method: 'GET', path: '/api/agents' });
       if (!this.live() || r.status !== 200 || !record(r.body) || !Array.isArray(r.body.agents)) return;
@@ -239,7 +270,7 @@ export class ConversationsController {
   /** A blank conversation (created on the first message). */
   newChat() {
     this.#follow?.abort(); this.#openSeq++;
-    this.publish({ activeId: null, turns: [], threadPhase: 'empty', runId: null, starting: false, stopping: false, reconnecting: false, queue: [], queuePaused: false, notice: undefined, agentId: '', replyAgent: '', git: null, focus: null });
+    this.publish({ activeId: null, model: '', turns: [], threadPhase: 'empty', runId: null, starting: false, stopping: false, reconnecting: false, queue: [], queuePaused: false, notice: undefined, agentId: '', replyAgent: '', git: null, focus: null });
     void this.loadGit();
   }
 
@@ -248,8 +279,9 @@ export class ConversationsController {
     this.#follow?.abort();
     const seq = ++this.#openSeq;
     const known = this.#state.conversations.find(c => c.id === id);
-    this.publish({ activeId: id, turns: [], threadPhase: 'loading', runId: null, starting: false, stopping: false, reconnecting: false, queue: [], queuePaused: false, notice: undefined, agentId: known?.agentId ?? '', replyAgent: '', focus: null });
+    this.publish({ activeId: id, turns: [], threadPhase: 'loading', runId: null, starting: false, stopping: false, reconnecting: false, queue: [], queuePaused: false, notice: undefined, agentId: known?.agentId ?? '', model: known?.model ?? '', replyAgent: '', focus: null });
     try {
+      await this.#modelWrites;if(!this.live()||seq!==this.#openSeq)return;
       const r = await this.call('GET', `/api/chat/conversations/${id}/messages`);
       if (!this.live() || seq !== this.#openSeq) return;
       if (r.status === 404) { this.publish({ threadPhase: 'error', notice: 'This conversation no longer exists.', conversations: this.#state.conversations.filter(c => c.id !== id) }); return; }
@@ -259,7 +291,8 @@ export class ConversationsController {
       // A running turn is rebuilt from its events, not from a stored row.
       const turns = messages.map(fromWire);
       if (active) turns.push(liveTurn(active, this.now()));
-      this.publish({ turns, threadPhase: 'ready', runId: active });
+      const conversation=r.body.conversation as Conversation;this.replace(conversation);
+      this.publish({ turns, threadPhase: 'ready', runId: active, model: conversation.model ?? '' });
       void this.loadGit();
       if (active) void this.follow(active, seq);
     } catch { if (this.live() && seq === this.#openSeq) this.publish({ threadPhase: 'error', notice: 'The conversation could not be loaded.' }); }
@@ -279,6 +312,8 @@ export class ConversationsController {
     const files = text === undefined ? this.#state.attachments : [];
     const message = withAttachments((text ?? this.#state.draft).trim(), files);
     if (!this.live() || !message || message.length > MAX_MESSAGE) return;
+    if(this.#pendingModelWrites)await this.#modelWrites;if(!this.live())return;
+    if(this.#state.activeId&&this.#modelSaveFailures.has(this.#state.activeId)){this.publish({notice:'The model choice was not saved. Choose it again before sending.'});return;}
     if (this.#state.runId || this.#state.starting) {
       this.publish({ queue: [...this.#state.queue, { key: this.newId(), text: message }], ...(text === undefined ? { draft: '' } : {}) });
       return;
@@ -294,7 +329,7 @@ export class ConversationsController {
       let id = this.#state.activeId;
       const named = this.mentioned(message)?.id;
       if (!id) {
-        const c = await this.call('POST', '/api/chat/conversations', { ...((named ?? this.#state.agentId) ? { agentId: named ?? this.#state.agentId } : {}), ...(this.#state.projectFilter ? { projectId: this.#state.projectFilter } : {}) });
+        const c = await this.call('POST', '/api/chat/conversations', { ...(this.#state.model?{model:this.#state.model}:{}), ...((named ?? this.#state.agentId) ? { agentId: named ?? this.#state.agentId } : {}), ...(this.#state.projectFilter ? { projectId: this.#state.projectFilter } : {}) });
         if (!this.live() || seq !== this.#openSeq) return;
         if ((c.status !== 201 && c.status !== 200) || !record(c.body) || !record(c.body.conversation)) throw new SessionFailure('unavailable');
         const conv = c.body.conversation as Conversation;
@@ -439,6 +474,7 @@ export class ConversationsController {
 
   /** CHAT-PRO-02 F: saves the conversation as a Markdown file (a failure shows as the notice). */
   async exportMarkdown(id: string, tools = false): Promise<ExportResult> {
+    if (!this.live()) return { ok: false, message: 'Sign in again to export this conversation.' };
     const r = await exportConversation(this.client, id, tools);
     if (!r.ok && this.live()) this.publish({ notice: r.message });
     return r;

@@ -30,6 +30,7 @@ export interface Conversation {
   agentId: string | null;
   projectId: string | null;
   pinned: boolean;
+  model?: string;
   preview: string;
   createdAt: string;
   updatedAt: string;
@@ -49,13 +50,14 @@ export interface ConversationMessage {
   agentId?: string | null;
 }
 
-interface SessionRow { id: string; user_id: string; title: string | null; agent_id: string | null; project_id?: string | null; pinned: number; created_at: string; updated_at: string; preview?: string | null }
+interface SessionRow { model?: string; id: string; user_id: string; title: string | null; agent_id: string | null; project_id?: string | null; pinned: number; created_at: string; updated_at: string; preview?: string | null }
 interface MessageRow { id: string; role: ConversationMessage['role']; content: string; parts: string | null; status: TurnStatus | null; run_id: string | null; duration_ms: number | null; created_at: string; agent_id?: string | null; error_code?: string | null }
 
 const PREVIEW_CHARS = 140;
 
 function toConversation(r: SessionRow): Conversation {
   return {
+    ...(r.model&&r.model!=='default'?{model:r.model}:{}),
     id: r.id, title: r.title, agentId: r.agent_id, projectId: r.project_id ?? null, pinned: !!r.pinned,
     preview: (r.preview ?? '').replace(/\s+/g, ' ').trim().slice(0, PREVIEW_CHARS),
     createdAt: r.created_at, updatedAt: r.updated_at,
@@ -90,17 +92,18 @@ export async function findConversation(userId: string, id: string): Promise<Conv
   return r ? toConversation(r) : undefined;
 }
 
-export async function createConversation(userId: string, input: { title?: string | null; agentId?: string | null; projectId?: string | null }): Promise<Conversation> {
+export async function createConversation(userId: string, input: { title?: string | null; agentId?: string | null; projectId?: string | null; model?: string }): Promise<Conversation> {
   const id = randomUUID();
   await q.run('INSERT INTO chat_sessions (id, user_id, title, model, agent_id, project_id) VALUES (?, ?, ?, ?, ?, ?)',
-    id, userId, input.title?.trim() || null, 'default', input.agentId || null, input.projectId || null);
+    id, userId, input.title?.trim() || null, input.model || 'default', input.agentId || null, input.projectId || null);
   return (await findConversation(userId, id))!;
 }
 
 /** Rename and/or pin. Renaming bumps nothing else; pinning does not reorder by time. */
-export async function patchConversation(userId: string, id: string, patch: { title?: string | null; pinned?: boolean; projectId?: string | null }): Promise<Conversation | undefined> {
+export async function patchConversation(userId: string, id: string, patch: { title?: string | null; pinned?: boolean; projectId?: string | null; model?: string }): Promise<Conversation | undefined> {
   const fields: string[] = [];
   const params: Array<string | number | null> = [];
+  if (patch.model !== undefined) { fields.push('model = ?'); params.push(patch.model || 'default'); }
   if (patch.title !== undefined) { fields.push('title = ?'); params.push(patch.title?.trim() || null); }
   if (patch.pinned !== undefined) { fields.push('pinned = ?'); params.push(patch.pinned ? 1 : 0); }
   if (patch.projectId !== undefined) { fields.push('project_id = ?'); params.push(patch.projectId); }

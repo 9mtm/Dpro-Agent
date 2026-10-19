@@ -116,7 +116,7 @@ export async function exportConversation(userId: string, conversationId: string,
     used += size;
   }
   const note = truncated ? `\n---\n\n_Export cut: ${blocks.length} of ${turns.length} turns fit in the size limit._\n` : '';
-  const footer = `\n---\n\n_Exported from Dpro${redacted ? ` · ${redacted} secret value${redacted === 1 ? ' was' : 's were'} left out` : ''}._\n`;
+  const footer = `\n---\n\n_Exported from Dpro Agent${redacted ? ` · ${redacted} secret value${redacted === 1 ? ' was' : 's were'} left out` : ''}._\n`;
   return {
     filename: exportFilename(c.title),
     markdown: `${header}${blocks.join('')}${note}${footer}`,

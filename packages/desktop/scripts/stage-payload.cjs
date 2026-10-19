@@ -25,7 +25,7 @@ const out = path.join(here, 'payload');
 /** Backend parts the server needs at run time (no tests, no one-off maintenance scripts). */
 const BACKEND_PARTS = ['package.json', 'tsconfig.json', 'src', 'extensions', 'skills', 'python-scripts'];
 /** Bridge parts: its scripts and the plain-JS contracts it requires. */
-const CORE_UI_SCRIPTS = ['application-server.cjs', 'build-artifacts.cjs', 'preview.cjs', 'memory-response.cjs'];
+const CORE_UI_SCRIPTS = ['application-server.cjs', 'build-artifacts.cjs', 'preview.cjs', 'memory-response.cjs', 'genvr-assets.cjs', 'prepare-genvr.cjs', 'genvr-host.js'];
 
 function parseArgs(argv) {
   const options = { node: process.execPath, backendModules: path.join(packages, 'backend', 'node_modules'), rootModules: path.join(packages, '..', 'node_modules'), coreUiDist: path.join(packages, 'core-ui', 'dist') };
@@ -90,6 +90,8 @@ function stage(options) {
   fs.mkdirSync(path.join(ui, 'dist'));
   fs.copyFileSync(path.join(options.coreUiDist, 'candidate.json'), path.join(ui, 'dist', 'candidate.json'));
   copy(path.join(options.coreUiDist, pointer.buildId), path.join(ui, 'dist', pointer.buildId));
+  const genvr = path.join(coreUi, 'vendor', 'genvr');
+  if (fs.existsSync(path.join(genvr, 'manifest.json'))) copy(genvr, path.join(ui, 'vendor', 'genvr'), noSecrets);
   refuseDevAccounts(coreUi, path.join(ui, 'dist', pointer.buildId));
   return out;
 }

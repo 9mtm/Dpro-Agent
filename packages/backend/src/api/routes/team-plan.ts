@@ -1,3 +1,4 @@
+import { COMPANY_SPECIALTIES } from '../../services/company-specialties.js';
 /**
  * Company setup: team catalogue and team proposal (ONBOARD-TEAM-01). Owner
  * only (auth gate owner tier + handler check). Both routes only read: the plan
@@ -40,6 +41,7 @@ export async function teamPlanRoutes(fastify: FastifyInstance) {
     return {
       sizes: COMPANY_SIZES.map((id) => ({ id, label: COMPANY_SIZE_LABELS[id] })),
       departments: DEPARTMENTS.map(({ id, label, summary }) => ({ id, label, summary })),
+      specialties: COMPANY_SPECIALTIES,
       maxDepartments: MAX_DEPARTMENTS,
       maxCustomDepartments: MAX_CUSTOM_DEPARTMENTS,
       maxTotal: MAX_TOTAL_HEADCOUNT,

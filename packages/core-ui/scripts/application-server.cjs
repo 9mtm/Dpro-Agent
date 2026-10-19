@@ -1,3 +1,10 @@
+const {approvalRoute,allowedApproval,approvalResponse}=require('../src/approvals-contract.js');
+const {allowedTemplates,templatePath,templatesResponse}=require('../src/specialty-contract.js');
+const { allowedMcpImport, mcpImportPath, mcpImportResponse } = require('../src/mcp-import-contract.js');
+const { allowedSkillLibrary, skillLibraryPath, skillLibraryResponse } = require('../src/skill-library-contract.js');
+const { createGenVRAssets } = require('./genvr-assets.cjs');
+const { allowedGenVR, genvrRoute, genvrResponse, GENVR_BYTES } = require('../src/genvr-contract.js');
+const { allowedChannel, channelRoute, channelResponse } = require('../src/agent-connect-contract.js');
 const { allowedPersonality, personalityRoute, personalityResponse } = require('../src/personality-contract.js');
 const { allowedHire, hireRoute, hireResponse } = require('../src/hire-contract.js');
 const { allowedBoard, boardRoute, boardResponse } = require('../src/board-contract.js');
@@ -50,7 +57,11 @@ const agent = x => {
     : { id: x.id, version: x.version, nameUnavailable: true, ...profile(x) };
 };
 function allowed(method, target, body) {
-  if (allowedPersonality(method, target, body) || allowedHire(method, target, body) || allowedBoard(method, target, body) || allowedConversation(method, target, body) || allowedAgentCard(method, target, body) || allowedTerminal(method, target, body) || allowedConnector(method, target, body) || allowedLocalImport(method, target, body) || allowedChatBoard(method, target, body) || allowedChatMemory(method, target, body) || allowedChatSearch(method, target, body) || allowedChatExport(method, target, body) || allowedChatSecrets(method, target, body)) return true;
+  if (approvalRoute(target)) return allowedApproval(method,target,body);
+  if (mcpImportPath(target)) return allowedMcpImport(method,target,body);
+  if (templatePath(target)) return allowedTemplates(method,target,body);
+  if (skillLibraryPath(target)) return allowedSkillLibrary(method,target,body);
+  if (allowedGenVR(method, target, body) || allowedChannel(method, target, body) || allowedPersonality(method, target, body) || allowedHire(method, target, body) || allowedBoard(method, target, body) || allowedConversation(method, target, body) || allowedAgentCard(method, target, body) || allowedTerminal(method, target, body) || allowedConnector(method, target, body) || allowedLocalImport(method, target, body) || allowedChatBoard(method, target, body) || allowedChatMemory(method, target, body) || allowedChatSearch(method, target, body) || allowedChatExport(method, target, body) || allowedChatSecrets(method, target, body)) return true;
   const id = /^\/api\/agents\/([^/?#]+)$/.exec(target)?.[1];
   if (method === 'PUT') return agentId(id) && record(body) && Object.keys(body).length === 2 && Object.keys(body).every(k => k === 'name' || k === 'expectedVersion') && name(body.name) && version(body.expectedVersion);
   if (method === 'GET' && body === undefined && (target === '/api/agents' || agentId(id))) return true;
@@ -102,6 +113,12 @@ function project(target, status, body) {
   if (conversationRoute(target)) return conversationResponse(target, status, body);
   if (cardRoute(target)) return agentCardResponse(target, status, body);
   if (terminalRoute(target)) return terminalResponse(target, status, body);
+  if (approvalRoute(target)) return approvalResponse(target,status,body);
+  if (mcpImportPath(target)) return mcpImportResponse(target,status,body);
+  if (templatePath(target)) return templatesResponse(target,status,body);
+  if (skillLibraryPath(target)) return skillLibraryResponse(target,status,body);
+  if (genvrRoute(target)) return genvrResponse(target, status, body);
+  if (channelRoute(target)) return channelResponse(target, status, body);
   if (connectorRoute(target)) return connectorResponse(target, status, body);
   if (localImportRoute(target)) return localImportResponse(target, status, body);
   if (chatBoardRoute(target)) return chatBoardResponse(target, status, body);
@@ -163,6 +180,7 @@ function createApplicationServer({ packageRoot = root, channel, stage1ReadOnly =
   if (!['candidate', 'current'].includes(channel) || !(typeof upstreamPort === 'function' || validPort(upstreamPort)) || !Number.isInteger(timeoutMs) || timeoutMs < 1 || timeoutMs > 10000) throw Error('Invalid launch configuration');
   if (!Number.isInteger(streamTimeoutMs) || streamTimeoutMs < 1 || streamTimeoutMs > CHAT_DEADLINE_MS || !Number.isInteger(streamIdleMs) || streamIdleMs < 1 || streamIdleMs > CHAT_IDLE_MS) throw Error('Invalid stream limits');
   if (!Number.isInteger(runStreamMs) || runStreamMs < 1 || runStreamMs > RUN_STREAM_MS || !Number.isInteger(runIdleMs) || runIdleMs < 1 || runIdleMs > RUN_IDLE_MS) throw Error('Invalid run stream limits');
+  const serveGenVR = createGenVRAssets(packageRoot);
   const assets = readCurrent(packageRoot, channel); // Pin validated bytes for this server lifetime.
   const server = http.createServer({ maxHeaderSize: 16384, requestTimeout: 10000, headersTimeout: 10000 }, async (req, res) => {
     for (const [k, v] of Object.entries(HEADERS)) res.setHeader(k, v);
@@ -191,6 +209,7 @@ function createApplicationServer({ packageRoot = root, channel, stage1ReadOnly =
     if ((req.headers.origin && req.headers.origin !== origin) || (req.headers['sec-fetch-site'] && !['same-origin', 'none'].includes(req.headers['sec-fetch-site']))) return send(403);
     if (stage1ReadOnly && raw.startsWith('/api/') && !stage1Route(req.method, raw)) return send(403, { code: 'stage1_read_only' });
     if (requestPath(raw) === null || raw.length > 2048) return send(400);
+    if (!raw.startsWith('/api/') && serveGenVR(req, res, requestPath(raw))) return;
     if (!raw.startsWith('/api/')) {
       if (!['GET', 'HEAD'].includes(req.method)) return send(405);
       if (raw.includes('?') || req.headers.authorization || req.headers['transfer-encoding'] || Number(req.headers['content-length'] || 0)) return send(400);
@@ -208,11 +227,16 @@ function createApplicationServer({ packageRoot = root, channel, stage1ReadOnly =
     if (chat && !validKey(req.headers['idempotency-key'])) return send(400);
     const login = raw === '/api/auth/login' || (raw === OWNER_SETUP_PATH && req.method === 'POST');
     const discovery = raw === '/api/setup/status' && req.method === 'GET';
-    const auth = req.headers.authorization;
+    let auth = req.headers.authorization;
+    if (auth === 'Bearer dpro-remembered-session') {
+      const values = (req.headers.cookie || '').split(';').map(v => v.trim()).filter(v => v.startsWith('dpro_session='));
+      const token = values.length === 1 ? values[0].slice('dpro_session='.length) : '';
+      auth = /^[A-Za-z0-9._~-]{1,8192}$/.test(token) ? `Bearer ${token}` : undefined;
+    }
     if ((login || discovery) ? auth !== undefined : typeof auth !== 'string' || auth.length > 8200 || !/^Bearer [A-Za-z0-9._~-]+$/.test(auth)) return send(401);
     const length = Number(req.headers['content-length'] || 0);
     const audio = req.method === 'POST' && raw === '/api/chat/transcribe';
-    const limit = audio ? AUDIO_LIMIT : LIMIT;
+    const limit = genvrRoute(raw) ? GENVR_BYTES + 65536 : audio ? AUDIO_LIMIT : LIMIT;
     if (!Number.isSafeInteger(length) || length < 0 || length > limit) return send(413);
     if (req.headers['content-type'] && !/^application\/json(?:;\s*charset=utf-8)?$/i.test(req.headers['content-type'])) return send(415);
     try {
@@ -306,7 +330,7 @@ function createApplicationServer({ packageRoot = root, channel, stage1ReadOnly =
         }
         // The terminal answers input, resize and close with 204: a fixed { ok: true } leaves the bridge.
         if (status === 204 && terminalRoute(raw) && req.method !== 'GET') { response.resume(); return send(200, { ok: true }); }
-        const responseLimit = chat ? 16384 : RESPONSE_LIMIT;
+        const responseLimit = genvrRoute(raw) ? GENVR_BYTES + 65536 : chat ? 16384 : RESPONSE_LIMIT;
         if (status >= 300 && status < 400 || response.headers.location || response.headers['set-cookie'] || response.headers['content-encoding'] || !/^application\/json(?:\s*;|$)/i.test(response.headers['content-type'] || '') || Number(response.headers['content-length'] || 0) > responseLimit) return fail();
         const parts = []; let count = 0;
         response.on('data', chunk => { count += chunk.length; if (count > responseLimit) fail(); else parts.push(chunk); });
@@ -319,6 +343,11 @@ function createApplicationServer({ packageRoot = root, channel, stage1ReadOnly =
             const delayHeaders = response.rawHeaders.filter((value, i) => i % 2 === 0 && value.toLowerCase() === 'retry-after').length;
             const delay = status === 429 && delayHeaders === 1 ? retryAfterSeconds(response.headers['retry-after']) : undefined;
             if (delay !== undefined && !res.headersSent) res.setHeader('Retry-After', String(delay));
+            if (raw === '/api/auth/login' && status === 200 && typeof projected?.token === 'string') {
+              res.setHeader('Set-Cookie', `dpro_session=${projected.token}; HttpOnly; SameSite=Strict; Path=/api; Max-Age=604800`);
+            } else if ((raw === '/api/auth/logout' && status === 200) || (raw === '/api/auth/me' && status === 401 && req.headers.authorization === 'Bearer dpro-remembered-session')) {
+              res.setHeader('Set-Cookie', 'dpro_session=; HttpOnly; SameSite=Strict; Path=/api; Max-Age=0');
+            }
             send(req.method !== 'GET' && status === 421 ? 502 : status, projected);
           }
           catch { send(502); }
