@@ -84,7 +84,7 @@ export class AgentCardController {
     try {
       const r = await this.get('/api/models');
       // An agent's default model is Ollama or Claude; LM Studio models are picked per reply in the chat.
-      if (r.status === 200 && record(r.body) && Array.isArray(r.body.models)) this.publish({ models: (r.body.models as ModelOption[]).filter(m => m.provider !== 'lmstudio') });
+      if (r.status === 200 && record(r.body) && Array.isArray(r.body.models)) this.publish({ models: (r.body.models as ModelOption[]).filter(m => m.provider === 'ollama'||m.provider==='claude') });
     } catch { /* the model stays as it is */ }
   }
 

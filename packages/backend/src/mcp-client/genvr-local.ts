@@ -8,7 +8,7 @@ import { getServerRowByName, readSecrets, parseList } from './store.js';
 import { isExecToolsEnabled } from '../tools/exec-policy.js';
 import { mcpServersBaseDir, ensureServerWorkDir } from './config.js';
 const NAME='genvr-local';
-const PACKAGE_HASH='c0584808697a00cf90bcf2c0dc93ff2ca213ccddda650b88c9f26dcddd0247fd';
+const PACKAGE_HASH='f9b870f066f6801cc0806ac5348eaa4ef27b27c22fc8d3ad7eb440a83e6de81b';
 let queue:Promise<unknown>=Promise.resolve();
 /** Register the pinned bundled authoring server; keep all normal execution and grant gates. */
 export function ensureGenvrMcp(ownerId:string) {
@@ -25,7 +25,7 @@ export function ensureGenvrMcp(ownerId:string) {
   if(!isExecToolsEnabled())return {status:'blocked',id:row.id};
   try{
    ensureServerWorkDir(NAME);
-   if(row.enabled!==1){await enableServer(row.id,{launchHash:row.launch_hash},ownerId);logAudit({event_type:'mcp.server.change',event_category:'system',severity:'info',user_id:ownerId,action:'mcp_server.bundled_genvr_enable',success:true,resource_type:'mcp_server',resource_id:row.id,metadata:{package:'3d-world-sdk',version:'0.3.0-preview.1'}});}
+   if(row.enabled!==1){await enableServer(row.id,{launchHash:row.launch_hash},ownerId);logAudit({event_type:'mcp.server.change',event_category:'system',severity:'info',user_id:ownerId,action:'mcp_server.bundled_genvr_enable',success:true,resource_type:'mcp_server',resource_id:row.id,metadata:{package:'3d-world-sdk',version:'0.3.0-preview.11'}});}
    await refreshServer(row.id,ownerId);
    return {status:'ready',id:row.id};
   }catch{return {status:'blocked',id:row.id};}

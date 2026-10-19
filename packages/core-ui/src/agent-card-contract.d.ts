@@ -1,7 +1,7 @@
 export const roles: readonly ['main', 'manager', 'specialist', 'evaluator'];
 export const providers: readonly ['ollama', 'claude'];
 export const MODELS_PATH: '/api/models';
-export type ModelChoice = { id: string; provider: 'ollama' | 'claude' | 'lmstudio'; label: string; size: string };
+export type ModelChoice = { id: string; provider: 'ollama' | 'claude' | 'lmstudio' | 'subscription'; label: string; size: string };
 export const memoryTypes: readonly ['fact', 'event', 'context', 'insight', 'preference', 'skill', 'relationship', 'task'];
 export const drawerKinds: readonly ['owner', 'experience', 'project', 'task', 'people'];
 export const traitNames: readonly ['doubt', 'caution', 'creativity', 'thoroughness', 'independence', 'verbosity', 'warmth', 'curiosity', 'persistence'];

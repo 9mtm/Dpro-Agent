@@ -85,17 +85,18 @@ export function allowedConversation(method, path, body) {
     && (body.folder === undefined || folderOk(body.folder)) && (body.repoUrl === undefined || repoOk(body.repoUrl));
   if (method === 'PUT' && p.kind === 'project') return record(body) && Object.keys(body).length > 0 && onlyKeys(body, ['name', 'folder', 'repoUrl'])
     && (body.name === undefined || (title(body.name) && body.name.trim().length > 0)) && (body.folder === undefined || body.folder === null || folderOk(body.folder)) && (body.repoUrl === undefined || body.repoUrl === null || repoOk(body.repoUrl));
-  if (method === 'POST' && p.kind === 'list') return record(body) && onlyKeys(body, ['title', 'agentId', 'projectId']) && (body.title === undefined || title(body.title)) && (body.agentId === undefined || agentId(body.agentId)) && (body.projectId === undefined || uuid(body.projectId));
+  if (method === 'POST' && p.kind === 'list') return record(body) && onlyKeys(body, ['title', 'agentId', 'projectId', 'model']) && (body.title === undefined || title(body.title)) && (body.agentId === undefined || agentId(body.agentId)) && (body.projectId === undefined || uuid(body.projectId)) && savedModel(body.model);
   if (method === 'POST' && p.kind === 'runs') return record(body) && onlyKeys(body, ['runId', 'message', 'model', 'agentId']) && (body.agentId === undefined || agentId(body.agentId)) && validRunId(body.runId) && text(body.message, MAX_MESSAGE) && body.message.trim().length > 0
     && (body.model === undefined || (typeof body.model === 'string' && /^[A-Za-z0-9][A-Za-z0-9_.:@\/-]{0,99}$/.test(body.model)));
   if (method === 'POST' && p.kind === 'stop') return body === undefined;
-  if (method === 'PUT' && p.kind === 'one') return record(body) && Object.keys(body).length > 0 && onlyKeys(body, ['title', 'pinned', 'projectId']) && (body.projectId === undefined || body.projectId === null || uuid(body.projectId)) && (body.title === undefined || body.title === null || title(body.title)) && (body.pinned === undefined || typeof body.pinned === 'boolean');
+  if (method === 'PUT' && p.kind === 'one') return record(body) && Object.keys(body).length > 0 && onlyKeys(body, ['title', 'pinned', 'projectId', 'model']) && (body.projectId === undefined || body.projectId === null || uuid(body.projectId)) && (body.title === undefined || body.title === null || title(body.title)) && (body.pinned === undefined || typeof body.pinned === 'boolean') && savedModel(body.model);
   return false;
 }
 
+const savedModel=x=>x===undefined||x===''||(typeof x==='string'&&/^[A-Za-z0-9][A-Za-z0-9_.:@\/-]{0,99}$/.test(x));
 function conversation(x) {
   if (!record(x) || !uuid(x.id)) throw Error('protocol');
-  return { id: x.id, title: typeof x.title === 'string' ? x.title.slice(0, MAX_TITLE) : null, agentId: agentId(x.agentId) ? x.agentId : null, projectId: uuid(x.projectId) ? x.projectId : null,
+  return { ...(x.model!==undefined&&x.model!==''&&savedModel(x.model)?{model:x.model}:{}), id: x.id, title: typeof x.title === 'string' ? x.title.slice(0, MAX_TITLE) : null, agentId: agentId(x.agentId) ? x.agentId : null, projectId: uuid(x.projectId) ? x.projectId : null,
     pinned: x.pinned === true, preview: str(x.preview, 200), createdAt: str(x.createdAt, 40), updatedAt: str(x.updatedAt, 40) };
 }
 
@@ -202,7 +203,7 @@ export function projectRunEvent(x) {
   return e && num(x.at) !== undefined ? { ...e, at: num(x.at) } : e;
 }
 /** Typed reasons a run may end with (CHAT-PRO-02 G: LM Studio not running). */
-const END_CODES = ['model_unavailable', 'lmstudio_not_running'];
+const END_CODES = ['model_unavailable', 'lmstudio_not_running', 'subscription_org_blocked'];
 function projectEvent(x) {
   if (!record(x) || !Number.isSafeInteger(x.seq) || x.seq < 1) throw Error('protocol');
   const seq = x.seq;

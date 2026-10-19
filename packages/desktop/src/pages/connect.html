@@ -1,14 +1,14 @@
 <!doctype html>
 <html lang="en">
-<head><meta charset="utf-8"><meta http-equiv="Content-Security-Policy" content="default-src 'none'; script-src 'self'; style-src 'self'; img-src 'self'"><title>Connect to an existing Dpro</title><link rel="stylesheet" href="style.css"></head>
+<head><meta charset="utf-8"><meta http-equiv="Content-Security-Policy" content="default-src 'none'; script-src 'self'; style-src 'self'; img-src 'self'"><title>Connect to an existing Dpro Agent</title><link rel="stylesheet" href="style.css"></head>
 <body><main>
-<h1>Connect to an existing Dpro</h1>
-<p>Open a Dpro that runs on another computer or server. Use its https:// address (or http:// on this computer, for example through an SSH tunnel). You sign in there as usual.</p>
+<h1>Connect to an existing Dpro Agent</h1>
+<p>Open a Dpro Agent that runs on another computer or server. Use its https:// address (or http:// on this computer, for example through an SSH tunnel). You sign in there as usual.</p>
 <form id="form" novalidate>
 <label for="url" hidden>Address</label>
 <input id="url" type="url" placeholder="https://dpro.example.com" autocomplete="url" spellcheck="false" required>
 <div class="error" id="error" role="alert"></div>
-<div class="row"><button class="primary" type="submit">Connect</button><button type="button" id="local">Use Dpro on this computer</button></div>
+<div class="row"><button class="primary" type="submit">Connect</button><button type="button" id="local">Use Dpro Agent on this computer</button></div>
 </form>
 </main><script src="connect.js"></script></body>
 </html>

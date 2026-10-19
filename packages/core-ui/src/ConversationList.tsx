@@ -49,9 +49,9 @@ export function ConversationList({ controller, onOpen, search }: { controller: C
   const row = (c: Conversation) => <Row key={c.id} c={c} active={c.id === s.activeId} running={c.id === s.activeId && !!s.runId}
     onOpen={() => { void controller.open(c.id); onOpen(); }} controller={controller}/>;
   return <div className="conversations">
-    {picker}
+    <div className="conversation-controls">{picker}
     <input className="conversation-filter" type="search" placeholder={search ? 'Search chats' : 'Filter conversations'} aria-label={search ? 'Search chats' : 'Filter conversations'} value={query}
-      maxLength={400} onChange={e => type(e.target.value)} onKeyDown={e => { if (e.key === 'Escape' && query) { e.preventDefault(); type(''); } }}/>
+      maxLength={400} onChange={e => type(e.target.value)} onKeyDown={e => { if (e.key === 'Escape' && query) { e.preventDefault(); type(''); } }}/></div>
     {searching ? <SearchResults state={found} projectName={projectName} onOpen={openHit}/> : <>
       {pinned.length > 0 && <><p className="conversation-group">Pinned</p>{pinned.map(row)}</>}
       {dateGroups(recent).map(([label, items]) => <div key={label}><p className="conversation-group">{label}</p>{items.map(row)}</div>)}

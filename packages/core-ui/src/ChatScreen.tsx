@@ -11,7 +11,7 @@ import { Markdown } from './markdown';
  * Stop ends reading (the controller decides what that means for the server).
  * All behavior stays in ChatController; this file is layout only.
  */
-export function ChatScreen({ controller, productName = 'Dpro', mode }: { controller: ChatController; productName?: string; mode: 'live' | 'mock' }) {
+export function ChatScreen({ controller, productName = 'Dpro Agent', mode }: { controller: ChatController; productName?: string; mode: 'live' | 'mock' }) {
   const s = useSyncExternalStore(controller.subscribe, controller.getSnapshot, controller.getSnapshot);
   const sending = s.phase === 'sending';
   const blocked = sending || s.phase === 'unknown' || s.phase === 'denied';

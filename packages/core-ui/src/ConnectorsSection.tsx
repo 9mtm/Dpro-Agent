@@ -11,6 +11,8 @@ export function ConnectorsSection({ client, active, focus }: { client: SessionCl
   const [c] = useState(() => new ConnectorsController(client));
   const s = useSyncExternalStore(c.subscribe, c.getSnapshot, c.getSnapshot);
   const [adding, setAdding] = useState(false);
+  const [query,setQuery]=useState(''),[transport,setTransport]=useState(''),[status,setStatus]=useState(''),[page,setPage]=useState(0);
+  const matches=s.servers.filter(x=>(!transport||x.transport===transport)&&(!status||(status==='off'?!x.enabled:status==='problem'?x.enabled&&!!x.lastError:x.enabled&&!x.lastError))&&`${x.name} ${x.description??''}`.toLowerCase().includes(query.trim().toLowerCase())).sort((a,b)=>a.name.localeCompare(b.name));
   useEffect(() => { if (active && s.phase === 'idle') void c.load(); }, [active, c, s.phase]);
   useEffect(() => { if (focus) document.getElementById('connectors')?.scrollIntoView({ block: 'start' }); }, [focus]);
   return <section id="connectors" className="connectors" aria-label="Connectors">
@@ -18,6 +20,8 @@ export function ConnectorsSection({ client, active, focus }: { client: SessionCl
       <div><h2>Connectors</h2><p className="fine-print">Outside tools your agents can use, like a calendar, a database or a company service. Add one here, then give its tools to agents on each agent's tools.</p></div>
       {!adding && <button type="button" className="primary" onClick={() => setAdding(true)}>Add a connector</button>}
     </div>
+    <div className="catalogue-filters"><label>Search<input type="search" aria-label="Search installed MCP connections" value={query} placeholder="Name or description" onChange={e=>{setQuery(e.target.value);setPage(0);}}/></label><label>Transport<select value={transport} onChange={e=>{setTransport(e.target.value);setPage(0);}}><option value="">All transports</option><option value="stdio">Local program</option><option value="http">HTTP</option><option value="sse">SSE</option></select></label><label>Status<select value={status} onChange={e=>{setStatus(e.target.value);setPage(0);}}><option value="">All statuses</option><option value="on">On</option><option value="off">Off</option><option value="problem">Problem</option></select></label><button type="button" onClick={()=>{setQuery('');setTransport('');setStatus('');setPage(0);}}>Clear filters</button></div>
+    <p className="fine-print" role="status">{matches.length} of {s.servers.length} connections</p>
     {s.notice && <p className="board-notice" role="status">{s.notice}</p>}
     {adding && <AddConnector c={c} onDone={() => setAdding(false)}/>}
     {s.approval && <div className="connector-approval" role="alertdialog" aria-label="Approve the program">
@@ -30,7 +34,9 @@ export function ConnectorsSection({ client, active, focus }: { client: SessionCl
     {s.phase === 'loading' && !s.servers.length ? <p className="fine-print" role="status">Loading connectors…</p>
       : s.phase === 'error' && !s.servers.length ? <p className="fine-print">Connectors could not be loaded. <button type="button" className="link-button" onClick={() => void c.load()}>Try again</button></p>
       : !s.servers.length && !adding ? <p className="fine-print">No connectors yet.</p>
-      : <ul className="connector-list">{s.servers.map(x => <ConnectorRow key={x.id} x={x} c={c} busy={s.busy === x.id}/>)}</ul>}
+      : <ul className="connector-list catalogue-grid">{matches.slice(page*24,page*24+24).map(x => <ConnectorRow key={x.id} x={x} c={c} busy={s.busy === x.id}/>)}</ul>}
+    {s.phase==='ready'&&s.servers.length>0&&!matches.length&&<p>No connections match these filters.</p>}
+    {matches.length>24&&<div className="actions"><button disabled={!page} onClick={()=>setPage(p=>p-1)}>Previous</button><span>{page*24+1}–{Math.min(page*24+24,matches.length)} of {matches.length}</span><button disabled={page*24+24>=matches.length} onClick={()=>setPage(p=>p+1)}>Next</button></div>}
   </section>;
 }
 /** An example address on this computer (scheme joined here: no full address in the source). */

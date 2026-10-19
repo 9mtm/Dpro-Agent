@@ -1543,3 +1543,36 @@ button.status-item:hover { background:var(--row-hover); color:var(--text); }
 .folder-picker-path { overflow-wrap:anywhere; }
 .folder-picker-list { list-style:none; padding:0; max-height:40vh; overflow:auto; }
 .folder-picker-list button { text-align:start; width:100%; padding:6px 8px; }
+
+.new-chat-dialog {max-width:560px}.new-chat-choice {display:flex;flex-direction:column;align-items:flex-start;text-align:start;gap:5px;width:100%;padding:14px;margin-block:8px}.new-chat-choice span {font-size:12px;color:var(--muted)}.new-chat-folder {margin-block:12px}.composer-context {font-size:11px;padding:4px 8px;margin-bottom:5px;max-width:100%;text-overflow:ellipsis;overflow:hidden;white-space:nowrap}
+
+.coding-sessions {padding:4px 16px;max-height:35vh;overflow:auto;font-size:12px}.coding-sessions ul {list-style:none;padding:0}.coding-session-preview p {white-space:pre-wrap;overflow-wrap:anywhere}.coding-session-preview {border-top:1px solid var(--border);padding-block:8px}
+
+/* Shared local catalogues follow the compact workspace token contract. */
+.catalogue-filters {display:flex;flex-wrap:wrap;gap:12px;align-items:end;margin-block:16px}
+.catalogue-filters label {display:grid;gap:4px;flex:1 1 140px;min-inline-size:0;font-size:12px}
+.catalogue-filters label:first-child {flex-grow:2}.catalogue-filters select {max-inline-size:100%}
+.catalogue-grid {display:grid;grid-template-columns:repeat(auto-fill,minmax(min(100%,260px),1fr));gap:12px;list-style:none;padding:0;margin-block:16px}
+.skill-rows.catalogue-grid>li,.catalogue-grid>li {display:flex;flex-direction:column;align-items:stretch;gap:12px;padding:14px;border:1px solid var(--border);border-radius:3px;background:var(--surface);min-inline-size:0}
+.catalogue-grid h4 {font-size:14px;margin:0}.catalogue-grid p {margin-block:6px}.catalogue-grid small {overflow-wrap:anywhere}
+.catalogue-grid>li>button {align-self:start;margin-block-start:auto}.catalogue-grid details {margin-block-start:12px}
+.catalogue-grid .connector-main {display:flex;flex-wrap:wrap;align-items:start;gap:8px}.catalogue-grid .connector-id {flex:1 1 160px;min-inline-size:0}.catalogue-grid .connector-actions {flex:1 0 100%;flex-wrap:wrap;justify-content:start}.catalogue-grid .connector-id .fine-print {overflow-wrap:anywhere;white-space:normal}
+.catalogue-grid .connector-tools {padding-inline-start:0}.catalogue-grid .connector-tools li {flex-wrap:wrap}
+@media(max-width:640px){.catalogue-filters label{flex-basis:100%}.catalogue-grid{grid-template-columns:1fr}}
+
+.coding-session-row {display:grid;gap:2px;padding-block:6px}.coding-session-row>button {justify-content:flex-start;text-align:start}.coding-sessions .catalogue-filters {margin-block:8px}
+/* Reserve composer space in layout as history filters and previews grow. */
+.app-shell .chat-dock {position:relative;inset:auto;flex:0 0 auto;max-block-size:60%;overflow:auto;background:var(--canvas)}
+.app-shell .chat-column {padding-block-end:24px}
+.app-shell .chat-jump {position:relative;inset:auto;transform:none;align-self:center;margin-block:-18px 4px;flex-shrink:0}
+.coding-sessions {inline-size:min(48rem,100%);min-inline-size:0}
+.coding-session-row>button {white-space:normal;overflow-wrap:anywhere;max-inline-size:100%}
+
+/* Keep long saved titles inside the existing navigation rail. */
+.app-shell .session-list {grid-template-columns:minmax(0,1fr);overflow-x:hidden}
+.app-shell .conversations,.app-shell .session-row {min-inline-size:0;max-inline-size:100%}
+.app-shell .session-title {min-inline-size:0;flex:1 1 auto}
+.app-shell .chat-panel .coding-sessions {padding:0;max-block-size:50vh}
+.app-shell .chat-panel .coding-sessions .catalogue-filters label {flex-basis:100%}
+
+.app-shell .conversation-controls {position:sticky;inset-block-start:0;z-index:4;background:var(--sidebar);padding-block-end:4px;min-inline-size:0}

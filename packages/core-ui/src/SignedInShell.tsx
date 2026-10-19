@@ -1,3 +1,4 @@
+import {NewChatDialog} from './NewChatDialog';
 import {ApprovalPage,usePendingApprovalCount} from './ApprovalPage';
 import { useEffect, useState, useSyncExternalStore } from 'react';
 import type { ReactNode } from 'react';
@@ -64,6 +65,7 @@ export function SignedInShell({ client, notice }: { client: SessionClient; notic
   const mode = state.mode === 'mock' ? 'mock' : 'live';
   const [rail, setRail] = useState(true);
   const [palette, setPalette] = useState(false);
+  const [choosingChat,setChoosingChat]=useState(false);
   const [settingsTab,setSettingsTab]=useState<SettingsTab>('general');
   const [settingsVisit,setSettingsVisit]=useState(0);
   const [terminalRequest,setTerminalRequest]=useState(0);
@@ -86,7 +88,7 @@ export function SignedInShell({ client, notice }: { client: SessionClient; notic
     const onKey = (e: KeyboardEvent) => { if ((e.metaKey || e.ctrlKey) && e.key.toLowerCase() === 'k') { e.preventDefault(); setPalette(v => !v); } };
     window.addEventListener('keydown', onKey); return () => window.removeEventListener('keydown', onKey);
   }, []);
-  const newChat = () => { chat?.newChat(); setPage('chat'); };
+  const newChat = () => {setChoosingChat(true);setPage('chat');};
   const commands: Command[] = [
     ...pages.filter(p=>p.key!=='genvr'&&(p.key!=='approvals'||user.role==='owner')).map(p => ({ id: `go-${p.key}`, group: 'Go to', label: p.key==='approvals'?approvalLabel:p.label, icon:p.icon==='board'?<UiIcon name="board" size={14}/>:<Icon name={p.icon}/>, run: () => setPage(p.key) })),
     ...tools.map(t=>({...t,id:'tool-'+t.id,group:'Tools',keywords:t.id==='specialties'?'agent templates':t.id==='skills'?'skill abilities':t.id==='terminal'?'console shell':t.id==='genvr'?'spaces worlds':'connectors'})),
@@ -100,6 +102,7 @@ export function SignedInShell({ client, notice }: { client: SessionClient; notic
   const openCards = boardState?.boards.reduce((a, b) => a + b.cards, 0);
 
   return <div className="shell app-shell" data-theme={theme} data-rail={rail ? 'open' : 'closed'} lang="en" dir="ltr">
+    {choosingChat&&chat&&<NewChatDialog controller={chat} onClose={()=>setChoosingChat(false)}/>}
     <header className="titlebar">
       <div className="titlebar-tools">
         <button type="button" className="tool" aria-label={rail ? 'Hide the sidebar' : 'Show the sidebar'} title={rail ? 'Hide the sidebar' : 'Show the sidebar'} aria-pressed={rail} onClick={() => setRail(v => !v)}><UiIcon name="sidebar" size={14}/></button>
@@ -112,7 +115,7 @@ export function SignedInShell({ client, notice }: { client: SessionClient; notic
       </div>
     </header>
     <aside className="sidebar">
-      <div className="sidebar-brand"><span className="workspace-mark" aria-hidden="true"/>Dpro</div>
+      <div className="sidebar-brand"><span className="workspace-mark" aria-hidden="true"/>Dpro Agent</div>
       <button className="nav-item new-chat" onClick={newChat}>
         <UiIcon name="compose" size={15}/>New chat
       </button>
@@ -136,7 +139,7 @@ export function SignedInShell({ client, notice }: { client: SessionClient; notic
     <main id="content" className="page-area">
       {notice && <p className="page-notice" role="status">{notice}</p>}
       <section className="page page-chat" aria-label="Chat" hidden={page !== 'chat'}>
-        {chat ? <ChatView terminalRequest={terminalRequest} controller={chat} mode={mode} client={client} onAddConnector={() => { setConnectorsFocus(n => n + 1); setPage('agents'); }}
+        {chat ? <ChatView onChooseContext={newChat} terminalRequest={terminalRequest} controller={chat} mode={mode} client={client} onAddConnector={() => { setConnectorsFocus(n => n + 1); setPage('agents'); }}
           onOpenCard={(boardId, cardId) => { setPage('board'); void board?.reveal(boardId, cardId); }}
           onOpenMemory={(drawerId, memoryId) => { setMemoryFocus(f => ({ drawerId, memoryId, n: (f?.n ?? 0) + 1 })); setPage('memory'); }}/> : null}
       </section>
@@ -160,7 +163,7 @@ export function SignedInShell({ client, notice }: { client: SessionClient; notic
       <span className="statusbar-group">
         <button type="button" className="status-item" onClick={() => setPalette(true)}>⌘K</button>
         {client.canUse('mock') && <button className="status-item statusbar-button" onClick={() => client.selectMode('fixture')} title="Clears this local session; the server sign-in stays until you sign out">Leave to fixture</button>}
-        <span className="status-item">Dpro</span>
+        <span className="status-item">Dpro Agent</span>
       </span>
     </footer>
     <CommandPalette open={palette} commands={commands} onClose={() => setPalette(false)}

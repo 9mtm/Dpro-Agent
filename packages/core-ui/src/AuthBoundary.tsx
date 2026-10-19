@@ -65,7 +65,7 @@ function SessionWorkspace({ client, setupCode, initialPage }: { client: SessionC
   // Signed in: the full workspace (sidebar, chat, agents, memory, account).
   if (state.phase === 'authenticated' && state.user) return <SignedInShell client={client} notice={state.notice ? <>{notices[state.notice]}{retryAfterNotice(state.retryAfterSeconds)}</> : null}/>;
   return <PublicShell setup={state.setup} initialPage={initialPage}><section className="auth-workspace" aria-label="Account sign-in" lang="en" dir="ltr">
-    <h1>Dpro · {state.mode === 'mock' ? 'Offline login exercise' : 'Account'}</h1>
+    <h1>Dpro Agent · {state.mode === 'mock' ? 'Offline login exercise' : 'Account'}</h1>
     {state.notice && <p role="status">{notices[state.notice]}{retryAfterNotice(state.retryAfterSeconds)}</p>}
     {state.phase === 'authenticated' && state.user ? null : state.phase === 'signed-out' && state.setup === 'required' ? <OwnerSetup client={client} setupCode={setupCode} initialPage={initialPage}/> : state.phase === 'signing-out' ? <><p role="status">Signing out on all devices…</p><button onClick={() => client.cancel()}>Clear locally; server outcome remains unknown</button></> : state.phase === 'signed-out' && state.setup !== 'login' ? <section aria-label="Setup discovery">
       <p role="status">{state.setup === 'checking' ? 'Checking installation setup…' : state.setup === 'unavailable' ? 'Setup status unavailable. Sign-in is withheld; no automatic retry was sent.'
@@ -129,7 +129,7 @@ function OwnerSetup({ client, setupCode, initialPage }: { client: SessionClient;
     }
   }}>
     <h2>Create the owner account</h2>
-    <p>Set up the owner of this new workspace. If you used Dpro before, open your existing workspace from the desktop setup instead. The owner controls agents, keys and settings.</p>
+    <p>Set up the owner of this new workspace. If you used Dpro Agent before, open your existing workspace from the desktop setup instead. The owner controls agents, keys and settings.</p>
     {notice && <p role="alert">{ownerSetupNotices[notice]}</p>}
     <label htmlFor="owner-name">Your name</label><input id="owner-name" required maxLength={100} autoComplete="name" value={name} onChange={e => setName(e.target.value)} disabled={busy}/>
     <label htmlFor="owner-email">Email</label><input id="owner-email" type="email" name="username" required maxLength={320} autoComplete="username" value={email} onChange={e => setEmail(e.target.value)} disabled={busy}/>

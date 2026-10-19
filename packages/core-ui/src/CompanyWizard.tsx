@@ -38,7 +38,7 @@ export function CompanyWizard({ controller, onClose }: { controller: CompanyCont
     {(s.notice || busy) && <p role="status">{s.notice ?? (s.phase === 'loading' ? 'Reading the departments…' : s.phase === 'planning' ? (bulk ? 'Splitting your team…' : 'Proposing a team…') : 'Hiring your team…')}</p>}
 
     {s.step === 'size' && <div className="hire-form">
-      <p>How many agents do you want in your company? Pick a number or type your own. Dpro splits them over the departments you choose, and you review the split before any agent is hired.</p>
+      <p>How many agents do you want in your company? Pick a number or type your own. Dpro Agent splits them over the departments you choose, and you review the split before any agent is hired.</p>
       {!s.catalogue
         ? <div className="hire-actions"><button type="button" className="primary" disabled={busy || !s.owner} onClick={() => void controller.loadCatalogue()}>Start</button></div>
         : <>
@@ -62,7 +62,7 @@ export function CompanyWizard({ controller, onClose }: { controller: CompanyCont
     </div>}
 
     {s.step === 'departments' && s.catalogue && <div className="hire-form">
-      <p>{s.total !== undefined ? `Choose the departments for your ${s.total} ${s.total === 1 ? 'agent' : 'agents'}. Dpro splits them by the size each department usually needs; you can change every count.` : 'Choose the departments you want. Each one gets its own small team.'}</p>
+      <p>{s.total !== undefined ? `Choose the departments for your ${s.total} ${s.total === 1 ? 'agent' : 'agents'}. Dpro Agent splits them by the size each department usually needs; you can change every count.` : 'Choose the departments you want. Each one gets its own small team.'}</p>
       <ul className="company-departments" aria-label="Departments">{s.catalogue.departments.map(d => {
         const on = s.departments.includes(d.id);
         return <li key={d.id}><button type="button" className="company-dep" aria-pressed={on} disabled={busy} onClick={() => controller.toggleDepartment(d.id)}>

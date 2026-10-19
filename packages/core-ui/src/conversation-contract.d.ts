@@ -30,7 +30,7 @@ export function conversationRoute(path: string): boolean;
 export function allowedConversation(method: string, path: string, body?: unknown): boolean;
 export function conversationResponse(path: string, status: number, body: unknown): unknown;
 
-export type WireConversation = { id: string; title: string | null; agentId: string | null; projectId: string | null; pinned: boolean; preview: string; createdAt: string; updatedAt: string };
+export type WireConversation = { model?: string; id: string; title: string | null; agentId: string | null; projectId: string | null; pinned: boolean; preview: string; createdAt: string; updatedAt: string };
 export type WireToolCall = { id: string; name: string; input: string; output?: string; isError?: boolean; ms?: number };
 export type WirePart = { kind: 'text'; text: string } | { kind: 'reasoning'; text: string; ms?: number } | { kind: 'tools'; step: number; calls: WireToolCall[] };
 export type WireMessage = { id: string; role: 'user' | 'assistant' | 'system'; content: string; parts: WirePart[] | null; status: 'complete' | 'stopped' | 'error'; runId: string | null; durationMs: number | null; createdAt: string; agentId?: string };
@@ -38,7 +38,7 @@ export type RunEvent = ({ seq: number; at?: number }) & (
   | { type: 'text' | 'reasoning'; content: string }
   | { type: 'tool_start'; step: number; tools: { id: string; name: string; input: string }[] }
   | { type: 'tool_result'; step: number; results: { id: string; name: string; output: string; isError: boolean; ms?: number }[] }
-  | { type: 'end'; status: 'complete' | 'stopped' | 'error'; ms: number; code?: 'model_unavailable' | 'lmstudio_not_running' });
+  | { type: 'end'; status: 'complete' | 'stopped' | 'error'; ms: number; code?: 'model_unavailable' | 'lmstudio_not_running' | 'subscription_org_blocked' });
 export function projectRunEvent(x: unknown): RunEvent | undefined;
 export class RunEventParser {
   constructor(after?: number);

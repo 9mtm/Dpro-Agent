@@ -7,12 +7,12 @@ export type Palette = {
   brightBlack: string; brightRed: string; brightGreen: string; brightYellow: string; brightBlue: string; brightMagenta: string; brightCyan: string; brightWhite: string;
 };
 
-/** Dpro's own terminal themes. */
+/** Dpro Agent's own terminal themes. */
 export const PALETTES: Record<TerminalTheme, Palette> = {
-  'dpro-night': { label: 'Dpro Night', dark: true, background: '#121417', foreground: '#dfe3ea', cursor: '#5b8cff', cursorAccent: '#121417', selectionBackground: '#2b3a5c',
+  'dpro-night': { label: 'Dpro Agent Night', dark: true, background: '#121417', foreground: '#dfe3ea', cursor: '#5b8cff', cursorAccent: '#121417', selectionBackground: '#2b3a5c',
     black: '#1c1f24', red: '#f16c75', green: '#7ccf8a', yellow: '#e8c46b', blue: '#5b8cff', magenta: '#c08cf5', cyan: '#5fc8d6', white: '#c9ced8',
     brightBlack: '#5c6370', brightRed: '#ff8a92', brightGreen: '#97e3a4', brightYellow: '#f5d68a', brightBlue: '#82a8ff', brightMagenta: '#d4a9fb', brightCyan: '#86dbe6', brightWhite: '#f4f6fa' },
-  'dpro-day': { label: 'Dpro Day', dark: false, background: '#fbfbfa', foreground: '#24292f', cursor: '#2f5fe0', cursorAccent: '#fbfbfa', selectionBackground: '#cfdcfb',
+  'dpro-day': { label: 'Dpro Agent Day', dark: false, background: '#fbfbfa', foreground: '#24292f', cursor: '#2f5fe0', cursorAccent: '#fbfbfa', selectionBackground: '#cfdcfb',
     black: '#24292f', red: '#c8303b', green: '#25803a', yellow: '#946200', blue: '#2f5fe0', magenta: '#8a3fcf', cyan: '#127a8a', white: '#6e7781',
     brightBlack: '#57606a', brightRed: '#e0434f', brightGreen: '#2f9a48', brightYellow: '#b07800', brightBlue: '#4a77f0', brightMagenta: '#a258e0', brightCyan: '#1993a6', brightWhite: '#8c959f' },
   graphite: { label: 'Graphite', dark: true, background: '#1e1e1e', foreground: '#d4d4d4', cursor: '#d4d4d4', cursorAccent: '#1e1e1e', selectionBackground: '#3a3d41',

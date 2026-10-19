@@ -72,7 +72,7 @@ export function LocalImportView({ controller: c, active, onReview, client }: { c
           <input type="search" placeholder="Find by words or folder" aria-label="Find conversations" value={query} onChange={e => setQuery(e.target.value)}/>
           <label className="term-check"><input type="checkbox" checked={onlyNew} onChange={e => setOnlyNew(e.target.checked)}/>Not imported yet</label>
           <button type="button" disabled={!shown.length || running} onClick={() => c.selectAll(shown.map(x => x.id))}>Select all matching ({shown.length})</button>
-          <p className="fine-print">{s.selected.length} selected. The import continues when you leave this page. If you close Dpro, it resumes when Dpro starts again unless you pause it.</p>
+          <p className="fine-print">{s.selected.length} selected. The import continues when you leave this page. If you close Dpro Agent, it resumes when Dpro Agent starts again unless you pause it.</p>
           <button type="button" className="primary" disabled={!s.selected.length || running} onClick={() => void c.start()}>{running ? 'Importing…' : `Import ${s.selected.length || ''} ${s.selected.length === 1 ? 'conversation' : 'conversations'}`.replace('  ', ' ')}</button>
           {s.selected.length > 0 && !running && <button type="button" className="link-button" onClick={() => c.clear()}>Clear</button>}
         </div>
