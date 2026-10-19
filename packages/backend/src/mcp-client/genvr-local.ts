@@ -8,7 +8,7 @@ import { getServerRowByName, readSecrets, parseList } from './store.js';
 import { isExecToolsEnabled } from '../tools/exec-policy.js';
 import { mcpServersBaseDir, ensureServerWorkDir } from './config.js';
 const NAME='genvr-local';
-const PACKAGE_HASH='f9b870f066f6801cc0806ac5348eaa4ef27b27c22fc8d3ad7eb440a83e6de81b';
+const PACKAGE_HASH='8d0dfefb011d03d12e7a4c1552d4fb060a99bf06a8ed149c2fdaad75c4fa0b15';
 let queue:Promise<unknown>=Promise.resolve();
 /** Register the pinned bundled authoring server; keep all normal execution and grant gates. */
 export function ensureGenvrMcp(ownerId:string) {
