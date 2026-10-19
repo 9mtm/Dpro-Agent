@@ -1599,3 +1599,22 @@ button.status-item:hover { background:var(--row-hover); color:var(--text); }
 .app-shell :is(.page-column,.page-ui) .connections label.check { display:flex; gap:8px; align-items:flex-start; justify-content:flex-start; inline-size:auto; max-inline-size:none; font-size:12.5px; color:var(--text-2); }
 .app-shell :is(.page-column,.page-ui) .connections label.check input { inline-size:auto; flex:none; margin-block-start:3px; }
 .app-shell :is(.page-column,.page-ui) .connections .connection-form .field { display:grid; gap:3px; }
+
+/* Chat avatar (GenVR) */
+.chat-avatar { position:relative; flex-shrink:0; margin:8px 16px 0; border-radius:14px; overflow:hidden; border:1px solid var(--stroke-3, var(--border)); background:#101827; }
+.chat-avatar-frame { position:absolute; inset:0; width:100%; height:100%; border:0; }
+.chat-avatar.is-full { position:fixed; inset:0; z-index:200; margin:0; border:0; border-radius:0; height:auto; }
+.chat-avatar-bar { position:absolute; left:0; right:0; bottom:0; display:flex; flex-wrap:wrap; align-items:center; gap:8px; padding:6px 10px; background:rgba(10,12,18,.72); color:#E8EAEE; font-size:12px; }
+.chat-avatar-bar .tool { color:#E8EAEE; }
+.chat-avatar-state { display:inline-flex; align-items:center; gap:6px; font-weight:600; }
+.chat-avatar-state .dot { width:8px; height:8px; border-radius:50%; background:#6F7787; }
+.chat-avatar-state.is-ready .dot { background:#3FCB7E; } .chat-avatar-state.is-thinking .dot, .chat-avatar-state.is-preparing .dot { background:#E3A93B; } .chat-avatar-state.is-speaking .dot { background:#3D7BFA; }
+.chat-avatar-voice { flex:1; min-width:0; color:#A3ABB9; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
+.chat-avatar-menu { position:absolute; right:10px; bottom:42px; width:260px; padding:12px; border-radius:12px; background:var(--surface); color:var(--text); border:1px solid var(--stroke-3, var(--border)); display:grid; gap:10px; box-shadow:0 8px 24px rgba(0,0,0,.25); }
+.chat-avatar-menu .field { display:grid; gap:4px; font-size:12px; }
+.chat-avatar-menu label.check { display:flex; gap:8px; align-items:center; font-size:12px; }
+.chat-avatar-menu label.check input { inline-size:auto; }
+.chat-avatar-sizes { display:inline-flex; gap:4px; }
+.chat-avatar-sizes button { min-height:32px; padding:0 10px; border-radius:8px; border:1px solid var(--stroke-3, var(--border)); background:transparent; color:inherit; font-size:12px; }
+.chat-avatar-sizes button[aria-pressed="true"] { background:var(--accent); color:var(--on-accent); border-color:var(--accent); }
+.chat-avatar-notice { position:absolute; left:10px; top:10px; right:10px; margin:0; padding:6px 10px; border-radius:8px; background:rgba(120,30,40,.9); color:#fff; font-size:12px; }

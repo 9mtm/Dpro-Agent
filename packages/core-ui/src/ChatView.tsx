@@ -1,4 +1,5 @@
 import { RecoveryApprovals } from './RecoveryApprovals';
+import { ChatAvatar } from './ChatAvatar';
 import {CodingSessions} from './CodingSessions';
 import { useEffect, useLayoutEffect, useRef, useState, useSyncExternalStore } from 'react';
 import type { KeyboardEvent, ReactNode } from 'react';
@@ -180,6 +181,9 @@ export function ChatView({ controller, mode, productName = 'Dpro Agent', client,
     const ids = (seed?.agents ?? []).map(n => s.agents.find(a => a.name.toLowerCase() === n.toLowerCase() || a.id === n)?.id).filter((x): x is string => !!x);
     setCardForm({ title: seed?.title ?? draft.title, description: seed ? [seed.description, draft.description].filter(Boolean).join('\n\n') : draft.description, agents: ids, priority: seed?.priority ?? 'normal', key: Date.now() });
   };
+  // The agent's face beside the conversation (GenVR avatar frame); remembered on this device.
+  const [avatarOn, setAvatarOn] = useState(() => avatarShown.on);
+  const toggleAvatar = () => setAvatarOn(on => (avatarShown.on = !on));
   const folderProject = project?.folder ? project.id : null;
   useEffect(() => { panes?.setProject(folderProject); }, [panes, folderProject]);
   const paneButtons: { name: PaneName; icon: UiIconName; label: string }[] = [
@@ -194,10 +198,12 @@ export function ChatView({ controller, mode, productName = 'Dpro Agent', client,
       {client && s.activeId && s.threadPhase !== 'loading' && <ExportMenu key={s.activeId} client={client} conversationId={s.activeId} disabled={running}/>}
       {owner && cardsCtl && s.activeId && <button type="button" className="tool chat-to-board" onClick={() => cardForm ? setCardForm(null) : openCardForm()} aria-pressed={!!cardForm} title="Put this task on a board, with the agents it needs">
         <UiIcon name="board" size={14}/><span>Add to board</span></button>}
+      {mode === 'live' && <button type="button" className="tool chat-avatar-toggle" aria-pressed={avatarOn} onClick={toggleAvatar} title={avatarOn ? 'Hide the avatar' : 'Show the agent as an avatar that speaks its replies'}><UiIcon name="avatar" size={14}/><span>Avatar</span></button>}
       <span className="pane-bar" role="toolbar" aria-label="Side panes">{paneButtons.map(b =>
         <button key={b.name} type="button" className="tool" aria-pressed={pane === b.name} aria-label={b.label} title={pane === b.name ? `Hide ${b.label.toLowerCase()}` : b.label}
           onClick={() => setPane(p => p === b.name ? null : b.name)}><UiIcon name={b.icon} size={14}/></button>)}</span>
     </div>
+    {mode === 'live' && avatarOn && <ChatAvatar turns={s.turns} agentId={convAgentId ?? s.agentId ?? ''} agentName={nameOf(convAgentId ?? s.agentId)} onClose={toggleAvatar}/>}
     <div className="chat-thread" ref={thread} onScroll={onScroll} aria-label="Conversation">
       {s.threadPhase === 'loading' && <p className="chat-loading" role="status"><span className="pulse" aria-hidden="true"/>Opening the conversation</p>}
       {empty ? <div className="chat-empty">
@@ -818,3 +824,5 @@ function Copy({ text, label }: { text: string; label: string }): ReactNode {
     <UiIcon name={state === 'done' ? 'check' : 'copy'} size={13}/>
   </button>;
 }
+/** Whether the chat avatar is shown; kept in memory for this session (no browser storage). */
+const avatarShown = { on: false };
