@@ -65,6 +65,20 @@ function createStudioHost({ env = process.env, packageRoot } = {}) {
   const motions = motionCatalog(libraryRoot);
   const verified = new Set();
   let bridge = null, voice = null, ready = null, origin = null;
+  // Private library access: a short-lived ticket per owner session, issued only after the
+  // application server has checked the caller's Dpro session (role owner) with the backend.
+  const tickets = new Map();
+  const TICKET_MS = 12 * 60 * 60 * 1000;
+  function issueTicket(userId) {
+    for (const [k, v] of tickets) if (v.expires <= Date.now()) tickets.delete(k);
+    if (tickets.size >= 64) tickets.delete(tickets.keys().next().value);
+    const ticket = crypto.randomBytes(32).toString('hex'), expires = Date.now() + TICKET_MS;
+    tickets.set(ticket, { userId, expires }); return { ticket, expiresAt: new Date(expires).toISOString() };
+  }
+  function ticketOk(req) {
+    const t = String(req.headers['x-studio-library'] ?? ''); const row = /^[a-f0-9]{64}$/.test(t) ? tickets.get(t) : undefined;
+    if (!row || row.expires <= Date.now()) { if (row) tickets.delete(t); return false; } return true;
+  }
 
   async function start() {
     const { createLiveStudioBridge } = await import(pathToFileURL(path.join(vendor, 'live-studio-bridge.mjs')).href);
@@ -156,6 +170,7 @@ function createStudioHost({ env = process.env, packageRoot } = {}) {
     await ensure();
     if (isBridge) return bridge.handle(req, res);
     if (!allowedRequest(req)) { json(res, 401, { error: 'Studio authentication required.' }); return true; }
+    if (!ticketOk(req)) { json(res, 403, { error: 'The private library is for the workspace owner.' }); return true; }
     if (!libraryRoot && !pathname.match(/^\/studio-library\/(list|get|put|remove|assignment|assign)$/)) { json(res, 404, { error: 'No private library is configured.' }); return true; }
     try { await library(req, res, pathname); } catch (e) { if (!res.headersSent) json(res, e?.status ?? 400, { error: e instanceof Error ? e.message.slice(0, 300) : 'Library request failed.' }); }
     return true;
@@ -164,7 +179,7 @@ function createStudioHost({ env = process.env, packageRoot } = {}) {
   /** Token for the Studio frame shell (served only on loopback by the application server). */
   async function token() { if (!available()) return null; await ensure(); return bridge.token; }
   function status() { return { library: !!libraryRoot, motions: motions.entries.length, motionProblems: motions.problems, connectionFile: origin ? connectionFile : null }; }
-  async function close() { if (!ready) return; await ready.catch(() => {}); voice?.close?.(); bridge?.close?.(); }
-  return { handle, listening, token, status, close };
+  async function close() { tickets.clear(); if (!ready) return; await ready.catch(() => {}); voice?.close?.(); bridge?.close?.(); }
+  return { handle, listening, token, status, close, issueTicket };
 }
 module.exports = { createStudioHost, motionCatalog };

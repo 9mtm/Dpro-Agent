@@ -2,7 +2,7 @@ import { useEffect, useRef, useState } from 'react';
 import type { SpaceAgent } from './GenVRTeam';
 import type { Publication } from './connections-contract.js';
 import type { SessionClient } from './session';
-import { GENVR_PATH, GENVR_AGENTS, genvrId, validStudioProject } from './genvr-contract.js';
+import { GENVR_PATH, GENVR_AGENTS, STUDIO_TICKET_PATH, genvrId, validStudioProject } from './genvr-contract.js';
 type Project={id:string;title:string;agentCount?:number};
 export function GenVRPage({client,active}:{client:SessionClient;active:boolean}){
  const frame=useRef<HTMLIFrameElement>(null),revisions=useRef(new Map<string,number>()),opening=useRef<string | undefined>(undefined);
@@ -29,7 +29,7 @@ export function GenVRPage({client,active}:{client:SessionClient;active:boolean})
   const send=(value:Record<string,unknown>)=>frame.current?.contentWindow?.postMessage({type:'dpro-genvr',channel,...value},window.location.origin);
   const receive=async(event:MessageEvent)=>{
    if(disposed||event.source!==frame.current?.contentWindow||event.origin!==window.location.origin||event.data?.type!=='dpro-genvr'||event.data.channel!==channel)return;
-   const data=event.data;if(data.operation==='ready'){send({operation:'start',projectId:opening.current,storageNamespace:client.getSnapshot().user?.id,privateLibrary:client.getSnapshot().user?.role==='owner'});return;}if(data.operation==='mounted'){setPhase('ready');return;}
+   const data=event.data;if(data.operation==='ready'){let privateLibrary:string|undefined;if(client.getSnapshot().user?.role==='owner'){try{const t=await client.request({method:'POST',path:STUDIO_TICKET_PATH,body:{}} as never);if(t.status===200)privateLibrary=(t.body as {ticket:string}).ticket;}catch{/* library stays off */}}if(disposed)return;send({operation:'start',projectId:opening.current,storageNamespace:client.getSnapshot().user?.id,privateLibrary});return;}if(data.operation==='mounted'){setPhase('ready');return;}
    if(data.operation==='unavailable'){setPhase('unavailable');return;}
    if(data.operation==='open-failed'){setNotice('Choose the saved space from the Studio project menu to open it.');return;}
    if(data.operation==='closed'){if(data.ok){setChannel('');setPhase('idle');}else setNotice('Studio is busy or saving failed. Keep it open and save or export your edits.');return;}

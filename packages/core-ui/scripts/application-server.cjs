@@ -5,7 +5,7 @@ const { allowedMcpImport, mcpImportPath, mcpImportResponse } = require('../src/m
 const { allowedSkillLibrary, skillLibraryPath, skillLibraryResponse } = require('../src/skill-library-contract.js');
 const { createGenVRAssets } = require('./genvr-assets.cjs');
 const { createStudioHost } = require('./genvr-studio-host.cjs');
-const { allowedGenVR, genvrRoute, genvrResponse, GENVR_BYTES } = require('../src/genvr-contract.js');
+const { allowedGenVR, genvrRoute, genvrResponse, GENVR_BYTES, STUDIO_TICKET_PATH } = require('../src/genvr-contract.js');
 const { allowedChannel, channelRoute, channelResponse } = require('../src/agent-connect-contract.js');
 const { allowedPersonality, personalityRoute, personalityResponse } = require('../src/personality-contract.js');
 const { allowedHire, hireRoute, hireResponse } = require('../src/hire-contract.js');
@@ -264,6 +264,20 @@ function createApplicationServer({ packageRoot = root, channel, stage1ReadOnly =
       const payload = body === undefined ? undefined : Buffer.from(JSON.stringify(body));
       const port = typeof upstreamPort === 'function' ? upstreamPort() : upstreamPort;
       if (!validPort(port)) return send(503);
+      if (raw === STUDIO_TICKET_PATH) {
+        // Answered here, not by the backend: the backend confirms the caller is the owner first.
+        const me = await new Promise(resolve => {
+          const check = http.request({ hostname: HOST, port, path: '/api/auth/me', method: 'GET', agent: false, headers: { ...(launchToken ? { [LAUNCH_HEADER]: launchToken } : {}), Host: `${HOST}:${port}`, Accept: 'application/json', Authorization: auth, ...(req.headers.origin ? { Origin: origin } : {}) } }, response => {
+            const parts = []; let n = 0;
+            response.on('data', c => { n += c.length; if (n <= 65536) parts.push(c); });
+            response.on('end', () => { try { resolve(response.statusCode === 200 && n <= 65536 ? JSON.parse(Buffer.concat(parts).toString('utf8')) : null); } catch { resolve(null); } });
+          });
+          check.on('error', () => resolve(null)); check.setTimeout(5000, () => { check.destroy(); resolve(null); }); check.end();
+        });
+        const user = me && typeof me === 'object' ? me.user : null;
+        if (!user || user.role !== 'owner' || typeof user.id !== 'string') return send(403, { code: 'forbidden' });
+        return send(200, studio.issueTicket(user.id));
+      }
       const headers = { ...(launchToken ? { [LAUNCH_HEADER]: launchToken } : {}), Host: `${HOST}:${port}`, Accept: chat || runEvents || termStream ? 'text/event-stream' : 'application/json', ...(chat ? { 'Idempotency-Key': req.headers['idempotency-key'] } : {}), ...(auth ? { Authorization: auth } : {}), ...(req.headers.origin ? { Origin: origin } : {}), ...(payload ? { 'Content-Type': 'application/json', 'Content-Length': payload.length } : {}) };
       // Request-body intake keeps its ordinary bound. Chat header wait and body
       // share one absolute stream deadline, including upstream model startup.

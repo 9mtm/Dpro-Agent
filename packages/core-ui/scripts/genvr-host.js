@@ -11,7 +11,7 @@ window.addEventListener('message',async event=>{
    if(typeof data.storageNamespace!=='string'||!data.storageNamespace)throw Error();
    await isolateBrowserCache(data.storageNamespace);
    const sdk=await import('/genvr/dist/studio.js');mountStudio=sdk.mountStudio;
-   const host=await studioHost(data.privateLibrary===true);
+   const host=await studioHost(typeof data.privateLibrary==='string'&&/^[a-f0-9]{64}$/.test(data.privateLibrary)?data.privateLibrary:null);
    studio=mountStudio(document.getElementById('studio'),{filmExample:false,forceWebGL:true,initialProjectId:data.projectId,...host,agents:id=>request('agents',id),catalog:{list:()=>request('catalog-list'),asset:id=>request('catalog-asset',id)},storage:{list:()=>request('list'),read:id=>request('read',id),write:project=>request('write',project)}});
    send({operation:'mounted'});if(sdk.STUDIO_HOST_VERSION!==1&&typeof data.projectId==='string')openExisting(data.projectId);
   }catch{send({operation:'unavailable'});}
@@ -59,17 +59,17 @@ function openExisting(id){
 
 // Live bridge (live MCP + local voice) and, for the owner, the private library.
 // The token is injected into this frame's shell by the local application server.
-async function studioHost(owner){
+async function studioHost(ticket){
  const token=document.querySelector('meta[name="genvr-studio-token"]')?.content;
  if(!token||!/^[a-f0-9]{64}$/.test(token))return {};
- const call=async(route,body,raw)=>{const r=await fetch('/studio-library/'+route,{method:'POST',headers:{Authorization:'Bearer '+token,'Content-Type':'application/json'},body:JSON.stringify(body??{})});if(!r.ok){let m='Library request failed.';try{m=(await r.json()).error||m;}catch{}throw Error(m);}return raw?r.arrayBuffer():r.json();};
+ const call=async(route,body,raw)=>{const r=await fetch('/studio-library/'+route,{method:'POST',headers:{Authorization:'Bearer '+token,'X-Studio-Library':ticket,'Content-Type':'application/json'},body:JSON.stringify(body??{})});if(!r.ok){let m='Library request failed.';try{m=(await r.json()).error||m;}catch{}throw Error(m);}return raw?r.arrayBuffer():r.json();};
  const options={liveBridge:{url:location.origin,token}};
- if(!owner)return options;
+ if(!ticket)return options;
  const listeners=new Set(),changed=()=>{for(const l of listeners)try{l();}catch{}};
  options.userLibrary={scope:'dpro-owner',storage:{
   list:async()=>(await call('list')).assets,
   get:async id=>{const all=(await call('list')).assets;const metadata=all.find(a=>a.id===id);if(!metadata)return null;return {metadata,data:await call('get',{id},true)};},
-  put:async asset=>{const meta=btoa(unescape(encodeURIComponent(JSON.stringify(asset.metadata)))).replace(/\+/g,'-').replace(/\//g,'_').replace(/=+$/,'');const r=await fetch('/studio-library/put',{method:'POST',headers:{Authorization:'Bearer '+token,'Content-Type':'application/octet-stream','X-Library-Metadata':meta},body:asset.data});if(!r.ok){let m='Saving the library item failed.';try{m=(await r.json()).error||m;}catch{}throw Error(m);}changed();},
+  put:async asset=>{const meta=btoa(unescape(encodeURIComponent(JSON.stringify(asset.metadata)))).replace(/\+/g,'-').replace(/\//g,'_').replace(/=+$/,'');const r=await fetch('/studio-library/put',{method:'POST',headers:{Authorization:'Bearer '+token,'X-Studio-Library':ticket,'Content-Type':'application/octet-stream','X-Library-Metadata':meta},body:asset.data});if(!r.ok){let m='Saving the library item failed.';try{m=(await r.json()).error||m;}catch{}throw Error(m);}changed();},
   remove:async id=>{await call('remove',{id});changed();},
   assignment:async(projectId,target)=>(await call('assignment',{projectId,target})).assetId,
   assign:async(projectId,target,assetId)=>{await call('assign',{projectId,target,assetId});changed();},

@@ -10,3 +10,4 @@ export const GENVR_AGENTS:string;
 export function validGenVRTeam(value:unknown):boolean;
 
 export function genvrMarket(path:string):boolean;
+export const STUDIO_TICKET_PATH:'/api/genvr/studio-library-ticket';
