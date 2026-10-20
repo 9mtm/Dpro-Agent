@@ -12,7 +12,7 @@ window.addEventListener('message',async event=>{
    await isolateBrowserCache(data.storageNamespace);
    const sdk=await import('/genvr/dist/studio.js');mountStudio=sdk.mountStudio;
    const host=await studioHost(typeof data.privateLibrary==='string'&&/^[a-f0-9]{64}$/.test(data.privateLibrary)?data.privateLibrary:null);
-   studio=mountStudio(document.getElementById('studio'),{filmExample:false,forceWebGL:true,initialProjectId:data.projectId,...host,agents:id=>request('agents',id),catalog:{list:()=>request('catalog-list'),asset:id=>request('catalog-asset',id)},storage:{list:()=>request('list'),read:id=>request('read',id),write:project=>request('write',project)}});
+   studio=mountStudio(document.getElementById('studio'),{filmExample:'/film-examples/island-languages.genvrfilm',forceWebGL:true,initialProjectId:data.projectId,...host,agents:id=>request('agents',id),catalog:{list:()=>request('catalog-list'),asset:id=>request('catalog-asset',id)},storage:{list:()=>request('list'),read:id=>request('read',id),write:project=>request('write',project)}});
    send({operation:'mounted'});if(sdk.STUDIO_HOST_VERSION!==1&&typeof data.projectId==='string')openExisting(data.projectId);
   }catch{send({operation:'unavailable'});}
  }

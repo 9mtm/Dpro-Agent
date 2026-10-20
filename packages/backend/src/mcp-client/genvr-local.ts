@@ -12,7 +12,7 @@ const NAME='genvr-local';
 const DESCRIPTION='Bundled GenVR local authoring';
 /** Live MCP connection file written by the local Studio host (core-ui scripts/genvr-studio-host.cjs). */
 export const studioConnectionFile=()=>path.resolve(process.env.DPRO_GENVR_CONNECTION||path.join(os.homedir(),'.genvr','dpro-studio','studio-connection.json'));
-const PACKAGE_HASH='9c5aa9e1e333cba7c99f5ee4e17c40af9d84bc770ff722f504d3a5ad511ded91';
+const PACKAGE_HASH='45006dc0085c4c34b5d42d9321c3ca342dd9f2a85590f6b8191c8ef5973fa201';
 let queue:Promise<unknown>=Promise.resolve();
 /** Register the pinned bundled authoring server; keep all normal execution and grant gates. */
 export function ensureGenvrMcp(ownerId:string) {
@@ -40,7 +40,7 @@ export function ensureGenvrMcp(ownerId:string) {
   if(!isExecToolsEnabled())return {status:'blocked',id:row.id};
   try{
    ensureServerWorkDir(NAME);
-   if(row.enabled!==1){await enableServer(row.id,{launchHash:row.launch_hash},ownerId);logAudit({event_type:'mcp.server.change',event_category:'system',severity:'info',user_id:ownerId,action:'mcp_server.bundled_genvr_enable',success:true,resource_type:'mcp_server',resource_id:row.id,metadata:{package:'3d-world-sdk',version:'0.3.0-preview.12',upgraded}});}
+   if(row.enabled!==1){await enableServer(row.id,{launchHash:row.launch_hash},ownerId);logAudit({event_type:'mcp.server.change',event_category:'system',severity:'info',user_id:ownerId,action:'mcp_server.bundled_genvr_enable',success:true,resource_type:'mcp_server',resource_id:row.id,metadata:{package:'3d-world-sdk',version:'0.3.0-preview.14',upgraded}});}
    await refreshServer(row.id,ownerId);
    return {status:'ready',id:row.id};
   }catch{return {status:'blocked',id:row.id};}

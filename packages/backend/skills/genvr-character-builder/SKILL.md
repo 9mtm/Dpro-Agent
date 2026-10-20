@@ -20,11 +20,14 @@ Use stable existing agent IDs. An avatar is an appearance, not a second agent, a
 a tool grant or a change of personality, memory or role. Linking agents to characters is not done
 from the GenVR spaces page; the owner decides where that lives.
 
-Discover actual tools before acting. With the live Studio connection (3d-world-sdk 0.3.0-preview.13):
+Discover actual tools before acting. With the live Studio connection (3d-world-sdk 0.3.0-preview.14):
 `user_avatar_library` lists built-in and private characters and assigns one to `self` (My avatar);
 `list_avatar_motions` and `present_avatar` preview actions and expressions (see the SDK skill
-`genvr-avatar-presentation`). There are still no create_character / set_character_body tools: never
-fabricate them. Private characters come from the owner's own imports and stay on the device; never
+`genvr-avatar-presentation`). `avatar_studio` edits a character's body, shape, muscle, fat, face,
+colours, hair, view mode and expression in the Avatar tab, then saves or exports it; `motion_lab`
+(read `get_motion_lab_guide` first) runs measured motion courses and keeps motion versions, and making
+a version the best waits for the owner. Both need a live Studio and an owner grant for the agent;
+`inspect_studio` says whether they can run now. Never fabricate other tools. Private characters come from the owner's own imports and stay on the device; never
 upload or publish them. Several independent imported cast members in one scene are not guaranteed.
 
 When a supported character API arrives, use its real schema and approved library item IDs,
