@@ -50,7 +50,7 @@ export const config = {
     ollama: {
       url: defaultOllamaUrl(),
       apiUrl: defaultOllamaApiUrl(),
-      modelName: process.env.DEFAULT_MODEL || process.env.LOCAL_MODEL_NAME || 'qwen3.8:27b',
+      modelName: process.env.DEFAULT_MODEL || process.env.LOCAL_MODEL_NAME || 'qwen3.5:9b',
       apiKey: process.env.LOCAL_MODEL_API_KEY || 'sk-dummy',
     },
   },

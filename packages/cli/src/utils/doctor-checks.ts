@@ -30,7 +30,7 @@ export interface CheckResult {
 
 export const MIN_NODE_MAJOR = 20;
 export const DEFAULT_OLLAMA_URL = 'http://127.0.0.1:11434';
-export const DEFAULT_MODEL = 'qwen3.8:27b';
+export const DEFAULT_MODEL = 'qwen3.5:9b';
 
 /** Passwords published in this repository (same list as backend auth/default-accounts.ts). */
 export const PUBLISHED_DEFAULT_PASSWORDS: readonly string[] = ['admin123', 'user123', 'system-user-not-for-login', 'demo-user-password'];
@@ -382,7 +382,7 @@ const checkOllama: Check = async (ctx) => {
     if (!res.ok) return { id: 'ollama', title, status: 'warn', detail: `Ollama answered HTTP ${res.status}` };
     const body = await res.json() as { models?: Array<{ name?: string; model?: string }> };
     const names = (body.models ?? []).map((m) => m.name || m.model || '').filter(Boolean);
-    const has = names.some((n) => n === model || n === `${model}:latest` || (!model.includes(':') && n.startsWith(`${model}:`)));
+    const has = names.some((n) => n === model || n === `${model}:latest` || (!model.includes(':') && n.startsWith(`${model}:`)) || (model.includes(':') && n.startsWith(`${model}-`)));
     return has
       ? { id: 'ollama', title, status: 'ok', detail: `${url}: ${names.length} model(s), ${model} present` }
       : { id: 'ollama', title, status: 'warn', detail: `${url}: model ${model} not pulled (${names.length} model(s) present); pulling needs your OK` };

@@ -152,10 +152,10 @@ test('a lookup run: local model, safe default tools, low budget, clean informati
   assert.deepEqual(body.granted_tools, ['memory_search', 'storage_search'], 'nothing requested -> memory_search + storage_search, no read');
   assert.deepEqual(body.drawers, [], 'nothing requested -> no drawers');
   assert.deepEqual(body.budget, { max_steps: 15, max_duration_ms: 300_000 });
-  assert.equal(body.model, 'qwen3.8:27b');
+  assert.equal(body.model, 'qwen3.5:9b');
 
   const agent = db.prepare('SELECT provider, model FROM agents_config WHERE id = ?').get(small.SMALL_AGENT_ID);
-  assert.deepEqual({ ...agent }, { provider: 'ollama', model: 'qwen3.8:27b' });
+  assert.deepEqual({ ...agent }, { provider: 'ollama', model: 'qwen3.5:9b' });
 
   const c = await finalCard(body.run_id);
   assert.equal(c.status, 'completed', JSON.stringify(c));
@@ -163,7 +163,7 @@ test('a lookup run: local model, safe default tools, low budget, clean informati
   assert.match(c.outputs[0].text, /project notes/);
   assert.equal(c.steps_used, 3, 'model, tool, model');
   assert.deepEqual(c.tools_used, ['memory_search']);
-  assert.equal(c.model, 'qwen3.8:27b');
+  assert.equal(c.model, 'qwen3.5:9b');
   assert.equal(c.needs_review, false);
   assert.deepEqual(c.warnings, []);
   assert.ok(c.duration_ms >= 0);

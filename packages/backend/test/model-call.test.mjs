@@ -168,7 +168,7 @@ test('default: background memory extraction uses the local model even with a pai
     assert.deepEqual(out.map((c) => c.content), ['Keeps a plant on the desk']);
     assert.equal(calls.paid.length, 0, 'no paid call');
     assert.equal(calls.local.length, 1);
-    assert.equal(calls.local[0].model, 'qwen3.8:27b');
+    assert.equal(calls.local[0].model, 'qwen3.5:9b');
     assert.equal(ledger().length, 0);
   } finally {
     delete process.env.DAILY_PAID_CAP_CENTS;
@@ -265,7 +265,7 @@ test('a failed paid call releases its reservation', async () => {
 test('weekly-summary rewrite goes through the choke point on the local model', async () => {
   reset();
   const r = await W.ollamaSummarizer('digest');
-  assert.deepEqual(r, { text: 'A calm week.', model: 'ollama:qwen3.8:27b' });
+  assert.deepEqual(r, { text: 'A calm week.', model: 'ollama:qwen3.5:9b' });
   assert.equal(calls.local.length, 1);
   assert.equal(calls.paid.length, 0);
 });
@@ -343,7 +343,7 @@ test('public room, cap 0: no sender (owner, member, anonymous) triggers a paid c
       assert.equal(sseText(res.body), 'local room reply');
       assert.equal(calls.paid.length, 0, 'no paid call');
       assert.equal(calls.local.length, 1);
-      assert.equal(calls.local[0].model, 'qwen3.8:27b', 'a paid room model is answered by the default local model');
+      assert.equal(calls.local[0].model, 'qwen3.5:9b', 'a paid room model is answered by the default local model');
     }
     assert.equal(ledger().length, before, 'nothing reserved');
   });

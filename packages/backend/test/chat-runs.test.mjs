@@ -192,7 +192,7 @@ test('an agent set to Claude with no key answers with the local model', async ()
   const runId = rid();
   await call('r-owner', 'POST', `/api/chat/conversations/${c.id}/runs`, { runId, message: 'hello' });
   await ended(runId);
-  assert.equal(bodies[0].model, 'qwen3.8:27b');
+  assert.equal(bodies[0].model, 'qwen3.5:9b');
   const m = (await call('r-owner', 'GET', `/api/chat/conversations/${c.id}/messages`)).json();
   assert.equal(m.messages.at(-1).content, 'Local answer.');
 });

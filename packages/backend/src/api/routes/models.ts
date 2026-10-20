@@ -8,22 +8,9 @@ import type { FastifyInstance } from 'fastify';
 import { getSettingsManager } from '../../settings/index.js';
 
 import { OLLAMA_URL } from '../../llm/ollama.js';
+import { listLocalModels } from '../../llm/local-models.js';
 import { LMSTUDIO_PREFIX, listLmStudioModels } from '../../llm/lmstudio.js';
 import { getEnvProviderApiKey, hasGlobalProviderApiKey } from '../../credentials/authority.js';
-
-interface OllamaModel {
-  name: string;
-  model: string;
-  modified_at: string;
-  size: number;
-  digest: string;
-  details?: {
-    format: string;
-    family: string;
-    parameter_size: string;
-    quantization_level: string;
-  };
-}
 
 export async function modelsRoutes(fastify: FastifyInstance) {
   // GET /api/models - List ALL available models from ALL providers
@@ -35,25 +22,19 @@ export async function modelsRoutes(fastify: FastifyInstance) {
       const allModels: any[] = [];
       if(subscriptionEnabled())for(const kind of ['claude','codex'] as const)if(await subscriptionBinary(kind))allModels.push({id:'subscription:'+kind,provider:'subscription',label:kind==='claude'?'Claude Code · existing account':'Codex · existing ChatGPT account',size:''});
 
-      // 1. Add Ollama models (if available)
+      // 1. Add Ollama chat models (if available). Embedding models are left
+      // out: they cannot answer a chat (CORE-MODEL-01).
       try {
-        const response = await fetch(`${OLLAMA_URL}/api/tags`, {
-          signal: AbortSignal.timeout(2000),
-        });
-
-        if (response.ok) {
-          const data = await response.json() as { models: OllamaModel[] };
-          const ollamaModels = data.models.map((m) => ({
-            id: m.name,
-            name: `🏠 ${m.name}`,
-            provider: 'local',
-            size: formatSize(m.size),
-            modifiedAt: m.modified_at,
-            details: m.details,
-            available: true,
-          }));
-          allModels.push(...ollamaModels);
-        }
+        const ollamaModels = (await listLocalModels()).filter((m) => m.chat).map((m) => ({
+          id: m.name,
+          name: `🏠 ${m.name}`,
+          provider: 'local',
+          size: formatSize(m.size),
+          modifiedAt: m.modifiedAt,
+          details: m.details,
+          available: true,
+        }));
+        allModels.push(...ollamaModels);
       } catch (error) {
         console.log('[Models] Ollama not available');
       }

@@ -53,7 +53,7 @@ import { redactImportText, SECRET_REF_RE } from '../../memory/import/redact.js';
 import { isLmStudioModelId } from '../../llm/lmstudio.js';
 
 const ID = /^[A-Za-z0-9][A-Za-z0-9_.:-]{7,127}$/;
-/** A model id the chat may pick (local model names like qwen3.8:27b, or claude-…). */
+/** A model id the chat may pick (local model names like qwen3.5:9b, or claude-…). */
 const MODEL = /^[A-Za-z0-9][A-Za-z0-9_.:@\/-]{0,99}$/;
 /** Which provider a picked model belongs to (`lmstudio:` ids run on LM Studio, CHAT-PRO-02 G). */
 const modelProvider = (model: string) => (/^claude-/.test(model) ? 'claude' as const : isLmStudioModelId(model) ? 'lmstudio' as const : 'ollama' as const);

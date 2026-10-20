@@ -35,6 +35,7 @@ import { createModelRouter, ModelRouter } from '../../services/model-router.js';
 import { CostTracker } from '../../services/cost-tracker.js';
 import { ModelUnavailable, runOllamaAgentLoop } from '../../services/ollama-agent-loop.js';
 import { OLLAMA_URL, DEFAULT_OLLAMA_MODEL, ollamaThinkOption } from '../../llm/ollama.js';
+import { resolveLocalModel } from '../../llm/local-models.js';
 import { lmStudioApiUrl, lmStudioModelName, lmStudioNotRunningMessage } from '../../llm/lmstudio.js';
 import { runLmStudioAgentLoop } from '../../services/lmstudio-agent-loop.js';
 
@@ -464,6 +465,13 @@ export async function executeChatTurn(reply: FastifyReply, input: ChatTurnInput)
     }
     // A Claude model name never goes to the local model server.
     if (resolvedProvider === 'ollama' && /^(claude-|lmstudio:)/.test(resolvedModel)) resolvedModel = DEFAULT_MODEL;
+    // CORE-MODEL-01: a local model that is no longer installed (or an embedding
+    // model) is replaced by an installed chat model, the default one first.
+    if (resolvedProvider === 'ollama') {
+      const installed = await resolveLocalModel(resolvedModel, DEFAULT_MODEL);
+      if (installed !== resolvedModel) safeConsole.log('[Chat] Local model not installed; using', installed, 'instead of', resolvedModel);
+      resolvedModel = installed;
+    }
     // CHAT-PRO-02 G: an LM Studio turn needs an LM Studio model id (`lmstudio:<name>`).
     if (resolvedProvider === 'lmstudio' && !lmStudioModelName(resolvedModel)) return reply.status(400).send({ error: 'Pick an LM Studio model', code: 'invalid_model' });
 

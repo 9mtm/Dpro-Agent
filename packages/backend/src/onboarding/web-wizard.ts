@@ -40,7 +40,7 @@ export const CHANNELS = ['web', 'whatsapp', 'telegram', 'discord'] as const;
 
 /** M-03: local default provider. */
 export const DEFAULT_OLLAMA_URL = DEFAULT_SETTINGS.local!.url; // F4: OLLAMA_URL, else http://127.0.0.1:11434
-export const DEFAULT_OLLAMA_MODEL = DEFAULT_SETTINGS.local!.model; // qwen3.8:27b
+export const DEFAULT_OLLAMA_MODEL = DEFAULT_SETTINGS.local!.model; // qwen3.5:9b
 
 const CLAUDE_MODELS = ['claude-opus-4-6', 'claude-sonnet-4-5-20250929', 'claude-haiku-4-5-20251001'] as const;
 const DEFAULT_CLAUDE_MODEL = 'claude-sonnet-4-5-20250929';

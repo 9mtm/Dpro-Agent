@@ -98,14 +98,14 @@ test('fresh owner: not completed -> save steps -> complete -> completed', async 
   assert.equal(state.currentStep, 3);
   assert.equal(db.prepare('SELECT full_name FROM users WHERE id = ?').get('u-owner').full_name, 'Mohamed');
 
-  // Default local provider (M-03): Ollama qwen3.8:27b at 127.0.0.1.
+  // Default local provider (M-03): Ollama qwen3.5:9b at 127.0.0.1.
   res = await post('/api/onboarding', { step: 'provider', data: { aiProvider: 'ollama' }, currentStep: 4 }, OWNER);
   assert.equal(res.statusCode, 200, res.body);
-  assert.equal(res.json().state.data.aiModel, 'qwen3.8:27b');
+  assert.equal(res.json().state.data.aiModel, 'qwen3.5:9b');
   assert.equal(res.json().state.data.ollamaUrl, 'http://127.0.0.1:11434');
   const s = (await getSettingsManager().getSettings());
   assert.equal(s.provider, 'local');
-  assert.equal(s.local.model, 'qwen3.8:27b');
+  assert.equal(s.local.model, 'qwen3.5:9b');
   assert.equal(s.local.url, 'http://127.0.0.1:11434');
 
   res = await post('/api/onboarding', { step: 'channels', data: { selectedChannels: ['web', 'telegram', 'web'] }, currentStep: 5 }, OWNER);

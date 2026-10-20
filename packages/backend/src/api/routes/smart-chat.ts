@@ -9,6 +9,7 @@ import { AgentRuntime, type Message, type Skill } from '../../agent/index.js';
 import { handleError } from '../error-handler.js';
 
 import { OLLAMA_URL, DEFAULT_OLLAMA_MODEL } from '../../llm/ollama.js';
+import { resolveLocalModel } from '../../llm/local-models.js';
 
 const DEFAULT_MODEL = DEFAULT_OLLAMA_MODEL;
 
@@ -242,11 +243,12 @@ async function streamSmartChat(
   ];
 
   // Call Ollama
+  const model = await resolveLocalModel(DEFAULT_MODEL, DEFAULT_MODEL);
   const response = await fetch(`${OLLAMA_URL}/api/chat`, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({
-      model: DEFAULT_MODEL,
+      model,
       messages,
       stream: true,
       options: {

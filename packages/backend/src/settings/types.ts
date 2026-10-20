@@ -44,7 +44,7 @@ export const DEFAULT_SETTINGS: AgentSettings = {
   local: {
     // F4: follows OLLAMA_URL / LOCAL_MODEL_API_URL (default http://127.0.0.1:11434).
     url: defaultOllamaUrl(),
-    model: 'qwen3.8:27b',
+    model: 'qwen3.5:9b',
   },
   temperature: 0.7,
   enableTools: true,

@@ -11,7 +11,7 @@ import { defaultOllamaUrl } from '../config/ollama-url.js';
 export const OLLAMA_URL = defaultOllamaUrl();
 
 export const DEFAULT_OLLAMA_MODEL =
-  process.env.DEFAULT_MODEL || process.env.LOCAL_MODEL_NAME || 'qwen3.8:27b';
+  process.env.DEFAULT_MODEL || process.env.LOCAL_MODEL_NAME || 'qwen3.5:9b';
 
 /**
  * Optional `think` flag for reasoning models (e.g. Qwen3).

@@ -257,10 +257,10 @@ test('agents_config edits: admins are refused; owner edits are ignored by the ex
   assert.equal(put.statusCode, 200, put.body);
   try {
     const res = await spawn({ task: 'SCENARIO:plain drift', kind: 'lookup' });
-    assert.equal(res.json().model, 'qwen3.8:27b', 'env/default model, not the row');
+    assert.equal(res.json().model, 'qwen3.5:9b', 'env/default model, not the row');
     const c = await finalCard(res.json().run_id);
     const callBody = modelCalls.filter((m) => m.sc === 'plain').at(-1).body;
-    assert.equal(callBody.model, 'qwen3.8:27b');
+    assert.equal(callBody.model, 'qwen3.5:9b');
     assert.equal(callBody.messages[0].role, 'system');
     assert.equal(callBody.messages[0].content, small.SYSTEM_PROMPT);
     assert.equal(c.needs_review, true);

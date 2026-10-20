@@ -30,6 +30,7 @@
 
 import { ClaudeClient } from './claude-client.js';
 import { DEFAULT_OLLAMA_MODEL, OLLAMA_URL, ollamaThinkOption } from './ollama.js';
+import { resolveLocalModel } from './local-models.js';
 import { run, sql } from '../repositories/sql-steps.js';
 import {
   CostBudgetError,
@@ -174,7 +175,10 @@ export async function modelCall(ctx: ModelCallContext, req: ModelCallRequest): P
     }
   }
 
-  const model = req.localModel || DEFAULT_OLLAMA_MODEL;
+  // CORE-MODEL-01: a model that is not installed is replaced by an installed chat model.
+  const model = req.noLocal
+    ? req.localModel || DEFAULT_OLLAMA_MODEL
+    : await resolveLocalModel(req.localModel || DEFAULT_OLLAMA_MODEL, DEFAULT_OLLAMA_MODEL);
   if (req.noLocal) {
     return { ok: false, text: '', provider: 'ollama', model, paid: false, usage: null, costCents: 0, ...(refused ? { refused } : {}), error: 'local model skipped' };
   }

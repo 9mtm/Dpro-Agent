@@ -23,6 +23,7 @@ import path from 'node:path';
 import { q } from '../../repositories/sql-steps.js';
 import { importLease, savedImports, saveImport, type SavedImport, type SessionCheckpoint } from './local-import-store.js';
 import { OLLAMA_URL, DEFAULT_OLLAMA_MODEL } from '../../llm/ollama.js';
+import { resolveLocalModel } from '../../llm/local-models.js';
 import { listProjects } from '../../repositories/chat-conversations.js';
 import { createPreview, commitPreview, getImportSettings } from './pipeline.js';
 import { redactImportText } from './redact.js';
@@ -60,10 +61,11 @@ Answer with JSON only: {"memories":[{"title":"3-8 words","content":"one plain se
 
 /** The default memory agent: the local model (Ollama), JSON mode. */
 export const ollamaExtract: ExtractFn = async (text, ctx) => {
+  const model = await resolveLocalModel(process.env.DPRO_IMPORT_MODEL || DEFAULT_OLLAMA_MODEL, DEFAULT_OLLAMA_MODEL);
   const known = ctx.known.length ? `\n\nAlready noted (do not repeat):\n${ctx.known.map(k => `- ${k}`).join('\n')}` : '';
   const res = await fetch(`${OLLAMA_URL}/api/chat`, {
     method: 'POST', headers: { 'Content-Type': 'application/json' }, signal: ctx.signal ? AbortSignal.any([ctx.signal, AbortSignal.timeout(180_000)]) : AbortSignal.timeout(180_000),
-    body: JSON.stringify({ model: process.env.DPRO_IMPORT_MODEL || DEFAULT_OLLAMA_MODEL, stream: false, format: 'json', think: false,
+    body: JSON.stringify({ model, stream: false, format: 'json', think: false,
       options: { temperature: 0, num_ctx: 8192, num_predict: 900 },
       messages: [{ role: 'system', content: PROMPT }, { role: 'user', content: `Source: ${SOURCE_NAMES[ctx.source]}${ctx.cwd ? `, folder ${ctx.cwd}` : ''}${known}\n\n${text}` }] }),
   });

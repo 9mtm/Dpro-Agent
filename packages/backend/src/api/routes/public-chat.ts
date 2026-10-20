@@ -23,6 +23,7 @@ import { readPersonality, readMemory } from '../../services/agent-files.js';
 import { outsiderAgentMemoryEnabled } from '../../services/outsider-memory.js';
 import { handleError } from '../error-handler.js';
 import { DEFAULT_OLLAMA_MODEL, OLLAMA_URL } from '../../llm/ollama.js';
+import { resolveLocalModel } from '../../llm/local-models.js';
 import { modelCall } from '../../llm/model-call.js';
 import { resolveProviderApiKey } from '../../credentials/authority.js';
 import { anonymousChatLimiter } from '../public-chat-limits.js';
@@ -158,11 +159,12 @@ async function streamPublicChatResponse(
         ...history,
       ];
 
+      const localModel = await resolveLocalModel(paidModel ? DEFAULT_OLLAMA_MODEL : room.model, DEFAULT_OLLAMA_MODEL);
       const response = await fetch(`${OLLAMA_URL}/api/chat`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
-          model: paidModel ? DEFAULT_OLLAMA_MODEL : room.model,
+          model: localModel,
           messages: ollamaMessages,
           stream: true,
         }),

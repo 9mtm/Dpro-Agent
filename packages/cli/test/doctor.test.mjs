@@ -56,7 +56,7 @@ function ctx(paths, over = {}) {
     fix: false,
     nodeVersion: 'v22.3.0',
     platform: process.platform,
-    fetchFn: async () => new Response(JSON.stringify({ models: [{ name: 'qwen3.8:27b' }] })),
+    fetchFn: async () => new Response(JSON.stringify({ models: [{ name: 'qwen3.5:9b' }] })),
     listListeners: () => [],
     openDbReadOnly: realDb,
     bcryptCompare: (p, h) => bcrypt.compareSync(p, h),
@@ -192,7 +192,7 @@ test('doctor only contacts Ollama on loopback; a remote OLLAMA_URL is skipped', 
   assert.deepEqual(fetched, []);
   r = byId(await dc.runDoctor(ctx(paths, { env: { OLLAMA_URL: 'http://localhost:11434/' }, fetchFn })));
   assert.equal(r.ollama.status, 'warn');
-  assert.match(r.ollama.detail, /qwen3\.8:27b not pulled/);
+  assert.match(r.ollama.detail, /qwen3\.5:9b not pulled/);
   r = byId(await dc.runDoctor(ctx(paths, { env: { DEFAULT_MODEL: 'llama3:8b' }, fetchFn })));
   assert.equal(r.ollama.status, 'ok');
   assert.ok(fetched.every((u) => /^http:\/\/(127\.0\.0\.1|localhost):11434\/api\/tags$/.test(u)), fetched.join(','));

@@ -10,7 +10,7 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 
 const OLLAMA = (process.env.OLLAMA_URL || 'http://127.0.0.1:11434').replace(/\/+$/, '');
-const MODEL = process.env.OLLAMA_TEST_MODEL || 'qwen3.8:27b';
+const MODEL = process.env.OLLAMA_TEST_MODEL || 'qwen3.5:9b';
 
 async function modelAvailable() {
   try {
