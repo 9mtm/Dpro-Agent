@@ -77,6 +77,7 @@ import {
 import { planStepsTool } from './plan/plan-steps.js';
 import { askCodingAppTool } from './cli/ask-coding-app.js';
 import { boardSuggestCardTool } from './board/board-suggest.js';
+import { handoffReadTool, handoffSaveTool } from './handoff/handoff.js';
 import { boardCheckTool, boardChecklistTool, boardCommentTool, boardMoveTool, boardMyCardsTool } from './board/board-tools.js';
 
 import {
@@ -103,6 +104,7 @@ const CORE_TOOLS: Tool[] = [
   boardMyCardsTool, boardCommentTool, boardMoveTool, boardChecklistTool, boardCheckTool, // BOARD-02/03: only the agent's own board cards
   planStepsTool, // CHAT-PRO-02 H: the agent's own live task plan (self-only, no grant)
   boardSuggestCardTool, // CHAT-PRO-02 I step 2: suggests a board card; only the owner creates it (self-only, no grant)
+  handoffSaveTool, handoffReadTool, // CORE-MEM-HANDOFF: the agent's own done/left/next note for its next session (self-only, no grant)
   askCodingAppTool, // CORE-ROUTE-01: ask the owner's Claude Code / Codex (granted per agent, approved per call, desktop app only)
 ];
 

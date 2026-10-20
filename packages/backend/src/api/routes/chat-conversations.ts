@@ -51,6 +51,8 @@ import { exportConversation } from '../../services/chat-export.js';
 import { cleanupChatSecrets, deleteChatSecret, listChatSecrets, vaultSecretsInText } from '../../services/chat-secrets.js';
 import { redactImportText, SECRET_REF_RE } from '../../memory/import/redact.js';
 import { isLmStudioModelId } from '../../llm/lmstudio.js';
+import { HANDOFF_NOTE } from '../../memory/handoff/store.js';
+import { conversationHandoffText } from '../../memory/handoff/scope.js';
 
 const ID = /^[A-Za-z0-9][A-Za-z0-9_.:-]{7,127}$/;
 /** A model id the chat may pick (local model names like qwen3.5:9b, or claude-…). */
@@ -236,6 +238,8 @@ export async function chatConversationRoutes(fastify: FastifyInstance) {
     }
     const userMessage = (await listConversationMessages(c.id)).find(m => m.runId === b.runId && m.role === 'user')!;
     const messages = historyFor(namedReplies([...prior, userMessage], team, replyAgent, c.agentId));
+    // CORE-MEM-HANDOFF: this agent's newest note for this conversation (or its project), the caller's own only.
+    const handoff = await conversationHandoffText(userId, c.id, replyAgent).catch(() => '');
     chatRuns.start({
       runId: b.runId, userId, sessionId: c.id, agentId: b.agentId ?? null,
       onPersisted: async status => { if (chatRuns.get(b.runId)?.error !== 'checkpoint_failed') await finishChatRun(b.runId, status); },
@@ -243,7 +247,7 @@ export async function chatConversationRoutes(fastify: FastifyInstance) {
         agentId: replyAgent, messages, stream: true, sessionId: c.id, userId, uiSet: 'chat',
         ...(project ? { memoryScope: { project: project.slug }, ...(project.folder ? { fileReadRoot: project.folder } : {}) } : {}),
         ...(codingFolder ? { fileReadRoot: codingFolder } : {}),
-        systemPromptAppend: [approvedResults, project ? projectNote(project.name, project.folder, project.repoUrl) : '', PLAN_NOTE, [...prior, userMessage].some((m) => new RegExp(SECRET_REF_RE.source).test(m.content)) ? SECRET_NOTE : '', prior.some((m) => m.role === 'assistant' && (m.agentId ?? c.agentId ?? null) !== (replyAgent ?? null)) ? TEAM_NOTE : ''].filter(Boolean).join('\n\n'),
+        systemPromptAppend: [approvedResults, project ? projectNote(project.name, project.folder, project.repoUrl) : '', handoff, PLAN_NOTE, HANDOFF_NOTE, [...prior, userMessage].some((m) => new RegExp(SECRET_REF_RE.source).test(m.content)) ? SECRET_NOTE : '', prior.some((m) => m.role === 'assistant' && (m.agentId ?? c.agentId ?? null) !== (replyAgent ?? null)) ? TEAM_NOTE : ''].filter(Boolean).join('\n\n'),
         ...(b.model ? { model: b.model, provider: modelProvider(b.model) } : {}),
       })),
     });

@@ -103,6 +103,8 @@ export interface ToolExecutionContext {
   fileReadRoot?: string;
   /** A chat run whose page shows the agent's live plan: self-only tools (plan_steps) are offered. */
   chatPlan?: boolean;
+  /** CORE-MEM-HANDOFF: false = the handoff tools are not offered (a task contract that names its tools). */
+  handoffTools?: boolean;
   /**
    * B1-core: the actor of this tool call, attached by the tools registry
    * (repositories/actor.ts actorFromToolContext). Repositories take it first.

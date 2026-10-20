@@ -16,11 +16,19 @@ import { actorFromToolContextAsync } from '../repositories/actor.js';
 import { hasSecretRef, resolveSecretRefs, scrubSecretValues, vaultToolResult } from '../services/chat-secrets.js';
 
 /** Tools whose input is stored as text by Dpro: key-store references are never resolved for them (CHAT-SECRETS-01). */
-const KEEPS_TEXT = /^(?:memory_|board_|task_|plan_steps$|create_reminder$)/;
+const KEEPS_TEXT = /^(?:memory_|board_|task_|handoff_|plan_steps$|create_reminder$)/;
 
 /** Self-only tools need no grant; an extension or MCP tool can never claim it. */
-const SELF_ONLY_TOOLS = new Set(['plan_steps', 'board_suggest_card']);
+const SELF_ONLY_TOOLS = new Set(['plan_steps', 'board_suggest_card', 'handoff_save', 'handoff_read']);
 const isSelfOnly = (tool: Tool) => tool.selfOnly === true && SELF_ONLY_TOOLS.has(tool.name) && !tool.extensionId && !(tool as { mcp?: unknown }).mcp && !tool.execClass;
+/**
+ * CORE-MEM-HANDOFF: the agent's own handoff note also lives in board task runs
+ * (not delegated ones, which get exactly the delegated tools); never in a channel turn.
+ */
+const HANDOFF_TOOLS = new Set(['handoff_save', 'handoff_read']);
+const selfOnlyOffered = (tool: Tool, context: ToolExecutionContext) => HANDOFF_TOOLS.has(tool.name)
+  ? !context.toolPolicy && context.handoffTools !== false && (context.chatPlan === true || (!!context.taskId && !context.delegatedFrom?.length && context.agentId !== 'small-local-agent'))
+  : context.chatPlan === true;
 
 export class ToolsRegistry {
   private tools = new Map<string, Tool>();
@@ -66,7 +74,7 @@ export class ToolsRegistry {
     return Array.from(this.tools.values()).filter((tool) =>
       isToolObjectAllowedByExecPolicy(tool)
       && (!policy || isToolAllowedInChannel(policy, tool))
-      && (isSelfOnly(tool) ? this.context.chatPlan === true : isToolGranted(grants, tool.name))
+      && (isSelfOnly(tool) ? selfOnlyOffered(tool, this.context) : isToolGranted(grants, tool.name))
       && modeFor(this.context.permissions, tool) !== 'off'
     );
   }
@@ -123,7 +131,7 @@ export class ToolsRegistry {
     }
 
     // SECURITY (S1.2): only tools granted to this agent run, even if the model emits others
-    const grantRefused = isSelfOnly(tool) && this.context.chatPlan === true ? null : grantCallRefusal(this.grants(), toolName, tool, params);
+    const grantRefused = isSelfOnly(tool) && selfOnlyOffered(tool, this.context) ? null : grantCallRefusal(this.grants(), toolName, tool, params);
     if (grantRefused) {
       console.warn(`[ToolsRegistry] ⛔ Refused ungranted tool for agent ${this.context.agentId ?? '(none)'}: ${toolName}`);
       return grantRefused;
