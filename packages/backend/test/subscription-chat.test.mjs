@@ -42,3 +42,23 @@ test('the CLIs are found in the usual install folders even with a short PATH (an
  assert.deepEqual(fnm,[join(home,'.local','share','fnm','node-versions','v24.21.0','installation','bin'),join(home,'.local','share','fnm','node-versions','v22.1.0','installation','bin')],'newest node first');
  assert.ok(dirs.includes(join(home,'.nvm','versions','node','v20.0.0','bin')));
 });
+
+test('ask_coding_app: owner approval always; desktop only; project folder only; never for outside senders (CORE-ROUTE-01)',async()=>{
+ const {askCodingAppTool}=await import('../src/tools/cli/ask-coding-app.ts');
+ const {approvalCategory}=await import('../src/tools/approvals.ts');
+ assert.equal(approvalCategory(askCodingAppTool),'other','every call waits for the owner');
+ assert.ok(!askCodingAppTool.selfOnly,'needs a grant per agent');
+ const text=r=>r.content[0].text;
+ const old=process.env.DPRO_SUBSCRIPTION_CHAT,iso=process.env.AGENT_PLAYER_ISOLATED;
+ try{
+  delete process.env.DPRO_SUBSCRIPTION_CHAT;delete process.env.AGENT_PLAYER_ISOLATED;
+  assert.match(text(await askCodingAppTool.execute({app:'claude',request:'hi'},{workspaceDir:'/tmp',fileReadRoot:'/tmp'})),/only in the Dpro desktop app/);
+  process.env.DPRO_SUBSCRIPTION_CHAT='1';
+  assert.match(text(await askCodingAppTool.execute({app:'claude',request:'hi'},{workspaceDir:'/tmp'})),/Choose a project folder/);
+  assert.match(text(await askCodingAppTool.execute({app:'codex',request:'hi'},{workspaceDir:'/tmp',fileReadRoot:'/tmp',toolPolicy:{channel:'telegram'}})),/not available for outside senders/);
+  assert.match(text(await askCodingAppTool.execute({app:'other',request:'hi'},{workspaceDir:'/tmp',fileReadRoot:'/tmp'})),/must be "claude" or "codex"/);
+  assert.match(text(await askCodingAppTool.execute({app:'claude',request:'  '},{workspaceDir:'/tmp',fileReadRoot:'/tmp'})),/empty/);
+  const r=await askCodingAppTool.execute({app:'codex',request:'hi'},{workspaceDir:'/tmp',fileReadRoot:'/'});
+  assert.ok(r.error,'the filesystem root is refused before anything starts');
+ }finally{if(old===undefined)delete process.env.DPRO_SUBSCRIPTION_CHAT;else process.env.DPRO_SUBSCRIPTION_CHAT=old;if(iso===undefined)delete process.env.AGENT_PLAYER_ISOLATED;else process.env.AGENT_PLAYER_ISOLATED=iso;}
+});
