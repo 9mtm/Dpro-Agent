@@ -26,6 +26,16 @@ export async function subscriptionSearchDirs(home=os.homedir(),pathEnv=process.e
   ...await versions(path.join(home,'.local','share','fnm','node-versions'),['installation','bin']),...await versions(path.join(home,'.nvm','versions','node'),['bin'])];
  return [...new Set(dirs.filter(d=>path.isAbsolute(d)))];
 }
+/** Where a chat without a project folder lets a coding app work: one private, empty folder per conversation, outside Dpro's data (CORE-PICKER-03). */
+export const chatWorkspacesRoot=()=>process.env.DPRO_CHAT_WORKSPACES?path.resolve(process.env.DPRO_CHAT_WORKSPACES):path.join(os.homedir(),'.dpro','chat-workspaces');
+const CONVERSATION_ID=/^[A-Za-z0-9][A-Za-z0-9_.:-]{7,127}$/;
+export async function chatWorkspace(conversationId:string):Promise<string>{
+ if(!CONVERSATION_ID.test(conversationId))throw Error('project_required');
+ const dir=path.join(chatWorkspacesRoot(),conversationId.replace(/:/g,'_'));await fs.mkdir(dir,{recursive:true,mode:0o700});return dir;
+}
+export async function removeChatWorkspace(conversationId:string):Promise<void>{
+ if(!CONVERSATION_ID.test(conversationId))return;await fs.rm(path.join(chatWorkspacesRoot(),conversationId.replace(/:/g,'_')),{recursive:true,force:true});
+}
 export async function subscriptionBinary(kind:'claude'|'codex'){
  for(const dir of await subscriptionSearchDirs()){const file=path.join(dir,kind);try{if((await fs.stat(file)).isFile()){await fs.access(file,fs.constants.X_OK);return file;}}catch{}}
  return null;

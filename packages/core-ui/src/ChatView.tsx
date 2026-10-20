@@ -328,8 +328,9 @@ function WhoAnswers({ controller, agent }: { controller: ConversationsController
         <span className="who-icon"><UiIcon name="brain" size={14}/></span><span className="who-name">{agent}<small>Own model · set in Settings</small></span></button>
       {TERMINAL_APPS.map(a => {
         const ready = s.models.some(m => m.id === a.id && m.provider === 'subscription');
-        const why = !ready ? (listed ? 'Not on this computer' : 'Desktop app only') : !project?.folder ? 'Choose a project folder' : 'In the terminal';
-        return <button key={a.id} type="button" role="radio" aria-checked={who.app?.id === a.id} disabled={!ready || !project?.folder} onClick={() => controller.selectModel(a.id)}>
+        // CORE-PICKER-03: without a project folder the app works in this chat's own private folder.
+        const why = !ready ? (listed ? 'Not on this computer' : 'Desktop app only') : project?.folder ? 'In the project folder' : 'In a private chat folder';
+        return <button key={a.id} type="button" role="radio" aria-checked={who.app?.id === a.id} disabled={!ready} onClick={() => controller.selectModel(a.id)}>
           <span className="who-icon"><AppIcon id={a.id} size={14}/></span><span className="who-name">{a.label}<small>{why}</small></span></button>;
       })}
     </div>

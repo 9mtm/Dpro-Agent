@@ -8,11 +8,11 @@
  * owner's approval (approvals.ts); only an owner's turn may use it, the same
  * gate as a chat sent to a coding app directly; it runs only where the desktop app
  * turned the coding apps on (subscriptionEnabled), only in the chat's
- * project folder, never for an outside (channel) sender. The coding app gets
+ * project folder (or the chat's own private folder), never for an outside (channel) sender. The coding app gets
  * the same restricted flags as a chat sent to it directly (subscription-chat.ts).
  */
 import type { Tool, ToolResult } from '../types.js';
-import { runSubscription, subscriptionEnabled } from '../../services/subscription-chat.js';
+import { chatWorkspace, runSubscription, subscriptionEnabled } from '../../services/subscription-chat.js';
 import { one, sql } from '../../repositories/sql-steps.js';
 
 const APPS = { claude: 'Claude Code', codex: 'Codex' } as const;
@@ -45,9 +45,12 @@ export const askCodingAppTool: Tool = {
     if (!subscriptionEnabled()) return fail('Claude Code and Codex are available only in the Dpro desktop app.');
     const caller = context?.userId ? await sql().read(one<{ role: string }>('SELECT role FROM users WHERE id=?', context.userId)) : null;
     if (caller?.role !== 'owner') return fail('Only the owner\'s own chats may use the coding apps.');
-    if (!context?.fileReadRoot) return fail('Choose a project folder for this chat first; the coding app works only inside it.');
+    let folder = context?.fileReadRoot;
     try {
-      const answer = await runSubscription(`subscription:${app}`, context.fileReadRoot, PREFIX + request, AbortSignal.timeout(240_000));
+      // Without a project folder the coding app works in this chat's private folder (CORE-PICKER-03).
+      folder ??= context?.sessionId ? await chatWorkspace(context.sessionId) : undefined;
+      if (!folder) return fail('Choose a project folder for this chat first; the coding app works only inside it.');
+      const answer = await runSubscription(`subscription:${app}`, folder, PREFIX + request, AbortSignal.timeout(240_000));
       const text = answer.length > MAX_ANSWER_CHARS ? `${answer.slice(0, MAX_ANSWER_CHARS)}\n[answer shortened]` : answer;
       return { content: [{ type: 'text', text: `${APPS[app]} answered:\n${text}` }], details: { app } };
     } catch (error) {

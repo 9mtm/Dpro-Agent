@@ -79,3 +79,17 @@ test('a coding app can be asked to use one of its own models (CORE-PICKER-02)',a
  assert.deepEqual(await subscriptionVariants('codex',home),[{id:'gpt-6.1-sol',label:'GPT-6.1-Sol'}]);
  assert.deepEqual(await subscriptionVariants('codex',join(home,'missing')),[]);
 });
+
+test('a chat without a project folder gets its own private folder for the coding app (CORE-PICKER-03)',async()=>{
+ const {mkdtempSync,existsSync,statSync}=await import('node:fs');const {tmpdir}=await import('node:os');const {join}=await import('node:path');
+ const {chatWorkspace,removeChatWorkspace,chatWorkspacesRoot}=await import('../src/services/subscription-chat.ts');
+ const old=process.env.DPRO_CHAT_WORKSPACES;process.env.DPRO_CHAT_WORKSPACES=mkdtempSync(join(tmpdir(),'ap-chat-ws-'));
+ try{
+  const dir=await chatWorkspace('conv-0123456789');
+  assert.equal(dir,join(chatWorkspacesRoot(),'conv-0123456789'));assert.ok(statSync(dir).isDirectory());
+  assert.equal((statSync(dir).mode&0o777).toString(8),'700','only the owner can open it');
+  await assert.rejects(chatWorkspace('../escape'));await assert.rejects(chatWorkspace('short'));
+  await removeChatWorkspace('conv-0123456789');assert.equal(existsSync(dir),false);
+  await removeChatWorkspace('../../etc');
+ }finally{if(old===undefined)delete process.env.DPRO_CHAT_WORKSPACES;else process.env.DPRO_CHAT_WORKSPACES=old;}
+});

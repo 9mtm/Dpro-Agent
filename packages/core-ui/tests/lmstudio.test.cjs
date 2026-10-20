@@ -79,7 +79,7 @@ test('the chat picker chooses who answers: no local model list; the coding apps 
   withApps = true; await new Promise(r => setTimeout(r, 5100)); await c.loadModels(true);
   assert.deepEqual(c.getSnapshot().models.find(m => m.id === 'subscription:claude').variants.map(v => v.id), ['opus', 'sonnet']);
   html = renderToStaticMarkup(React.createElement(ChatView, { controller: c, mode: 'mock', client }));
-  assert.match(panel(html), /Claude Code<small>Choose a project folder<\/small>/);
+  assert.match(panel(html), /aria-checked="false"><span class="who-icon">.*?Claude Code<small>In a private chat folder<\/small>/, 'no folder needed: a private chat folder');
   c.selectModel('subscription:claude/opus');
   html = renderToStaticMarkup(React.createElement(ChatView, { controller: c, mode: 'mock', client }));
   assert.match(panel(html), /<label class="who-model"><span>Model<\/span><select><option value="">Default<\/option><option value="opus" selected="">Opus<\/option><option value="sonnet">Sonnet<\/option><\/select>/);
