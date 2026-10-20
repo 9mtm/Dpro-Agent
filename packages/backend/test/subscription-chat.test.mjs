@@ -27,3 +27,18 @@ test('previous native sessions are forked rather than appended',()=>{
  assert.ok(subscriptionArgs('claude',id).includes('--fork-session'));
  assert.deepEqual(subscriptionArgs('codex',id).slice(-3),['fork',id,'-']);
 });
+
+test('the CLIs are found in the usual install folders even with a short PATH (an app opened from the Dock)',async()=>{
+ const {mkdtempSync,mkdirSync}=await import('node:fs');const {tmpdir}=await import('node:os');const {join}=await import('node:path');
+ const {subscriptionSearchDirs}=await import('../src/services/subscription-chat.ts');
+ const home=mkdtempSync(join(tmpdir(),'ap-cli-dirs-'));
+ for(const v of ['v22.1.0','v24.21.0'])mkdirSync(join(home,'.local','share','fnm','node-versions',v,'installation','bin'),{recursive:true});
+ mkdirSync(join(home,'.nvm','versions','node','v20.0.0','bin'),{recursive:true});
+ const dirs=await subscriptionSearchDirs(home,'/usr/bin:/bin:relative/dir');
+ assert.equal(dirs[0],join(home,'.local','bin'));
+ assert.ok(dirs.includes('/usr/bin')&&dirs.includes('/opt/homebrew/bin'));
+ assert.ok(!dirs.includes('relative/dir'),'relative PATH entries are ignored');
+ const fnm=dirs.filter(d=>d.includes('fnm'));
+ assert.deepEqual(fnm,[join(home,'.local','share','fnm','node-versions','v24.21.0','installation','bin'),join(home,'.local','share','fnm','node-versions','v22.1.0','installation','bin')],'newest node first');
+ assert.ok(dirs.includes(join(home,'.nvm','versions','node','v20.0.0','bin')));
+});

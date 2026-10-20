@@ -102,7 +102,7 @@ async function startLocal() {
     args: backendArgs(payload.backendDir),
     cwd: path.basename(dataDir()) === '.data' ? path.dirname(dataDir()) : dataDir(),
     dataDir: dataDir(),
-    extraEnv: { AGENT_TERMINAL: 'true', ...(path.basename(dataDir()) === '.data' ? { AGENT_PLAYER_DATA_DIR: undefined } : {}) },
+    extraEnv: { AGENT_TERMINAL: 'true', DPRO_SUBSCRIPTION_CHAT: '1', ...(path.basename(dataDir()) === '.data' ? { AGENT_PLAYER_DATA_DIR: undefined } : {}) },
     createBridge: ({ upstreamPort, launchToken }) => createApplicationServer({ packageRoot: payload.coreUiDir, channel: 'candidate', upstreamPort, launchToken }),
     onLog: line => log.write(line),
     onBackendExit: ({ code, signal }) => {

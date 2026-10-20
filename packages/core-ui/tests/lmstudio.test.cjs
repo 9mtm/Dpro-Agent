@@ -1,6 +1,7 @@
-// CHAT-PRO-02 G: LM Studio models in the chat — the model list keeps them (prefixed ids,
-// both projections), the picker shows one "On this computer" list, a picked LM Studio
-// model goes with the run, and "LM Studio is not running" reaches the reply.
+// CHAT-PRO-02 G: LM Studio models — the model list keeps them (prefixed ids, both
+// projections), a run may carry an LM Studio model, and "LM Studio is not running"
+// reaches the reply. Since CORE-PICKER-01 the chat picker chooses who answers (the
+// agent or a coding app in the terminal); local models are chosen in Settings.
 require('./load.cjs');
 const { test } = require('node:test');
 const assert = require('node:assert/strict');
@@ -47,28 +48,38 @@ test('"LM Studio is not running" is a typed end of a run; other codes stay hidde
   assert.deepEqual(projectRunEvent({ seq: 3, type: 'end', status: 'error', ms: 4, code: 'something_else' }), { seq: 3, type: 'end', status: 'error', ms: 4 });
 });
 
-test('the chat picker: one "On this computer" list with Ollama and LM Studio models; the pick goes with the run', async t => {
+test('the chat picker chooses who answers: no local model list; the coding apps only when the backend lists them (CORE-PICKER-01)', async t => {
   const calls = []; const base = createLoginMock();
-  const client = new SessionClient({ mock: async r => { calls.push({ method: r.method, path: r.path, body: r.body }); return base(r); } });
+  let withApps = false;
+  const client = new SessionClient({ mock: async r => {
+    calls.push({ method: r.method, path: r.path, body: r.body });
+    const res = await base(r);
+    if (withApps && r.path === '/api/models' && res.status === 200) return { ...res, body: { models: [...res.body.models,
+      { id: 'subscription:claude', provider: 'subscription', label: 'Claude Code · existing account', size: '' },
+      { id: 'subscription:codex', provider: 'subscription', label: 'Codex · existing ChatGPT account', size: '' }] } };
+    return res;
+  } });
   client.selectMode('mock'); await client.login('demo@example.invalid', 'mock-only');
   let n = 0;
   const c = new ConversationsController(client, () => `id${String(++n).padStart(10, '0')}`);
   t.after(() => c.dispose());
   await c.load();
   const end = Date.now() + 3000; while (!c.getSnapshot().models.length && Date.now() < end) await new Promise(r => setTimeout(r, 20));
-  assert.ok(c.getSnapshot().models.some(m => m.id === 'lmstudio:fiction/mistral-7b' && m.provider === 'lmstudio'));
-  const html = renderToStaticMarkup(React.createElement(ChatView, { controller: c, mode: 'mock', client }));
-  const group = /<optgroup label="On this computer">(.*?)<\/optgroup>/.exec(html);
-  assert.ok(group, 'one local group');
-  assert.match(group[1], /qwen-fiction:7b/);
-  assert.match(group[1], /fiction\/mistral-7b/);
-  assert.equal((html.match(/<optgroup/g) || []).length, 1, 'no separate LM Studio group (no Claude key in the mock)');
-  // Opening the picker asks again, but not more than every 5 s (the list was just read).
-  const before = calls.filter(x => x.path === '/api/models').length;
-  await c.loadModels(true); await c.loadModels(true);
-  assert.equal(calls.filter(x => x.path === '/api/models').length, before);
-  c.selectModel('lmstudio:fiction/mistral-7b');
-  assert.equal(c.getSnapshot().model, 'lmstudio:fiction/mistral-7b');
+  assert.ok(c.getSnapshot().models.some(m => m.id === 'lmstudio:fiction/mistral-7b'), 'the list itself still has the local models (Settings uses it)');
+  // Web backend: no coding apps → no picker at all; the local models are never offered in the chat.
+  let html = renderToStaticMarkup(React.createElement(ChatView, { controller: c, mode: 'mock', client }));
+  assert.doesNotMatch(html, /Who answers the next reply/);
+  assert.doesNotMatch(html, /qwen-fiction:7b|fiction\/mistral-7b|On this computer/);
+  // Desktop backend: the agent with its own model + the coding apps in the terminal.
+  withApps = true; await new Promise(r => setTimeout(r, 5100)); await c.loadModels(true);
+  html = renderToStaticMarkup(React.createElement(ChatView, { controller: c, mode: 'mock', client }));
+  assert.match(html, /title="Who answers the next reply"/);
+  assert.match(html, /<option value="" selected="">[^<]* · own model<\/option>/);
+  const group = /<optgroup label="In the terminal">(.*?)<\/optgroup>/.exec(html);
+  assert.ok(group, 'one terminal group');
+  assert.match(group[1], /Claude Code/); assert.match(group[1], /Codex/);
+  assert.equal((html.match(/<optgroup/g) || []).length, 1, 'no local or paid model groups');
+  assert.doesNotMatch(html, /qwen-fiction:7b|fiction\/mistral-7b/);
 });
 
 test('the reply says LM Studio is not running and what to do', () => {

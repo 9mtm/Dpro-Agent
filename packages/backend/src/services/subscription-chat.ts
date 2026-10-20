@@ -7,9 +7,15 @@ import {spawn} from 'node:child_process';
 import {minimalChildEnv,safeChildCwd} from '../tools/exec-policy.js';
 export const subscriptionModel=(value:unknown):value is string=>typeof value==='string'&&/^subscription:(claude|codex)(?::[a-f0-9]{32})?$/.test(value);
 export const subscriptionEnabled=()=>process.env.DPRO_SUBSCRIPTION_CHAT==='1'&&process.env.AGENT_PLAYER_ISOLATED!=='1';
+/** Where the CLIs are installed. An app opened from the Dock gets a short PATH, so the usual install folders are searched too (CORE-PICKER-01): Homebrew, npm under fnm/nvm/volta. */
+export async function subscriptionSearchDirs(home=os.homedir(),pathEnv=process.env.PATH??''):Promise<string[]>{
+ const versions=async(dir:string,tail:string[])=>{try{return (await fs.readdir(dir)).sort((a,b)=>b.localeCompare(a,undefined,{numeric:true})).map(v=>path.join(dir,v,...tail));}catch{return [];}};
+ const dirs=[path.join(home,'.local','bin'),...pathEnv.split(path.delimiter).filter(Boolean),'/opt/homebrew/bin','/usr/local/bin',path.join(home,'.volta','bin'),path.join(home,'.npm-global','bin'),
+  ...await versions(path.join(home,'.local','share','fnm','node-versions'),['installation','bin']),...await versions(path.join(home,'.nvm','versions','node'),['bin'])];
+ return [...new Set(dirs.filter(d=>path.isAbsolute(d)))];
+}
 export async function subscriptionBinary(kind:'claude'|'codex'){
- const candidates=[path.join(os.homedir(),'.local','bin',kind),...(process.env.PATH??'').split(path.delimiter).filter(Boolean).map(p=>path.join(p,kind))];
- for(const file of candidates)try{if((await fs.stat(file)).isFile()){await fs.access(file,fs.constants.X_OK);return file;}}catch{}
+ for(const dir of await subscriptionSearchDirs()){const file=path.join(dir,kind);try{if((await fs.stat(file)).isFile()){await fs.access(file,fs.constants.X_OK);return file;}}catch{}}
  return null;
 }
 export function subscriptionArgs(kind:'claude'|'codex',nativeId?:string){
@@ -30,7 +36,9 @@ export async function runSubscription(model:string,folder:string,prompt:string,s
  if(opaque){const ref=await findSession(opaque);if(!ref||ref.source!==(kind==='claude'?'claude-code':'codex'))throw Error('session_missing');const session=await readSession(ref);if(!session.cwd||await fs.realpath(session.cwd)!==cwd)throw Error('session_folder_mismatch');nativeId=path.basename(ref.file).match(/([a-f0-9]{8}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{12})\.jsonl$/)?.[1];if(!nativeId)throw Error('session_missing');}if(!bin)throw Error('cli_missing');if(signal.aborted)throw Error('cancelled');
  return new Promise((resolve,reject)=>{
   const args=subscriptionArgs(kind,nativeId);
-  const child=spawn(bin,args,{cwd,env:minimalChildEnv({NO_COLOR:'1',TERM:'dumb'}),stdio:['pipe','pipe','pipe'],detached:process.platform!=='win32',windowsHide:true});
+  // The CLI's own folder goes first on PATH: an npm-installed CLI starts with `env node`, and that node sits next to it.
+  const env=minimalChildEnv({NO_COLOR:'1',TERM:'dumb'});env.PATH=[path.dirname(bin),env.PATH].filter(Boolean).join(path.delimiter);
+  const child=spawn(bin,args,{cwd,env,stdio:['pipe','pipe','pipe'],detached:process.platform!=='win32',windowsHide:true});
   let output='',bytes=0,failed=false,hardStop:ReturnType<typeof setTimeout>|undefined;const kill=(signal:NodeJS.Signals)=>{try{if(child.pid&&process.platform!=='win32')process.kill(-child.pid,signal);else child.kill(signal);}catch{}};const stop=()=>{if(failed)return;failed=true;kill('SIGTERM');hardStop=setTimeout(()=>kill('SIGKILL'),1500);hardStop.unref();};
   const timer=setTimeout(stop,240000);signal.addEventListener('abort',stop,{once:true});
   child.stdout.on('data',chunk=>{bytes+=chunk.length;if(bytes>2*1024*1024)stop();else output+=chunk.toString();});child.stderr.resume();child.stdin.on('error',()=>{});

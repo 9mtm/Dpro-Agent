@@ -275,14 +275,13 @@ export function ChatView({ controller, mode, productName = 'Dpro Agent', client,
                   {s.agents.filter(a => !a.primary).map(a => <option key={a.id} value={a.id}>{a.name}</option>)}
                 </select>}</label>
             : <span className="composer-hint">{agentName ? agentName : ''}</span>}
-          {(s.models.length > 0||s.model) && <label className="composer-agent composer-model"><span className="sr-only">Model</span>
-            <select value={s.model} onChange={e => controller.selectModel(e.target.value)} onFocus={() => void controller.loadModels(true)} onMouseDown={() => void controller.loadModels(true)} title="Model for the next reply">
-              <option value="">Agent's model</option>
-              {s.model&&!s.models.some(m=>m.id===s.model)&&<option value={s.model}>{/^subscription:(claude|codex):[a-f0-9]{32}$/.test(s.model)?(s.model.startsWith('subscription:codex:')?'Codex':'Claude Code')+' · previous session':'Saved model: '+s.model}</option>}
-              {/* One list of what runs on this computer (Ollama and LM Studio alike): the owner just picks a name. */}
-              {s.models.some(m => m.provider !== 'claude' && m.provider !== 'subscription') && <optgroup label="On this computer">{s.models.filter(m => m.provider !== 'claude' && m.provider !== 'subscription').map(m => <option key={m.id} value={m.id}>{m.label}{m.size ? ` · ${m.size}` : ''}</option>)}</optgroup>}
-              {s.models.some(m=>m.provider==='subscription')&&<optgroup label="Your signed-in coding apps">{s.models.filter(m=>m.provider==='subscription').map(m=><option key={m.id} value={m.id} disabled={!project?.folder}>{m.label}{!project?.folder?' · choose a folder':''}</option>)}</optgroup>}
-              {s.models.some(m => m.provider === 'claude') && <optgroup label="Claude (paid)">{s.models.filter(m => m.provider === 'claude').map(m => <option key={m.id} value={m.id}>{m.label}</option>)}</optgroup>}
+          {/* Who answers: the agent with its own model (changed in Settings), or a signed-in coding app in the
+              terminal. The coding apps are listed only by the desktop app's backend (CORE-PICKER-01). */}
+          {(s.models.some(m => m.provider === 'subscription') || s.model) && <label className="composer-agent composer-model"><span className="sr-only">Who answers</span>
+            <select value={s.model} onChange={e => controller.selectModel(e.target.value)} onFocus={() => void controller.loadModels(true)} onMouseDown={() => void controller.loadModels(true)} title="Who answers the next reply">
+              <option value="">{(s.activeId ? convAgentName : agentName || s.agents.find(a => a.primary)?.name) || 'Main agent'} · own model</option>
+              {s.model&&!s.models.some(m=>m.id===s.model&&m.provider==='subscription')&&<option value={s.model}>{/^subscription:(claude|codex):[a-f0-9]{32}$/.test(s.model)?(s.model.startsWith('subscription:codex:')?'Codex':'Claude Code')+' · previous session':'Saved model: '+s.model}</option>}
+              {s.models.some(m=>m.provider==='subscription')&&<optgroup label="In the terminal">{s.models.filter(m=>m.provider==='subscription').map(m=><option key={m.id} value={m.id} disabled={!project?.folder}>{m.label}{!project?.folder?' · choose a folder':''}</option>)}</optgroup>}
             </select></label>}
           {mic && <MicButton mic={mic}/>}
           <span className="composer-keys" aria-hidden="true">{running ? 'Esc stops' : 'Enter sends · Shift+Enter new line'}</span>
@@ -309,7 +308,7 @@ function ChatSidePanel({ controller, client, onAddConnector, memory, onOpenMemor
   const outputs = turnOutputs(s.turns);
   const tokens = approxTokens(s.turns);
   const agent = s.agents.find(a => a.id === (conv?.agentId ?? s.agentId))?.name ?? 'Main agent';
-  const model = s.models.find(m => m.id === s.model)?.label ?? (s.model || "Agent's model");
+  const model = s.models.find(m => m.id === s.model)?.label ?? (s.model || "Agent's own model");
   const replies = s.turns.filter(t => t.role === 'assistant');
   const worked = replies.reduce((n, t) => n + (t.durationMs ?? 0), 0);
   const tools = workSummary(s.turns.flatMap(t => withoutPlan(t.parts)));
