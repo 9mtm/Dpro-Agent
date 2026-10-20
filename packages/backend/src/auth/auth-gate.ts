@@ -189,6 +189,7 @@ export const TIER_RULES: readonly Rule[] = [
   { methods: ['POST'], exact: '/api/memory/forget-all', access: 'owner' }, // erase a drawer / all memory (CORE-07)
   { methods: '*', prefix: '/api/memory/embeddings', access: 'owner' }, // embedding model status + re-embed job (CORE-06)
   { methods: '*', prefix: '/api/memory/import', access: 'owner' },    // safe import: preview, revise, commit to quarantine, roll back (CLI-02)
+  { methods: '*', prefix: '/api/memory/doctor', access: 'owner' },    // memory health check + confirmed safe fixes (CORE-MEM-DOCTOR)
   { methods: ['POST'], exact: '/api/task-runs/:id/steps/:index/resolve', access: 'owner' }, // decide an interrupted step's outcome (CORE-08)
   { methods: ['POST'], exact: '/api/task-runs/:id/review', access: 'owner' }, // accept/reject a result that needs review (R1)
   { methods: '*', prefix: '/api/budget', access: 'owner' },        // paid model spend today + daily cap (R2)
