@@ -57,7 +57,7 @@ export interface MemoryRecallRepository {
   /** Classify and store learned items for the actor's user (memory_save). */
   learn(actor: Actor | null | undefined, input: { candidates: Array<Omit<LearningCandidate, 'origin'>>; metadata?: Record<string, unknown>; review?: boolean }): Promise<LearnOutcome>;
   /** An agent edit/delete of an existing memory (memory_edit / memory_delete). */
-  change(actor: Actor | null | undefined, input: { memoryId: string; op: 'update' | 'delete'; updates?: { content?: string; type?: string; importance?: number }; reason?: string | null }): Promise<AgentChangeResult>;
+  change(actor: Actor | null | undefined, input: { memoryId: string; op: 'update' | 'delete'; updates?: { content?: string; type?: string; importance?: number; topicKey?: string | null }; reason?: string | null }): Promise<AgentChangeResult>;
   /** Counts over the reachable memory; null when nothing is reachable (no drawers). */
   stats(actor: Actor | null | undefined): Promise<MemoryStats | null>;
   /** Readable memory in reach (agent runs: open drawers), importance first then newest. */

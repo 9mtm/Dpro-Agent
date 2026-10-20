@@ -16,7 +16,10 @@
  *   money / credentials / health / legal / permissions   sensitive topics (EN/AR/DE words)
  *   decision        a standing decision ("from now on", "قررت", "ab jetzt")
  *   conflict        close to an existing memory of the drawer, but drops some of its
- *                   words (possible contradiction; adding detail is not one)
+ *                   words (possible contradiction; adding detail is not one), or the
+ *                   same subject negated / with an opposite word (contradiction.ts).
+ *                   CORE-MEM-CONFLICT: the proposal then updates that existing memory
+ *                   (conflict_with); the owner keeps new, keeps old or keeps both
  *   overwrite       an edit or delete of an existing memory that is itself important,
  *                   or an explicit replacement
  *   low-confidence  extraction confidence below 0.6
@@ -27,6 +30,11 @@
  *
  * Proposals are reviewed by the owner account only (owner-only API). For a
  * non-owner account an important item is not saved (reported as skipped).
+ *
+ * Topic keys (CORE-MEM-TOPIC): a candidate with a topic key that already
+ * names a memory of its drawer updates that memory (new version, same
+ * classification rules as an agent edit) instead of adding another one;
+ * a negation or opposite of it is a conflict proposal instead.
  */
 
 import { v4 as uuidv4 } from 'uuid';
@@ -40,9 +48,12 @@ import {
   type MemoryChange,
   type MemoryProposal,
 } from './memory-files.js';
-import { recordBaselineIfMissing, recordVersion, recordVersionStep, versionEntryOf, type VersionEntry } from './versions.js';
+import { recordBaselineIfMissing, recordBaselineIfMissingStep, recordVersion, recordVersionStep, versionEntryOf, type VersionEntry } from './versions.js';
 import type { ImportanceLevel, Memory, MemoryType, MultiTierLayer } from './types.js';
 import { textSimilarity } from './embedding.js';
+import { detectContradiction } from './contradiction.js';
+import { TopicKeyError, normalizeTopicKey } from './topic-key.js';
+import { TopicKeyTakenError } from './storage.js';
 
 export const MAX_LEARNED_CONTENT = 50_000;
 /** Confidence below this needs review. */
@@ -72,6 +83,8 @@ export interface LearningCandidate {
   replaces?: { id: string; content: string; type: string; important?: boolean } | null;
   /** A safe reference to a secret saved in the credential store. */
   credentialRef?: boolean;
+  /** Stable topic key (CORE-MEM-TOPIC); normalized by learn(). */
+  topicKey?: string | null;
 }
 
 export interface LearningContext {
@@ -136,9 +149,12 @@ export function classifyLearning(c: LearningCandidate, ctx: LearningContext = {}
     // ("likes tea" -> "likes coffee"); adding detail to it is not.
     const words = new Set(norm.split(' '));
     for (const s of ctx.similar || []) {
-      if (s.similarity < CONFLICT_SIMILARITY) continue;
       const old = normText(s.content);
-      if (old !== norm && old.split(' ').some((w) => !words.has(w))) conflictsWith.push(s.id);
+      if (old === norm) continue;
+      // CORE-MEM-CONFLICT: the same subject negated or with an opposite word.
+      if (detectContradiction(s.content, text)) { conflictsWith.push(s.id); continue; }
+      if (s.similarity < CONFLICT_SIMILARITY) continue;
+      if (old.split(' ').some((w) => !words.has(w))) conflictsWith.push(s.id);
     }
     if (conflictsWith.length) reasons.add('conflict');
   }
@@ -172,13 +188,13 @@ async function proposalAgent(agentId?: string | null): Promise<string> {
 }
 
 /** Build a new memory row (not yet saved). */
-export function newMemory(userId: string, drawer: DrawerRef, entry: VersionEntry, metadata: Record<string, unknown>): Memory {
+export function newMemory(userId: string, drawer: DrawerRef, entry: VersionEntry, metadata: Record<string, unknown>, topicKey: string | null = null): Memory {
   const now = Date.now();
   return {
     id: uuidv4(), userId, drawer, type: entry.type as MemoryType, content: entry.content,
     importance: entry.importance as ImportanceLevel, importanceScore: entry.importance / 10,
     ...layerFor(entry.importance), consolidationStatus: 'pending', status: 'active',
-    metadata, createdAt: new Date(now), lastAccessedAt: now, accessCount: 0,
+    metadata, createdAt: new Date(now), lastAccessedAt: now, accessCount: 0, topicKey,
   };
 }
 
@@ -246,6 +262,8 @@ export interface LearnOutcome {
   proposed: MemoryProposal[];
   skipped: Array<{ content: string; reason: string }>;
   classified: Array<{ kind: LearningClassification['kind']; reasons: LearningReason[]; memoryId?: string; proposalId?: string }>;
+  /** CORE-MEM-TOPIC: memories updated as a new version because their topic key was saved again. */
+  updated: Memory[];
 }
 
 function preview(s: string): string {
@@ -257,7 +275,7 @@ function preview(s: string): string {
  * -> pending proposal (owner account only), duplicate -> nothing.
  */
 export async function learn(input: LearnInput): Promise<LearnOutcome> {
-  const out: LearnOutcome = { saved: [], proposed: [], skipped: [], classified: [] };
+  const out: LearnOutcome = { saved: [], proposed: [], skipped: [], classified: [], updated: [] };
   const storage = getMemoryStorage();
   const ownerReview = (await userRole(input.userId)) === 'owner';
   for (const c of input.candidates) {
@@ -270,13 +288,27 @@ export async function learn(input: LearnInput): Promise<LearnOutcome> {
       out.skipped.push({ content: preview(content), reason: 'drawer not open' });
       continue;
     }
+    let topicKey: string | null;
+    try { topicKey = normalizeTopicKey(c.topicKey); } catch (err) {
+      if (!(err instanceof TopicKeyError)) throw err;
+      out.skipped.push({ content: preview(content), reason: 'invalid topic key' });
+      continue;
+    }
+    const entry: VersionEntry = { type, importance: clampImportance(c.importance), content };
+    if (topicKey) {
+      // CORE-MEM-TOPIC: the topic is known in this drawer -> a new version of it.
+      const existing = await storage.getByTopicKey(input.userId, drawer, topicKey);
+      if (existing) {
+        await learnTopicUpdate(input, out, existing, entry, c, ownerReview);
+        continue;
+      }
+    }
     const similar = (await storage.search({ userId: input.userId, query: content, drawers: [drawer], limit: 5 }))
       // CORE-06: the contradiction check uses a model-independent word
       // similarity (search scores depend on the active embedding model).
       .map((r) => ({ id: r.memory.id, content: r.memory.content, similarity: textSimilarity(content, r.memory.content) }));
     const cls = classifyLearning({ ...c, content, type, drawer }, { similar });
     if (input.review && cls.kind === 'routine') { cls.kind = 'important'; cls.reasons.push('chat'); }
-    const entry: VersionEntry = { type, importance: clampImportance(c.importance), content };
 
     if (cls.kind === 'duplicate') {
       out.skipped.push({ content: preview(content), reason: 'already known' });
@@ -284,8 +316,17 @@ export async function learn(input: LearnInput): Promise<LearnOutcome> {
       continue;
     }
     if (cls.kind === 'routine') {
-      const mem = newMemory(input.userId, drawer, entry, { ...(input.metadata || {}), source: c.origin, learned: 'routine' });
-      await saveVersioned(mem, input.actor, 'learning:routine');
+      const mem = newMemory(input.userId, drawer, entry, { ...(input.metadata || {}), source: c.origin, learned: 'routine' }, topicKey);
+      try {
+        await saveVersioned(mem, input.actor, 'learning:routine');
+      } catch (err) {
+        // A concurrent save took the topic key first: this one becomes a new version of it.
+        if (!(err instanceof TopicKeyTakenError)) throw err;
+        const holder = await storage.getOwned(input.userId, err.holderId);
+        if (!holder) throw err;
+        await learnTopicUpdate(input, out, holder, entry, c, ownerReview);
+        continue;
+      }
       out.saved.push(mem);
       out.classified.push({ kind: cls.kind, reasons: [], memoryId: mem.id });
       continue;
@@ -297,9 +338,15 @@ export async function learn(input: LearnInput): Promise<LearnOutcome> {
     }
     try {
       const reasons = cls.conflictsWith.length ? [...cls.reasons, ...cls.conflictsWith.slice(0, 5).map((id) => `conflicts-with:${id}`)] : cls.reasons;
+      // CORE-MEM-CONFLICT: never written over the existing memory; the proposal
+      // updates the first contradicted one only if the owner keeps the new text.
+      const old = cls.conflictsWith.length ? await storage.getOwned(input.userId, cls.conflictsWith[0]) : null;
+      const change: MemoryChange = old
+        ? { op: 'update', id: old.id, before: versionEntryOf(old), after: entry }
+        : { op: 'add', after: entry, ...(topicKey ? { topicKey } : {}) };
       const proposal = await createChangeProposal({
-        userId: input.userId, agentId: await proposalAgent(input.agentId), drawer, changes: [{ op: 'add', after: entry }],
-        source: c.origin === 'agent' ? 'agent' : 'learning', reasons, createdBy: input.actor,
+        userId: input.userId, agentId: await proposalAgent(input.agentId), drawer, changes: [change],
+        source: c.origin === 'agent' ? 'agent' : 'learning', reasons, createdBy: input.actor, conflictWith: old?.id ?? null,
       });
       out.proposed.push(proposal);
       out.classified.push({ kind: cls.kind, reasons: cls.reasons, proposalId: proposal.id });
@@ -309,6 +356,72 @@ export async function learn(input: LearnInput): Promise<LearnOutcome> {
     }
   }
   return out;
+}
+
+/**
+ * CORE-MEM-TOPIC: a candidate whose topic key already names `existing`.
+ * Same text -> nothing; a negation/opposite of it -> conflict proposal (owner
+ * account only); anything else -> an update of `existing`: routine ones are
+ * applied as a new version, important ones (overwrite rules of agentChange)
+ * become an update proposal.
+ */
+async function learnTopicUpdate(input: LearnInput, out: LearnOutcome, existing: Memory, entry: VersionEntry, c: LearningCandidate, ownerReview: boolean): Promise<void> {
+  const before = versionEntryOf(existing);
+  if (normText(before.content) === normText(entry.content) && before.type === entry.type) {
+    out.skipped.push({ content: preview(entry.content), reason: 'already known' });
+    out.classified.push({ kind: 'duplicate', reasons: [] });
+    return;
+  }
+  const drawer = existing.drawer!;
+  const contradiction = detectContradiction(before.content, entry.content);
+  const cls = classifyLearning({
+    content: entry.content, type: entry.type, drawer, origin: c.origin, confidence: c.confidence, credentialRef: c.credentialRef,
+    replaces: { id: existing.id, content: before.content, type: before.type, important: before.importance >= 9 },
+  });
+  const reasons: LearningReason[] = contradiction ? [...new Set<LearningReason>(['conflict', ...cls.reasons])] : cls.reasons;
+  if (input.review && !reasons.length) reasons.push('chat');
+  if (!reasons.length) {
+    const updated = await updateVersioned(input.userId, existing.id, {
+      content: entry.content, type: entry.type as MemoryType,
+      importance: entry.importance as ImportanceLevel, importanceScore: entry.importance / 10,
+    }, input.actor, 'learning:topic');
+    if (updated) out.updated.push(updated);
+    out.classified.push({ kind: 'routine', reasons: [], memoryId: existing.id });
+    return;
+  }
+  if (!ownerReview) {
+    out.skipped.push({ content: preview(entry.content), reason: 'needs owner approval' });
+    out.classified.push({ kind: 'important', reasons });
+    return;
+  }
+  try {
+    const proposal = await createChangeProposal({
+      userId: input.userId, agentId: await proposalAgent(input.agentId), drawer,
+      changes: [{ op: 'update', id: existing.id, before, after: entry }],
+      source: c.origin === 'agent' ? 'agent' : 'learning',
+      reasons: contradiction ? [...reasons, `conflicts-with:${existing.id}`] : reasons,
+      createdBy: input.actor, conflictWith: contradiction ? existing.id : null,
+    });
+    out.proposed.push(proposal);
+    out.classified.push({ kind: 'important', reasons, proposalId: proposal.id });
+  } catch (err) {
+    if (!(err instanceof MemoryFileError)) throw err;
+    out.skipped.push({ content: preview(entry.content), reason: err.message });
+  }
+}
+
+/**
+ * Set or clear a memory's topic key with a version row (reason
+ * `topic-key:<key>`), in one transaction. Throws TopicKeyTakenError when
+ * another memory of the drawer holds the key.
+ */
+export async function setTopicKeyVersioned(m: Memory, topicKey: string | null, actor: string): Promise<void> {
+  const storage = getMemoryStorage();
+  await sql().tx(function* () {
+    yield* storage.setTopicKeyStep(m.userId, m.id, topicKey);
+    yield* recordBaselineIfMissingStep(m, actor);
+    yield* recordVersionStep({ memoryId: m.id, userId: m.userId, drawer: m.drawer!, change: 'update', entry: versionEntryOf(m), actor, reason: `topic-key:${topicKey ?? '(none)'}` });
+  });
 }
 
 export type AgentChangeResult =
@@ -322,7 +435,9 @@ export type AgentChangeResult =
  * routine ones are applied directly and versioned.
  */
 export async function agentChange(input: {
-  userId: string; memoryId: string; op: 'update' | 'delete'; updates?: { content?: string; type?: string; importance?: number };
+  userId: string; memoryId: string; op: 'update' | 'delete';
+  /** `topicKey`: undefined = unchanged, null/'' = clear, else the new key (CORE-MEM-TOPIC). */
+  updates?: { content?: string; type?: string; importance?: number; topicKey?: string | null };
   actor: string; agentId?: string | null; openDrawers?: readonly DrawerRef[] | null; outsider?: boolean; reason?: string | null;
 }): Promise<AgentChangeResult> {
   const storage = getMemoryStorage();
@@ -339,7 +454,26 @@ export async function agentChange(input: {
     content: typeof input.updates?.content === 'string' && input.updates.content.trim() ? input.updates.content : before.content,
   };
   if (after && after.content.length > MAX_LEARNED_CONTENT) return { status: 'refused', reason: 'Content is too long' };
-  if (after && JSON.stringify(after) === JSON.stringify(before)) return { status: 'refused', reason: 'Nothing to change' };
+  let topicKey: string | null | undefined;
+  if (input.op === 'update' && input.updates?.topicKey !== undefined) {
+    try { topicKey = normalizeTopicKey(input.updates.topicKey); } catch (err) {
+      if (err instanceof TopicKeyError) return { status: 'refused', reason: err.message };
+      throw err;
+    }
+  }
+  const topicChange = topicKey !== undefined && topicKey !== (old.topicKey ?? null);
+  if (after && JSON.stringify(after) === JSON.stringify(before) && !topicChange) return { status: 'refused', reason: 'Nothing to change' };
+  if (topicChange) {
+    // CORE-MEM-TOPIC: naming the topic is bookkeeping, applied at once (versioned).
+    try {
+      await setTopicKeyVersioned(old, topicKey!, input.actor);
+    } catch (err) {
+      if (err instanceof TopicKeyTakenError) return { status: 'refused', reason: err.message };
+      throw err;
+    }
+    old.topicKey = topicKey;
+    if (JSON.stringify(after) === JSON.stringify(before)) return { status: 'applied', memory: await storage.getOwned(input.userId, old.id) };
+  }
 
   const cls = classifyLearning({
     content: after ? after.content : before.content, type: after?.type ?? before.type, drawer,

@@ -143,8 +143,9 @@ export async function isUserConversation(userId: string | undefined, sessionId: 
 /** Link an agent's memory proposal to the conversation and the newest owner message. */
 export async function linkAgentProposal(userId: string, conversationId: string, proposal: MemoryProposal): Promise<void> {
   const last = await q.one<{ id: string }>("SELECT id FROM chat_messages WHERE session_id = ? AND role = 'user' ORDER BY created_at DESC, id DESC LIMIT 1", conversationId);
-  const add = proposal.changes.find((ch) => ch.op === 'add');
-  const text = add && add.op === 'add' ? add.after.content : '';
+  // An add, or the new text of an update (a topic-key update or a conflict, CORE-MEM-TOPIC/CONFLICT).
+  const change = proposal.changes.find((ch) => ch.op === 'add') ?? proposal.changes.find((ch) => ch.op === 'update');
+  const text = change && 'after' in change ? change.after.content : '';
   await q.run(`INSERT INTO chat_memory_links (id, user_id, conversation_id, message_id, kind, proposal_id, drawer_kind, drawer_key, preview)
     VALUES (?, ?, ?, ?, 'proposed', ?, ?, ?, ?)`, randomUUID(), userId, conversationId, last?.id ?? null, proposal.id, proposal.drawer.kind, proposal.drawer.key ?? '', preview(text));
 }

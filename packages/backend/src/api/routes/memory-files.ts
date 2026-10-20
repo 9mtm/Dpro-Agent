@@ -14,6 +14,8 @@
  *   GET  /api/memory/proposals/:id               one proposal with its diff and reviewHash
  *   POST /api/memory/proposals/:id/approve       { expectedReviewHash } apply as a new version (audited)
  *   POST /api/memory/proposals/:id/reject        { expectedReviewHash, note? } nothing changes (audited)
+ *   POST /api/memory/proposals/:id/decide        { decision, expectedReviewHash, note? } a conflict proposal
+ *                                                (CORE-MEM-CONFLICT): keep_new | keep_old | keep_both (audited)
  *
  * Decision errors carry a machine `code`: 400 `review_hash_required`,
  * 409 `already_decided` | `stale` | `review_changed`.
@@ -172,6 +174,25 @@ export async function memoryFilesRoutes(fastify: FastifyInstance) {
     } catch (err) {
       if (err instanceof MemoryFileError && err.status !== 404) {
         audit(request, ownerId, 'memory_proposal.approve', false, request.params.id, err.code ? { code: err.code } : {}, err.message);
+      }
+      return fail(reply, err);
+    }
+  });
+
+  fastify.post<IdParams>('/api/memory/proposals/:id/decide', { config }, async (request, reply) => {
+    const ownerId = ownerOf(request, reply);
+    if (ownerId === null) return reply;
+    const b = body(request);
+    try {
+      const result = await repositories.memory.decideConflict(actorOf(request), request.params.id, b.decision, b.expectedReviewHash, b.note);
+      audit(request, ownerId, 'memory_proposal.decide', true, request.params.id, {
+        drawer: result.proposal.drawerId, decision: result.decision,
+        ...(result.applied ? { added: result.applied.added.length, updated: result.applied.updated.length } : {}),
+      });
+      return result;
+    } catch (err) {
+      if (err instanceof MemoryFileError && err.status !== 404) {
+        audit(request, ownerId, 'memory_proposal.decide', false, request.params.id, err.code ? { code: err.code } : {}, err.message);
       }
       return fail(reply, err);
     }

@@ -15,6 +15,8 @@ import { repositories } from '../../repositories/index.js';
 import { requestMeta } from '../../repositories/audit.js';
 import { ScopeError, sendScopeError } from '../../repositories/scope.js';
 import { MemoryCursorError } from '../../memory/display-page.js';
+import { TopicKeyError, normalizeTopicKey, suggestTopicKey } from '../../memory/topic-key.js';
+import { TopicKeyTakenError } from '../../memory/storage.js';
 
 const MAX_CONTENT = 50_000;
 const MAX_METADATA_JSON = 64 * 1024;
@@ -90,6 +92,7 @@ const memoryRepo = repositories.memory;
 /** Repository 404s keep this route's message; other scope errors as sent. */
 function memoryError(reply: import('fastify').FastifyReply, err: unknown) {
   if (err instanceof ScopeError && err.status === 404) return reply.code(404).send({ error: 'Memory not found' });
+  if (err instanceof TopicKeyTakenError) return reply.code(409).send({ error: err.message, code: 'topic_key_taken', memoryId: err.holderId });
   return sendScopeError(reply, err);
 }
 
@@ -123,6 +126,17 @@ export async function memoryRoutes(fastify: FastifyInstance) {
       count: memories.length,
       memories: memories.map(({ embedding, embeddingModel, ...item }) => item)
     };
+  });
+
+  /**
+   * GET /api/memory/topic-key?title= - Suggested stable topic key for a title
+   * (CORE-MEM-TOPIC; pure, reads nothing). `key` is null when the title has
+   * no letters or digits.
+   */
+  fastify.get<{ Querystring: { title?: unknown } }>('/api/memory/topic-key', async (request, reply) => {
+    const title = request.query.title;
+    if (typeof title !== 'string' || title.length > 500) return reply.code(400).send({ error: 'title is required (up to 500 characters)' });
+    return { success: true, key: suggestTopicKey(title) };
   });
 
   /**
@@ -164,7 +178,15 @@ export async function memoryRoutes(fastify: FastifyInstance) {
       importance?: number;
       metadata?: Record<string, any>;
       drawer?: unknown;
+      topicKey?: unknown;
     };
+
+    // CORE-MEM-TOPIC: optional stable topic key (normalized).
+    let topicKey: string | null;
+    try { topicKey = normalizeTopicKey(body.topicKey); } catch (err) {
+      if (err instanceof TopicKeyError) return reply.code(400).send({ error: err.message });
+      throw err;
+    }
 
     // CORE-03: optional drawer { kind, key? }; default by type.
     let drawer: DrawerRef | undefined;
@@ -227,18 +249,23 @@ export async function memoryRoutes(fastify: FastifyInstance) {
       lastAccessedAt: Date.now(),
       accessCount: 0,
       ...(drawer ? { drawer } : {}),
+      ...(topicKey ? { topicKey } : {}),
     };
 
     // CORE-05: the account's own add, versioned (actor = the caller); the
-    // owner of the memory is always the actor (repository).
-    let memory: Memory;
+    // owner of the memory is always the actor (repository). CORE-MEM-TOPIC:
+    // a topic key the drawer already has updates that memory (new version).
+    let result: { memory: Memory; updated: boolean };
     try {
-      memory = await memoryRepo.create(actorOf(request), draft, 'api');
+      result = topicKey
+        ? await memoryRepo.createOrUpdateTopic(actorOf(request), draft, 'api')
+        : { memory: await memoryRepo.create(actorOf(request), draft, 'api'), updated: false };
     } catch (err) { return memoryError(reply, err); }
 
     return {
       success: true,
-      memory
+      memory: result.memory,
+      ...(topicKey ? { updatedExisting: result.updated } : {}),
     };
   });
 
@@ -258,6 +285,22 @@ export async function memoryRoutes(fastify: FastifyInstance) {
         return reply.code(400).send({ error: picked.error });
       }
       const { updates } = picked;
+      // CORE-MEM-TOPIC: `topicKey` sets the key; null or '' clears it.
+      const rawTopic = isPlainObject(request.body) ? request.body.topicKey : undefined;
+      let topicKey: string | null | undefined;
+      try { topicKey = rawTopic === undefined ? undefined : normalizeTopicKey(rawTopic); } catch (err) {
+        if (err instanceof TopicKeyError) return reply.code(400).send({ error: err.message });
+        throw err;
+      }
+
+      if (topicKey !== undefined) {
+        try {
+          await memoryRepo.setTopicKey(actorOf(request), id, topicKey);
+        } catch (err) { return memoryError(reply, err); }
+        if (Object.keys(updates).length === 0) {
+          return { success: true, memory: await memoryRepo.get(actorOf(request), id) };
+        }
+      }
 
       try {
         // CORE-05: baseline + new version, actor = the caller.

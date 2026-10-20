@@ -29,6 +29,8 @@ interface MemorySaveParams {
   userId?: unknown;
   /** Drawer id, e.g. "project:alpha" (only a drawer loaded for this turn) */
   drawer?: string;
+  /** Stable topic key (CORE-MEM-TOPIC), e.g. "favorite-editor"; normalized */
+  topic_key?: string;
 }
 
 export const memorySaveTool: Tool = {
@@ -46,6 +48,12 @@ Routine facts are saved at once. Important items (owner identity or
 preferences, people, money, credentials, health, legal, permissions,
 decisions, or anything contradicting an existing memory) wait for the
 owner's approval; the result then says "Waiting for owner approval".
+
+Evolving facts: give a stable topic_key (e.g. "favorite-editor",
+"project-alpha-status"). Saving the same topic_key again updates that memory
+as a new version instead of adding a second one; a value that contradicts it
+(negated or opposite) waits for the owner's decision (keep new / keep old /
+keep both). Any title works as a key: "Favorite Editor" -> "favorite-editor".
 
 The saved information will be:
 - Stored in the memory system (every change is versioned)
@@ -101,6 +109,10 @@ Examples:
       drawer: {
         type: 'string',
         description: 'Memory drawer: "owner", "experience", or one of the drawers open for this conversation such as "project:<slug>", "task:<id>", "people:<id>". Default: chosen by type.',
+      },
+      topic_key: {
+        type: 'string',
+        description: 'Stable topic of an evolving fact (e.g. "favorite-editor"). The same topic_key in the same drawer updates that memory as a new version.',
       },
     },
     required: ['content'],
@@ -159,18 +171,35 @@ Examples:
       // memory in the chat (Accept / Reject); nothing is saved by itself.
       const chat = context?.chatPlan === true && !context.toolPolicy && await isUserConversation(context.userId, context.sessionId);
       const outcome = await repositories.memory.learn(actor, {
-        candidates: [{ content: params.content, type, importance, drawer }],
+        candidates: [{ content: params.content, type, importance, drawer, ...(params.topic_key !== undefined ? { topicKey: params.topic_key } : {}) }],
         metadata: { ...params.metadata, tags: params.tags || [], savedAt: new Date().toISOString() },
         ...(chat ? { review: true } : {}),
       });
       const memory = outcome.saved[0];
       const proposal = outcome.proposed[0];
+      const updated = outcome.updated[0];
+
+      if (updated) {
+        return {
+          content: [{ type: 'text', text: `Updated memory ${updated.id} (topic "${updated.topicKey}") as a new version.` }],
+          data: { success: true, memoryId: updated.id, topicKey: updated.topicKey, updatedExisting: true },
+        };
+      }
 
       if (proposal && chat) {
         await linkAgentProposal(context!.userId!, context!.sessionId!, proposal);
         return {
           content: [{ type: 'text', text: `Proposed to the owner: the chat shows this memory with Accept and Reject. It is saved only if the owner accepts it (proposal ${proposal.id}).` }],
           data: { success: true, pendingApproval: true, proposalId: proposal.id, reasons: proposal.reasons },
+        };
+      }
+      if (proposal?.conflictWith) {
+        return {
+          content: [{
+            type: 'text',
+            text: `Waiting for the owner: this contradicts memory ${proposal.conflictWith}. Nothing was overwritten; the owner keeps the new text, the old one, or both (proposal ${proposal.id}).`,
+          }],
+          data: { success: true, pendingApproval: true, conflict: true, conflictWith: proposal.conflictWith, proposalId: proposal.id, reasons: proposal.reasons },
         };
       }
       if (proposal) {
@@ -216,6 +245,7 @@ Examples:
           importance,
           memoryLayer,
           expiryTimestamp,
+          ...(memory.topicKey ? { topicKey: memory.topicKey } : {}),
         },
       };
     } catch (error: any) {
