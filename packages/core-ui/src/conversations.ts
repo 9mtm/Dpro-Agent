@@ -14,7 +14,7 @@ import type { Turn } from './turns';
 export type Conversation = WireConversation;
 export type Project = WireProject;
 export type AgentChoice = Readonly<{ id: string; name: string; primary?: boolean }>;
-export type ModelOption = Readonly<{ id: string; provider: 'ollama' | 'claude' | 'lmstudio' | 'subscription'; label: string; size: string }>;
+export type ModelOption = Readonly<{ id: string; provider: 'ollama' | 'claude' | 'lmstudio' | 'subscription'; label: string; size: string; variants?: readonly Readonly<{ id: string; label: string }>[] }>;
 export type ConversationsState = Readonly<{
   access: 'ready' | 'denied';
   listPhase: 'idle' | 'loading' | 'ready' | 'error';
@@ -245,8 +245,15 @@ export class ConversationsController {
   #modelWrites: Promise<void> = Promise.resolve();
   #pendingModelWrites = 0;
   #modelSaveFailures = new Set<string>();
+  /** CORE-PICKER-02: a listed coding app (or this chat's previous session of it) with one of the app's own models. */
+  #appModel(model:string):boolean{
+    const m=/^(subscription:(claude|codex))(:[a-f0-9]{32})?(?:\/([a-z0-9][a-z0-9.-]{0,40}))?$/.exec(model);if(!m)return false;
+    const app=this.#state.models.find(x=>x.id===m[1]&&x.provider==='subscription');if(!app)return false;
+    if(m[3]&&!this.#state.model.startsWith(m[1]+m[3]))return false;
+    return !m[4]||!!app.variants?.some(v=>v.id===m[4]);
+  }
   selectModel(model: string) {
-    if(!this.live() || !(model===''||this.#state.models.some(m=>m.id===model)))return;
+    if(!this.live() || !(model===''||this.#state.models.some(m=>m.id===model)||this.#appModel(model)))return;
     this.publish({model});const id=this.#state.activeId;if(!id)return;
     this.#pendingModelWrites++;
     this.#modelWrites=this.#modelWrites.then(async()=>{

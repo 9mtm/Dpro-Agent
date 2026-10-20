@@ -55,7 +55,7 @@ test('the chat picker chooses who answers: no local model list; the coding apps 
     calls.push({ method: r.method, path: r.path, body: r.body });
     const res = await base(r);
     if (withApps && r.path === '/api/models' && res.status === 200) return { ...res, body: { models: [...res.body.models,
-      { id: 'subscription:claude', provider: 'subscription', label: 'Claude Code · existing account', size: '' },
+      { id: 'subscription:claude', provider: 'subscription', label: 'Claude Code · existing account', size: '', variants: [{ id: 'opus', label: 'Opus' }, { id: 'sonnet', label: 'Sonnet' }, { id: '--bad', label: 'x' }] },
       { id: 'subscription:codex', provider: 'subscription', label: 'Codex · existing ChatGPT account', size: '' }] } };
     return res;
   } });
@@ -66,21 +66,24 @@ test('the chat picker chooses who answers: no local model list; the coding apps 
   await c.load();
   const end = Date.now() + 3000; while (!c.getSnapshot().models.length && Date.now() < end) await new Promise(r => setTimeout(r, 20));
   assert.ok(c.getSnapshot().models.some(m => m.id === 'lmstudio:fiction/mistral-7b'), 'the list itself still has the local models (Settings uses it)');
-  // Web backend: the second list has the agent, then the coding apps greyed out; no local models in the chat.
-  const second = (html) => /title="Who answers the next reply">(.*?)<\/select>/.exec(html)?.[1] ?? '';
+  // Who answers lives at the top of the Details panel; the composer keeps only the agent list.
+  const panel = (html) => /<section class="panel-card who-answers">(.*?)<\/section>/.exec(html)?.[1] ?? '';
   let html = renderToStaticMarkup(React.createElement(ChatView, { controller: c, mode: 'mock', client }));
-  assert.equal((html.match(/<select/g) || []).length, 2, 'two lists: the agent, and who answers');
-  assert.match(second(html), /^<option value="" selected="">Main agent<\/option><optgroup label="In the terminal">/);
-  assert.match(second(html), /<option value="subscription:claude" disabled="">Claude Code · desktop app only<\/option>/);
-  assert.match(second(html), /<option value="subscription:codex" disabled="">Codex \(ChatGPT\) · desktop app only<\/option>/);
+  assert.equal((html.match(/<select/g) || []).length, 1, 'the composer has only the agent list');
+  assert.match(panel(html), /<h3>Who answers<\/h3>/);
+  assert.match(panel(html), /role="radio" aria-checked="true"><span class="who-icon">.*?Main agent<small>Own model · set in Settings<\/small>/);
+  assert.match(panel(html), /disabled="".*?Claude Code<small>Desktop app only<\/small>/);
+  assert.match(panel(html), /disabled="".*?Codex<small>Desktop app only<\/small>/);
   assert.doesNotMatch(html, /qwen-fiction:7b|fiction\/mistral-7b|On this computer/);
-  // Desktop backend: the coding apps can be picked once a project folder is chosen.
+  // Desktop backend: the apps are listed with their own models; picking one shows its model list and the composer chip.
   withApps = true; await new Promise(r => setTimeout(r, 5100)); await c.loadModels(true);
+  assert.deepEqual(c.getSnapshot().models.find(m => m.id === 'subscription:claude').variants.map(v => v.id), ['opus', 'sonnet']);
   html = renderToStaticMarkup(React.createElement(ChatView, { controller: c, mode: 'mock', client }));
-  assert.match(second(html), /Claude Code · choose a folder/);
-  assert.match(second(html), /Codex \(ChatGPT\) · choose a folder/);
-  assert.equal((second(html).match(/<optgroup/g) || []).length, 1, 'no local or paid model groups');
-  assert.doesNotMatch(html, /qwen-fiction:7b|fiction\/mistral-7b/);
+  assert.match(panel(html), /Claude Code<small>Choose a project folder<\/small>/);
+  c.selectModel('subscription:claude/opus');
+  html = renderToStaticMarkup(React.createElement(ChatView, { controller: c, mode: 'mock', client }));
+  assert.match(panel(html), /<label class="who-model"><span>Model<\/span><select><option value="">Default<\/option><option value="opus" selected="">Opus<\/option><option value="sonnet">Sonnet<\/option><\/select>/);
+  assert.match(html, /<button type="button" class="composer-who"[^>]*>.*?<span>Claude Code · Opus<\/span><\/button>/);
 });
 
 test('the reply says LM Studio is not running and what to do', () => {

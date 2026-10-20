@@ -3,7 +3,7 @@ import { ChatAvatar } from './ChatAvatar';
 import {CodingSessions} from './CodingSessions';
 import { useEffect, useLayoutEffect, useRef, useState, useSyncExternalStore } from 'react';
 import type { KeyboardEvent, ReactNode } from 'react';
-import type { ConversationsController } from './conversations';
+import type { ConversationsController, ModelOption } from './conversations';
 import { AgentPanel } from './AgentPanel';
 import { ChangesPane, FilesPane } from './ProjectPanes';
 import { PanesController } from './panes';
@@ -14,6 +14,7 @@ import type { PaneName } from './panes';
 import type { SessionClient } from './session';
 import { Markdown } from './markdown';
 import { UiIcon } from './ui-icons';
+import { ClaudeCodeIcon, CodexIcon } from './brand-icons';
 import type { UiIconName } from './ui-icons';
 import { approxTokens, duration, splitWork, toolCount, toolView, turnOutputs, turnPlan, turnSuggestions, withoutPlan, workSummary } from './turns';
 import type { CardSuggestion, PlanStep } from './turns';
@@ -141,6 +142,7 @@ export function ChatView({ controller, mode, productName = 'Dpro Agent', client,
 
   const lastUser = [...s.turns].reverse().find(t => t.role === 'user');
   const agentName = s.agents.find(a => a.id === s.agentId)?.name;
+  const who = whoAnswers(s.model, s.models);
   const activeConv = s.conversations.find(c => c.id === s.activeId);
   const convAgentId = activeConv?.agentId ?? null;
   const nameOf = (id: string | null | undefined) => (id ? s.agents.find(a => a.id === id)?.name : s.agents.find(a => a.primary)?.name) ?? 'Main agent';
@@ -275,15 +277,9 @@ export function ChatView({ controller, mode, productName = 'Dpro Agent', client,
                   {s.agents.filter(a => !a.primary).map(a => <option key={a.id} value={a.id}>{a.name}</option>)}
                 </select>}</label>
             : <span className="composer-hint">{agentName ? agentName : ''}</span>}
-          {/* Who answers: the agent with its own model (changed in Settings), or a signed-in coding app in the
-              terminal. Only the desktop app's backend lists the coding apps; in the browser they are greyed out (CORE-PICKER-01). */}
-          {<label className="composer-agent composer-model"><span className="sr-only">Who answers</span>
-            <select value={s.model} onChange={e => controller.selectModel(e.target.value)} onFocus={() => void controller.loadModels(true)} onMouseDown={() => void controller.loadModels(true)} title="Who answers the next reply">
-              <option value="">{(s.activeId ? convAgentName : agentName || s.agents.find(a => a.primary)?.name) || 'Main agent'}</option>
-              {s.model&&!TERMINAL_APPS.some(a=>a.id===s.model)&&<option value={s.model}>{/^subscription:(claude|codex):[a-f0-9]{32}$/.test(s.model)?(s.model.startsWith('subscription:codex:')?'Codex':'Claude Code')+' · previous session':'Saved model: '+s.model}</option>}
-              <optgroup label="In the terminal">{TERMINAL_APPS.map(a => { const ready = s.models.some(m => m.id === a.id && m.provider === 'subscription');
-                return <option key={a.id} value={a.id} disabled={!ready || !project?.folder}>{a.label}{!ready ? (s.models.some(m => m.provider === 'subscription') ? ' · not on this computer' : ' · desktop app only') : !project?.folder ? ' · choose a folder' : ''}</option>; })}</optgroup>
-            </select></label>}
+          {/* Who answers is chosen at the top of the Details panel (CORE-PICKER-02); the composer only shows a coding app when one answers. */}
+          {who.app && <button type="button" className="composer-who" onClick={() => setPane('details')} title="Change who answers (Details panel)">
+            <AppIcon id={who.app.id} size={12}/><span>{who.text}</span></button>}
           {mic && <MicButton mic={mic}/>}
           <span className="composer-keys" aria-hidden="true">{running ? 'Esc stops' : 'Enter sends · Shift+Enter new line'}</span>
           {running && !s.draft.trim()
@@ -301,7 +297,50 @@ export function ChatView({ controller, mode, productName = 'Dpro Agent', client,
   </div>;
 }
 
-const TERMINAL_APPS = [{ id: 'subscription:claude', label: 'Claude Code' }, { id: 'subscription:codex', label: 'Codex (ChatGPT)' }] as const;
+const TERMINAL_APPS = [{ id: 'subscription:claude', label: 'Claude Code' }, { id: 'subscription:codex', label: 'Codex' }] as const;
+type TerminalApp = (typeof TERMINAL_APPS)[number];
+
+function AppIcon({ id, size }: { id: string; size: number }) {
+  return id === 'subscription:claude' ? <ClaudeCodeIcon size={size}/> : <CodexIcon size={size}/>;
+}
+
+/** Which coding app answers (if any), with its chosen model: `subscription:<app>[:<session>][/<model>]`. */
+export function whoAnswers(model: string, models: readonly ModelOption[]): { app: TerminalApp | null; base: string; variant: string; text: string } {
+  const [base, variant = ''] = model.split('/');
+  const app = model.startsWith('subscription:') ? TERMINAL_APPS.find(a => base === a.id || base.startsWith(`${a.id}:`)) ?? null : null;
+  if (!app) return { app: null, base: '', variant: '', text: '' };
+  const label = variant ? models.find(m => m.id === app.id)?.variants?.find(v => v.id === variant)?.label ?? variant : '';
+  return { app, base, variant, text: [app.label, base !== app.id ? 'previous session' : '', label].filter(Boolean).join(' · ') };
+}
+
+/** Top of the Details panel: the agent with its own model, or Claude Code / Codex in the terminal with one of their models (CORE-PICKER-02). */
+function WhoAnswers({ controller, agent }: { controller: ConversationsController; agent: string }) {
+  const s = useSyncExternalStore(controller.subscribe, controller.getSnapshot, controller.getSnapshot);
+  const project = controller.activeProject();
+  useEffect(() => { void controller.loadModels(true); }, [controller]);
+  const who = whoAnswers(s.model, s.models);
+  const listed = s.models.some(m => m.provider === 'subscription');
+  const variants = who.app ? s.models.find(m => m.id === who.app!.id)?.variants ?? [] : [];
+  return <section className="panel-card who-answers">
+    <h3>Who answers</h3>
+    <div className="who-list" role="radiogroup" aria-label="Who answers">
+      <button type="button" role="radio" aria-checked={!who.app} onClick={() => controller.selectModel('')}>
+        <span className="who-icon"><UiIcon name="brain" size={14}/></span><span className="who-name">{agent}<small>Own model · set in Settings</small></span></button>
+      {TERMINAL_APPS.map(a => {
+        const ready = s.models.some(m => m.id === a.id && m.provider === 'subscription');
+        const why = !ready ? (listed ? 'Not on this computer' : 'Desktop app only') : !project?.folder ? 'Choose a project folder' : 'In the terminal';
+        return <button key={a.id} type="button" role="radio" aria-checked={who.app?.id === a.id} disabled={!ready || !project?.folder} onClick={() => controller.selectModel(a.id)}>
+          <span className="who-icon"><AppIcon id={a.id} size={14}/></span><span className="who-name">{a.label}<small>{why}</small></span></button>;
+      })}
+    </div>
+    {who.app && <label className="who-model"><span>Model</span>
+      <select value={who.variant} onChange={e => controller.selectModel(who.base + (e.target.value ? `/${e.target.value}` : ''))}>
+        <option value="">Default</option>
+        {variants.map(v => <option key={v.id} value={v.id}>{v.label}</option>)}
+        {who.variant && !variants.some(v => v.id === who.variant) && <option value={who.variant}>{who.variant}</option>}
+      </select></label>}
+  </section>;
+}
 
 /** Details of the open conversation: where it works, how big it is, what it produced. */
 function ChatSidePanel({ controller, client, onAddConnector, memory, onOpenMemory }: { controller: ConversationsController; client?: SessionClient; onChooseContext?:()=>void; onAddConnector?: () => void; memory?: ChatMemoryController | null; onOpenMemory?: (drawerId: string, memoryId: string) => void }) {
@@ -311,12 +350,14 @@ function ChatSidePanel({ controller, client, onAddConnector, memory, onOpenMemor
   const outputs = turnOutputs(s.turns);
   const tokens = approxTokens(s.turns);
   const agent = s.agents.find(a => a.id === (conv?.agentId ?? s.agentId))?.name ?? 'Main agent';
-  const model = s.models.find(m => m.id === s.model)?.label ?? (s.model || "Agent's own model");
+  const who = whoAnswers(s.model, s.models);
+  const model = who.app ? who.text : s.model ? `Saved model: ${s.model}` : "Agent's own model";
   const replies = s.turns.filter(t => t.role === 'assistant');
   const worked = replies.reduce((n, t) => n + (t.durationMs ?? 0), 0);
   const tools = workSummary(s.turns.flatMap(t => withoutPlan(t.parts)));
   const home = project?.folder?.match(/^\/Users\/[^/]+/)?.[0];
   return <aside className="chat-panel" aria-label="Conversation details">
+    <WhoAnswers controller={controller} agent={agent}/>
     <section className="panel-card">
       <h3>Environment</h3>
       <dl className="panel-list">

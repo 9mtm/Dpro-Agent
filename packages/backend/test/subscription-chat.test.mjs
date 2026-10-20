@@ -63,3 +63,19 @@ test('ask_coding_app: owner approval always; desktop only; project folder only; 
   const ex=process.env.AGENT_EXEC_TOOLS;delete process.env.AGENT_EXEC_TOOLS;assert.equal(isToolAllowedByExecPolicy('ask_coding_app'),false);if(ex!==undefined)process.env.AGENT_EXEC_TOOLS=ex;
  }finally{if(old===undefined)delete process.env.DPRO_SUBSCRIPTION_CHAT;else process.env.DPRO_SUBSCRIPTION_CHAT=old;if(iso===undefined)delete process.env.AGENT_PLAYER_ISOLATED;else process.env.AGENT_PLAYER_ISOLATED=iso;}
 });
+
+test('a coding app can be asked to use one of its own models (CORE-PICKER-02)',async()=>{
+ const {subscriptionModel,subscriptionVariant,subscriptionArgs,subscriptionVariants}=await import('../src/services/subscription-chat.ts');
+ for(const ok of ['subscription:claude/opus','subscription:codex/gpt-6.1-sol','subscription:claude:'+'a'.repeat(32)+'/sonnet'])assert.equal(subscriptionModel(ok),true,ok);
+ for(const bad of ['subscription:claude/-x','subscription:claude/Opus','subscription:claude/a b','subscription:codex/'+'a'.repeat(50),'subscription:claude//opus'])assert.equal(subscriptionModel(bad),false,bad);
+ assert.equal(subscriptionVariant('subscription:claude/opus'),'opus');assert.equal(subscriptionVariant('subscription:claude'),undefined);
+ const a=subscriptionArgs('claude',undefined,'opus');assert.deepEqual(a.slice(-2),['--model','opus']);
+ const b=subscriptionArgs('codex',undefined,'gpt-6.1-sol');assert.deepEqual(b.slice(0,3),['exec','-m','gpt-6.1-sol']);assert.equal(b.at(-1),'-');
+ assert.ok(!subscriptionArgs('claude',undefined,'--dangerously').includes('--dangerously'),'a bad name never reaches the command line');
+ assert.deepEqual((await subscriptionVariants('claude')).map(v=>v.id),['fable','opus','sonnet','haiku']);
+ const {mkdtempSync,mkdirSync,writeFileSync}=await import('node:fs');const {tmpdir}=await import('node:os');const {join}=await import('node:path');
+ const home=mkdtempSync(join(tmpdir(),'ap-codex-models-'));mkdirSync(join(home,'.codex'));
+ writeFileSync(join(home,'.codex','models_cache.json'),JSON.stringify({models:[{slug:'gpt-6.1-sol',display_name:'GPT-6.1-Sol',visibility:'list'},{slug:'hidden-one',display_name:'H',visibility:'hide'},{slug:'Bad Slug',visibility:'list'}]}));
+ assert.deepEqual(await subscriptionVariants('codex',home),[{id:'gpt-6.1-sol',label:'GPT-6.1-Sol'}]);
+ assert.deepEqual(await subscriptionVariants('codex',join(home,'missing')),[]);
+});
