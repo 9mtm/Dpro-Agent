@@ -76,7 +76,7 @@ export class ChatRun {
       if (type === 'text' && frame.content) this.addText('text', String(frame.content));
       return; // the run's own 'end' event closes the stream
     }
-    if (type === 'error') { this.error = ['model_unavailable', 'lmstudio_not_running'].includes(String(frame.code)) ? String(frame.code) : 'failed'; return; }
+    if (type === 'error') { this.error = ['model_unavailable', 'local_model_missing', 'lmstudio_not_running'].includes(String(frame.code)) ? String(frame.code) : 'failed'; return; }
     if (type === 'text' || type === 'reasoning') {
       const content = typeof frame.content === 'string' ? frame.content : '';
       if (!content) return;

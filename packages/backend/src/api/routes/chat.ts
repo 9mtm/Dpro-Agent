@@ -517,6 +517,19 @@ function modelUnavailable(reply: FastifyReply): FastifyReply {
   return reply.status(502).send({ error: 'Model unavailable', code: 'model_unavailable' });
 }
 
+/** The local model server is running but does not have the model (HTTP 404): say so instead of "unreachable". */
+function localModelMissing(reply: FastifyReply): FastifyReply {
+  const error = 'The local model is not installed';
+  if (reply.raw.headersSent) {
+    if (!reply.raw.writableEnded) {
+      reply.raw.write(`data: ${JSON.stringify({ type: 'error', error, code: 'local_model_missing' })}\n\n`);
+      reply.raw.end();
+    }
+    return reply;
+  }
+  return reply.status(502).send({ error, code: 'local_model_missing' });
+}
+
 /** LM Studio could not be reached or refused: one typed error that says what to do (no upstream text). */
 function lmStudioNotRunning(reply: FastifyReply): FastifyReply {
   const error = lmStudioNotRunningMessage();
@@ -841,7 +854,7 @@ You: [Present results with \`\`\`spec blocks showing temperature, conditions, et
   } catch (err) {
     if (err instanceof ModelUnavailable) {
       console.error('[Chat] ❌ Ollama request failed', { status: err.status });
-      return modelUnavailable(reply);
+      return err.status === 404 ? localModelMissing(reply) : modelUnavailable(reply);
     }
     if (upstreamAbort.signal.aborted) { reply.raw.end(); return reply; }
     console.error('[Chat] ❌ Ollama unreachable', safeErrorFields(err, startedAt));
@@ -999,6 +1012,7 @@ async function nonStreamChat(
     // SECURITY (H-09): the upstream body is never read, logged or relayed.
     console.error('[Chat] ❌ Ollama request failed', { status: response.status });
     try { await response.body?.cancel(); } catch { /* ignore */ }
+    if (response.status === 404) return localModelMissing(reply);
     return reply.status(502).send({ error: 'Model unavailable', code: 'model_unavailable' });
   }
 

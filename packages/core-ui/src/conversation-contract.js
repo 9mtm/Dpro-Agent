@@ -208,7 +208,7 @@ export function projectRunEvent(x) {
   return e && num(x.at) !== undefined ? { ...e, at: num(x.at) } : e;
 }
 /** Typed reasons a run may end with (CHAT-PRO-02 G: LM Studio not running). */
-const END_CODES = ['model_unavailable', 'lmstudio_not_running', 'subscription_org_blocked'];
+const END_CODES = ['model_unavailable', 'local_model_missing', 'lmstudio_not_running', 'subscription_org_blocked'];
 function projectEvent(x) {
   if (!record(x) || !Number.isSafeInteger(x.seq) || x.seq < 1) throw Error('protocol');
   const seq = x.seq;

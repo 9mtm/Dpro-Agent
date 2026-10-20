@@ -1,10 +1,10 @@
 {
   "package": "3d-world-sdk",
-  "version": "0.3.0-preview.14",
-  "distribution": "https://registry.npmjs.org/3d-world-sdk/-/3d-world-sdk-0.3.0-preview.14.tgz",
-  "sha256": "23f694f0a1f2c56598c03234fdea8e73ec291d631d108087c4e419c6dff35dd4",
+  "version": "0.3.0-preview.15",
+  "distribution": "https://registry.npmjs.org/3d-world-sdk/-/3d-world-sdk-0.3.0-preview.15.tgz",
+  "sha256": "834637043df2c90366c8e0a04dc24bb0abb2af3cd85d79f912fd15302790bb5e",
   "license": "AGPL-3.0-only",
-  "prepare": "node scripts/prepare-genvr.cjs /absolute/path/to/3d-world-sdk-0.3.0-preview.14.tgz",
-  "integrity": "sha512-Hf7mih49jfuipTgQvGC/nj/s8Eze9ofnLPF66t04HgrEG1QWeN727oxCv6Tt/zUP2bYx8nLcZebkVMyaMB++sw==",
-  "shasum": "9c715b79d29d2965a13d15cfc6f0f77b21c35764"
+  "prepare": "node scripts/prepare-genvr.cjs /absolute/path/to/3d-world-sdk-0.3.0-preview.15.tgz",
+  "integrity": "sha512-sOMkTRNx868hB95Wn5ZskuoHfRiCrCry7kaarpTHr5WSpBECTkLH6VEg6Q5gpvQCJuz6h9caj/SYi3ScItlQrw==",
+  "shasum": "df8a2e650f6d944abe3074bd61af621a2290394c"
 }

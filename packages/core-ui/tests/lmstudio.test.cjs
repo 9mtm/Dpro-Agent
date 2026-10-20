@@ -43,6 +43,7 @@ test('a run may carry an LM Studio model id (browser and bridge)', () => {
 
 test('"LM Studio is not running" is a typed end of a run; other codes stay hidden', () => {
   assert.deepEqual(projectRunEvent({ seq: 3, type: 'end', status: 'error', ms: 4, code: 'lmstudio_not_running', error: 'private' }), { seq: 3, type: 'end', status: 'error', ms: 4, code: 'lmstudio_not_running' });
+  assert.deepEqual(projectRunEvent({ seq: 3, type: 'end', status: 'error', ms: 4, code: 'local_model_missing' }), { seq: 3, type: 'end', status: 'error', ms: 4, code: 'local_model_missing' });
   assert.deepEqual(projectRunEvent({ seq: 3, type: 'end', status: 'error', ms: 4, code: 'something_else' }), { seq: 3, type: 'end', status: 'error', ms: 4 });
 });
 

@@ -34,6 +34,8 @@ let hold = null; // when set, the next reply waits for hold.release()
 globalThis.fetch = async (url, init = {}) => {
   if (String(url) !== 'http://127.0.0.1:11434/api/chat') throw new Error(`unexpected network call in test: ${url}`);
   bodies.push(JSON.parse(init.body));
+  // 'missing' = the local model server answers 404 (the model is not installed).
+  if (script[0] === 'missing') { script.shift(); return new Response(JSON.stringify({ error: 'model not found' }), { status: 404 }); }
   const lines = script.shift() ?? [{ message: { content: 'ok' }, done: true }];
   const enc = new TextEncoder();
   const h = hold;
@@ -193,6 +195,16 @@ test('an agent set to Claude with no key answers with the local model', async ()
   assert.equal(bodies[0].model, 'qwen3.8:27b');
   const m = (await call('r-owner', 'GET', `/api/chat/conversations/${c.id}/messages`)).json();
   assert.equal(m.messages.at(-1).content, 'Local answer.');
+});
+
+test('a local model that is not installed ends the run with local_model_missing', async () => {
+  const c = (await call('r-owner', 'POST', '/api/chat/conversations', { agentId: 'r-claude' })).json().conversation;
+  script.push('missing');
+  const runId = rid();
+  await call('r-owner', 'POST', `/api/chat/conversations/${c.id}/runs`, { runId, message: 'hello' });
+  await ended(runId);
+  const ev = frames((await call('r-owner', 'GET', `/api/chat/runs/${runId}/events`)).body);
+  assert.deepEqual([ev.at(-1).type, ev.at(-1).status, ev.at(-1).code], ['end', 'error', 'local_model_missing']);
 });
 
 test('a run can pick a local model; a bad model id is refused', async () => {
