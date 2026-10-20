@@ -3,14 +3,17 @@
  * the owner's signed-in Claude Code or Codex in the chat's project folder,
  * waits for the answer and continues with it.
  *
- * Locks: only an agent the owner granted it may call it; every call waits for
- * the owner's approval (approvals.ts); it runs only where the desktop app
+ * Locks: it is exec-class (off unless the server sets AGENT_EXEC_TOOLS=true);
+ * only an agent the owner granted it may call it; every call waits for the
+ * owner's approval (approvals.ts); only an owner's turn may use it, the same
+ * gate as a chat sent to a coding app directly; it runs only where the desktop app
  * turned the coding apps on (subscriptionEnabled), only in the chat's
  * project folder, never for an outside (channel) sender. The coding app gets
  * the same restricted flags as a chat sent to it directly (subscription-chat.ts).
  */
 import type { Tool, ToolResult } from '../types.js';
 import { runSubscription, subscriptionEnabled } from '../../services/subscription-chat.js';
+import { one, sql } from '../../repositories/sql-steps.js';
 
 const APPS = { claude: 'Claude Code', codex: 'Codex' } as const;
 export const MAX_CODING_REQUEST_CHARS = 20_000;
@@ -22,6 +25,7 @@ const PREFIX = 'Work only inside the selected project directory. Do not access c
 
 export const askCodingAppTool: Tool = {
   name: 'ask_coding_app',
+  execClass: true,
   description: 'Ask the owner\'s signed-in Claude Code or Codex to do or answer something in the current project folder, wait for its answer, then use it in your reply. Use it for coding work, reviewing code or questions that need a stronger model; answer simple things yourself. Write a complete, self-contained request (it does not see this conversation). The owner approves each call.',
   input_schema: {
     type: 'object',
@@ -39,6 +43,8 @@ export const askCodingAppTool: Tool = {
     if (request.length > MAX_CODING_REQUEST_CHARS) return fail(`request is longer than ${MAX_CODING_REQUEST_CHARS} characters.`);
     if (context?.toolPolicy) return fail('Coding apps are not available for outside senders.');
     if (!subscriptionEnabled()) return fail('Claude Code and Codex are available only in the Dpro desktop app.');
+    const caller = context?.userId ? await sql().read(one<{ role: string }>('SELECT role FROM users WHERE id=?', context.userId)) : null;
+    if (caller?.role !== 'owner') return fail('Only the owner\'s own chats may use the coding apps.');
     if (!context?.fileReadRoot) return fail('Choose a project folder for this chat first; the coding app works only inside it.');
     try {
       const answer = await runSubscription(`subscription:${app}`, context.fileReadRoot, PREFIX + request, AbortSignal.timeout(240_000));

@@ -54,11 +54,12 @@ test('ask_coding_app: owner approval always; desktop only; project folder only; 
   delete process.env.DPRO_SUBSCRIPTION_CHAT;delete process.env.AGENT_PLAYER_ISOLATED;
   assert.match(text(await askCodingAppTool.execute({app:'claude',request:'hi'},{workspaceDir:'/tmp',fileReadRoot:'/tmp'})),/only in the Dpro desktop app/);
   process.env.DPRO_SUBSCRIPTION_CHAT='1';
-  assert.match(text(await askCodingAppTool.execute({app:'claude',request:'hi'},{workspaceDir:'/tmp'})),/Choose a project folder/);
+  assert.match(text(await askCodingAppTool.execute({app:'claude',request:'hi'},{workspaceDir:'/tmp',fileReadRoot:'/tmp'})),/Only the owner/,'no owner turn → refused before anything starts');
   assert.match(text(await askCodingAppTool.execute({app:'codex',request:'hi'},{workspaceDir:'/tmp',fileReadRoot:'/tmp',toolPolicy:{channel:'telegram'}})),/not available for outside senders/);
   assert.match(text(await askCodingAppTool.execute({app:'other',request:'hi'},{workspaceDir:'/tmp',fileReadRoot:'/tmp'})),/must be "claude" or "codex"/);
   assert.match(text(await askCodingAppTool.execute({app:'claude',request:'  '},{workspaceDir:'/tmp',fileReadRoot:'/tmp'})),/empty/);
-  const r=await askCodingAppTool.execute({app:'codex',request:'hi'},{workspaceDir:'/tmp',fileReadRoot:'/'});
-  assert.ok(r.error,'the filesystem root is refused before anything starts');
+  const {isExecClassTool,isToolAllowedByExecPolicy}=await import('../src/tools/exec-policy.ts');
+  assert.ok(isExecClassTool('ask_coding_app')&&askCodingAppTool.execClass,'exec-class: off unless AGENT_EXEC_TOOLS=true');
+  const ex=process.env.AGENT_EXEC_TOOLS;delete process.env.AGENT_EXEC_TOOLS;assert.equal(isToolAllowedByExecPolicy('ask_coding_app'),false);if(ex!==undefined)process.env.AGENT_EXEC_TOOLS=ex;
  }finally{if(old===undefined)delete process.env.DPRO_SUBSCRIPTION_CHAT;else process.env.DPRO_SUBSCRIPTION_CHAT=old;if(iso===undefined)delete process.env.AGENT_PLAYER_ISOLATED;else process.env.AGENT_PLAYER_ISOLATED=iso;}
 });
