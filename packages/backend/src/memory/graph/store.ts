@@ -54,14 +54,17 @@ const UNREVIEWED_REASON = /^(?:learning|retention|agent)[:]/;
  * True only when the owner has seen the memory's current text: its latest
  * version was applied from an approved proposal, or written by the account
  * itself directly (API create/edit). Decided from the server-written version
- * row, never from memory metadata (a caller can set metadata). Anything else
- * (no version row, agent, extraction, retention, derived saves) is unreviewed.
+ * row, never from memory metadata (a caller can set metadata). The version
+ * must hold exactly the indexed text (`hash`): a row written before its
+ * version (updateVersioned) is never judged by the previous version. Anything
+ * else (no or older version row, agent, extraction, retention, derived
+ * saves) is unreviewed.
  */
-function* ownerReviewedStep(memory: Memory): Step<boolean> {
-  const v = yield* one<{ created_by: string | null; proposal_id: string | null; reason: string | null }>(
-    'SELECT created_by, proposal_id, reason FROM memory_versions WHERE memory_id = ? AND user_id = ? ORDER BY version DESC LIMIT 1',
+function* ownerReviewedStep(memory: Memory, hash: string): Step<boolean> {
+  const v = yield* one<{ created_by: string | null; proposal_id: string | null; reason: string | null; content: string | null }>(
+    'SELECT created_by, proposal_id, reason, content FROM memory_versions WHERE memory_id = ? AND user_id = ? ORDER BY version DESC LIMIT 1',
     memory.id, memory.userId);
-  if (!v) return false;
+  if (!v || typeof v.content !== 'string' || contentHash(v.content) !== hash) return false;
   if (v.proposal_id) return true;
   return v.created_by === memory.userId && !UNREVIEWED_REASON.test(v.reason || '');
 }
@@ -160,7 +163,7 @@ export function* writeMemoryGraphStep(memory: Memory, hash: string, ex: GraphExt
     yield* run(`INSERT INTO memory_graph_mentions (memory_id, entity_id, user_id) VALUES (?, ?, ?) ON CONFLICT DO NOTHING`, memory.id, row.id, userId);
   }
 
-  const reviewed = yield* ownerReviewedStep(memory);
+  const reviewed = yield* ownerReviewedStep(memory, hash);
   let links = 0;
   let pending = 0;
   for (const l of ex.links) {

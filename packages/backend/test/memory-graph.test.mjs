@@ -227,6 +227,11 @@ test('only the owner\'s own write or an approved proposal counts as reviewed; me
   await quietly(() => getMemoryStorage().save(forged));
   await G.graphIdle();
   assert.equal(linkBetween('Quartz Engine', 'replaces', 'Basalt Engine')?.status, 'pending');
+  // A row whose newest version is an older owner text (version not written yet) is not reviewed.
+  const owned = await create('Cobalt Engine powers the lab.', { kind: 'owner' });
+  db.prepare('UPDATE memories SET content = ? WHERE id = ?').run('Iron Engine replaces Copper Engine.', owned.id);
+  await G.indexMemoryGraph(await getMemoryStorage().getOwned('gr-owner', owned.id));
+  assert.equal(linkBetween('Iron Engine', 'replaces', 'Copper Engine')?.status, 'pending');
   // The owner's own direct write of an important link is active at once.
   await create('Granite Engine replaces Slate Engine.', { kind: 'owner' });
   assert.equal(linkBetween('Granite Engine', 'replaces', 'Slate Engine')?.status, 'active');
