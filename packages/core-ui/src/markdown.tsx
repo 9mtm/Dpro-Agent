@@ -150,16 +150,26 @@ function withBreaks(lines: string[]): ReactNode[] {
 
 const INLINE = /(`[^`\n]+`)|(\*\*[^*\n]+\*\*)|(__[^_\n]+__)|(\[[^\]\n]+\]\([^)\s]+\))|(\*[^*\s][^*\n]*\*)|(_[^_\s][^_\n]*_)/;
 
+const WORD = /[\p{L}\p{N}]/u;
+
 /** Inline markup to React nodes; plain strings stay strings (escaped by React). */
 export function inline(text: string, keyPrefix = 'i'): ReactNode[] {
   const out: ReactNode[] = [];
   let rest = text;
   let n = 0;
+  let before = '';
   while (rest) {
     const m = INLINE.exec(rest);
     if (!m) { out.push(rest); break; }
     if (m.index > 0) out.push(rest.slice(0, m.index));
     const tok = m[0];
+    // Underscores inside a word (snake_case, qwen3.5:9b-q4_K_M) are text, not emphasis.
+    if ((m[3] || m[6]) && (WORD.test(m.index > 0 ? rest[m.index - 1] : before) || WORD.test(rest[m.index + tok.length] ?? ''))) {
+      out.push(rest[m.index]);
+      before = rest[m.index];
+      rest = rest.slice(m.index + 1);
+      continue;
+    }
     const key = `${keyPrefix}-${n++}`;
     if (m[1]) out.push(<code key={key} className="md-inline">{tok.slice(1, -1)}</code>);
     else if (m[2] || m[3]) out.push(<strong key={key}>{inline(tok.slice(2, -2), key)}</strong>);
@@ -168,6 +178,7 @@ export function inline(text: string, keyPrefix = 'i'): ReactNode[] {
       const href = safeHref(lm[2]);
       out.push(href ? <a key={key} href={href} target="_blank" rel="noopener noreferrer">{lm[1]}</a> : tok);
     } else out.push(<em key={key}>{inline(tok.slice(1, -1), key)}</em>);
+    before = tok[tok.length - 1];
     rest = rest.slice(m.index + tok.length);
   }
   return out;

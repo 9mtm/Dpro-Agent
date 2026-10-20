@@ -29,6 +29,14 @@ test('inline: bold, italic, code and links render as elements', () => {
   assert.match(out, /<a href="https:\/\/example.com\/a\?b=1" target="_blank" rel="noopener noreferrer">site<\/a>/);
 });
 
+test('inline: underscores inside a word stay text (model names, snake_case)', () => {
+  const out = html('I use **qwen3.5:9b-q4_K_M** and my_var_name, but _this_ is italic and __this__ bold.');
+  assert.match(out, /<strong>qwen3\.5:9b-q4_K_M<\/strong>/);
+  assert.match(out, /my_var_name/);
+  assert.match(out, /<em>this<\/em> is italic/);
+  assert.match(out, /<strong>this<\/strong> bold/);
+});
+
 test('never HTML: tags in a reply stay text', () => {
   const out = html('<img src=x onerror=alert(1)> <script>alert(1)</script>\n\n```\n<b>x</b>\n```');
   assert.ok(!/<img|<script|<b>/.test(out), out);
