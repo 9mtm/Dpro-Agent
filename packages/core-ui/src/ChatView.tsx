@@ -276,12 +276,13 @@ export function ChatView({ controller, mode, productName = 'Dpro Agent', client,
                 </select>}</label>
             : <span className="composer-hint">{agentName ? agentName : ''}</span>}
           {/* Who answers: the agent with its own model (changed in Settings), or a signed-in coding app in the
-              terminal. The coding apps are listed only by the desktop app's backend (CORE-PICKER-01). */}
-          {(s.models.some(m => m.provider === 'subscription') || s.model) && <label className="composer-agent composer-model"><span className="sr-only">Who answers</span>
+              terminal. Only the desktop app's backend lists the coding apps; in the browser they are greyed out (CORE-PICKER-01). */}
+          {<label className="composer-agent composer-model"><span className="sr-only">Who answers</span>
             <select value={s.model} onChange={e => controller.selectModel(e.target.value)} onFocus={() => void controller.loadModels(true)} onMouseDown={() => void controller.loadModels(true)} title="Who answers the next reply">
-              <option value="">{(s.activeId ? convAgentName : agentName || s.agents.find(a => a.primary)?.name) || 'Main agent'} · own model</option>
-              {s.model&&!s.models.some(m=>m.id===s.model&&m.provider==='subscription')&&<option value={s.model}>{/^subscription:(claude|codex):[a-f0-9]{32}$/.test(s.model)?(s.model.startsWith('subscription:codex:')?'Codex':'Claude Code')+' · previous session':'Saved model: '+s.model}</option>}
-              {s.models.some(m=>m.provider==='subscription')&&<optgroup label="In the terminal">{s.models.filter(m=>m.provider==='subscription').map(m=><option key={m.id} value={m.id} disabled={!project?.folder}>{m.label}{!project?.folder?' · choose a folder':''}</option>)}</optgroup>}
+              <option value="">{(s.activeId ? convAgentName : agentName || s.agents.find(a => a.primary)?.name) || 'Main agent'}</option>
+              {s.model&&!TERMINAL_APPS.some(a=>a.id===s.model)&&<option value={s.model}>{/^subscription:(claude|codex):[a-f0-9]{32}$/.test(s.model)?(s.model.startsWith('subscription:codex:')?'Codex':'Claude Code')+' · previous session':'Saved model: '+s.model}</option>}
+              <optgroup label="In the terminal">{TERMINAL_APPS.map(a => { const ready = s.models.some(m => m.id === a.id && m.provider === 'subscription');
+                return <option key={a.id} value={a.id} disabled={!ready || !project?.folder}>{a.label}{!ready ? (s.models.some(m => m.provider === 'subscription') ? ' · not on this computer' : ' · desktop app only') : !project?.folder ? ' · choose a folder' : ''}</option>; })}</optgroup>
             </select></label>}
           {mic && <MicButton mic={mic}/>}
           <span className="composer-keys" aria-hidden="true">{running ? 'Esc stops' : 'Enter sends · Shift+Enter new line'}</span>
@@ -299,6 +300,8 @@ export function ChatView({ controller, mode, productName = 'Dpro Agent', client,
   {terminal && pane === 'terminal' && <aside className="chat-panel chat-pane" aria-label="Terminal"><TerminalPane tabs={terminal.tabs} prefs={terminal.prefs} projectId={folderProject} maximized={maximized} onToggleMax={() => setMaximized(v => !v)}/></aside>}
   </div>;
 }
+
+const TERMINAL_APPS = [{ id: 'subscription:claude', label: 'Claude Code' }, { id: 'subscription:codex', label: 'Codex (ChatGPT)' }] as const;
 
 /** Details of the open conversation: where it works, how big it is, what it produced. */
 function ChatSidePanel({ controller, client, onAddConnector, memory, onOpenMemory }: { controller: ConversationsController; client?: SessionClient; onChooseContext?:()=>void; onAddConnector?: () => void; memory?: ChatMemoryController | null; onOpenMemory?: (drawerId: string, memoryId: string) => void }) {

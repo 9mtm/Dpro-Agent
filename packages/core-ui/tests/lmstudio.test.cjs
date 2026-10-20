@@ -66,19 +66,20 @@ test('the chat picker chooses who answers: no local model list; the coding apps 
   await c.load();
   const end = Date.now() + 3000; while (!c.getSnapshot().models.length && Date.now() < end) await new Promise(r => setTimeout(r, 20));
   assert.ok(c.getSnapshot().models.some(m => m.id === 'lmstudio:fiction/mistral-7b'), 'the list itself still has the local models (Settings uses it)');
-  // Web backend: no coding apps → no picker at all; the local models are never offered in the chat.
+  // Web backend: the second list has the agent, then the coding apps greyed out; no local models in the chat.
+  const second = (html) => /title="Who answers the next reply">(.*?)<\/select>/.exec(html)?.[1] ?? '';
   let html = renderToStaticMarkup(React.createElement(ChatView, { controller: c, mode: 'mock', client }));
-  assert.doesNotMatch(html, /Who answers the next reply/);
+  assert.equal((html.match(/<select/g) || []).length, 2, 'two lists: the agent, and who answers');
+  assert.match(second(html), /^<option value="" selected="">Main agent<\/option><optgroup label="In the terminal">/);
+  assert.match(second(html), /<option value="subscription:claude" disabled="">Claude Code · desktop app only<\/option>/);
+  assert.match(second(html), /<option value="subscription:codex" disabled="">Codex \(ChatGPT\) · desktop app only<\/option>/);
   assert.doesNotMatch(html, /qwen-fiction:7b|fiction\/mistral-7b|On this computer/);
-  // Desktop backend: the agent with its own model + the coding apps in the terminal.
+  // Desktop backend: the coding apps can be picked once a project folder is chosen.
   withApps = true; await new Promise(r => setTimeout(r, 5100)); await c.loadModels(true);
   html = renderToStaticMarkup(React.createElement(ChatView, { controller: c, mode: 'mock', client }));
-  assert.match(html, /title="Who answers the next reply"/);
-  assert.match(html, /<option value="" selected="">[^<]* · own model<\/option>/);
-  const group = /<optgroup label="In the terminal">(.*?)<\/optgroup>/.exec(html);
-  assert.ok(group, 'one terminal group');
-  assert.match(group[1], /Claude Code/); assert.match(group[1], /Codex/);
-  assert.equal((html.match(/<optgroup/g) || []).length, 1, 'no local or paid model groups');
+  assert.match(second(html), /Claude Code · choose a folder/);
+  assert.match(second(html), /Codex \(ChatGPT\) · choose a folder/);
+  assert.equal((second(html).match(/<optgroup/g) || []).length, 1, 'no local or paid model groups');
   assert.doesNotMatch(html, /qwen-fiction:7b|fiction\/mistral-7b/);
 });
 
