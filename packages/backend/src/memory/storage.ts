@@ -17,6 +17,7 @@ import { all, columnExists, dialect, one, run, sql, type Step } from '../reposit
 import { LEGACY_HASH_MODEL, getEmbeddingService } from './embedding.js';
 import { lexicalTokens } from './text-normalize.js';
 import { MIN_RECALL_SCORE, WORKING_LAYER_BOOST, bm25Scores, hybridScore, vectorScore } from './hybrid.js';
+import { onMemorySaved } from './graph/store.js';
 import {
   DRAWER_KEY_SQL,
   DRAWER_KIND_SQL,
@@ -464,6 +465,8 @@ export class MemoryStorage implements IMemoryStorage {
    * Save memory to markdown file
    */
   private async saveToMarkdown(memory: Memory): Promise<void> {
+    // CORE-MEM-GRAPH: every committed save reaches here; the graph updates in the background.
+    onMemorySaved(memory);
     const filePath = this.getMarkdownPath(memory);
 
     // Create directory for user if needed

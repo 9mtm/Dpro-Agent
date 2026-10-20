@@ -27,6 +27,7 @@ import { memberUser, memoryUser, versionActor } from './memory-actor.js';
 import { all, one, sql } from './sql-steps.js';
 import { getMemoryStorage } from '../memory/storage.js';
 import { getMemoryRetrieval } from '../memory/retrieval.js';
+import { withGraphRecall } from '../memory/graph/recall.js';
 import { defaultDrawerForType, drawerSqlFilter, normalizeDrawer, sameDrawer, type DrawerRef } from '../memory/drawers.js';
 import { agentChange, learn, type AgentChangeResult, type LearnOutcome, type LearningCandidate } from '../memory/learning.js';
 import { MemoryTiersService } from '../services/memory-tiers.js';
@@ -83,12 +84,16 @@ export const memoryRecall: MemoryRecallRepository = {
   async search(actor, query) {
     const { a, userId } = memoryUser(actor);
     const drawers = readDrawers(a, query.drawers);
-    return getMemoryStorage().search({ ...query, userId, ...(drawers ? { drawers } : {}) });
+    const q = { ...query, userId, ...(drawers ? { drawers } : {}) };
+    // CORE-MEM-GRAPH: entities named in the query pull their linked memories (same drawers).
+    return withGraphRecall(q, await getMemoryStorage().search(q));
   },
 
   async relevant(actor, query, limit, drawers) {
     const { a, userId } = memoryUser(actor);
-    return getMemoryRetrieval().findRelevant(query, userId, limit, readDrawers(a, drawers));
+    const scoped = readDrawers(a, drawers);
+    const q = { query, userId, limit, ...(scoped ? { drawers: scoped } : {}) };
+    return (await withGraphRecall(q, await getMemoryStorage().search(q))).map((r) => r.memory);
   },
 
   async summary(actor) {
