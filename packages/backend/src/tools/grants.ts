@@ -57,6 +57,7 @@ export const DEFAULT_AGENT_TOOLS: readonly string[] = [
   'memory_edit',   // CORE-05: versioned; important memories via owner-approved proposals
   'memory_delete', // CORE-05: versioned (reversible); important memories via proposals
   'memory_forget', // CORE-07: complete removal; every call needs one-time owner approval (S1.3)
+  'memory_graph',  // CORE-MEM-GRAPH: read-only, owner's runs, open drawers only
   'storage_search',
   // BOARD-02: the agent's own board cards only (list, comment, move)
   'board_my_cards',

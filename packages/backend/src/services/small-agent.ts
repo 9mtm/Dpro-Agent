@@ -65,7 +65,7 @@ import { createRun, getRun, getSteps, elapsedMs, type TaskRunRow, type TaskRunSt
 export const SMALL_AGENT_ID = 'small-local-agent';
 
 /** The only tools a small-agent run can ever get (read-only, no external effect). */
-export const SMALL_AGENT_SAFE_TOOLS: readonly string[] = ['memory_search', 'storage_search', 'read'];
+export const SMALL_AGENT_SAFE_TOOLS: readonly string[] = ['memory_search', 'storage_search', 'read', 'memory_graph'];
 /** Tools a run gets when the caller does not name any. */
 export const SMALL_AGENT_DEFAULT_TOOLS: readonly string[] = ['memory_search', 'storage_search'];
 
@@ -191,7 +191,7 @@ export function resolveSmallAgentTools(
   const dropped: Dropped[] = [];
   for (const name of list) {
     const tool = registered.find((t) => t.name === name);
-    if (!SMALL_AGENT_SAFE_TOOLS.includes(name)) dropped.push({ item: name, reason: 'not in the small-agent safe set (memory_search, storage_search, read)' });
+    if (!SMALL_AGENT_SAFE_TOOLS.includes(name)) dropped.push({ item: name, reason: 'not in the small-agent safe set (memory_search, storage_search, read, memory_graph)' });
     else if (!tool) dropped.push({ item: name, reason: 'not available on this server' });
     else if (isToolExecClass(tool)) dropped.push({ item: name, reason: 'exec-class tools are never delegated' });
     else if (approvalCategory(tool) !== null) dropped.push({ item: name, reason: 'tools that need owner approval are never delegated' });
