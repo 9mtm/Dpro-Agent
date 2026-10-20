@@ -12,7 +12,8 @@
  * history, not graph rows) are removed by `pruneGraphStep`.
  *
  * Important new links (IMPORTANT_LINK_TYPES) learned from a memory the owner
- * has not seen (auto-saved learning, an agent or an outsider turn) start
+ * has not seen (see ownerReviewedStep: anything but an approved proposal or
+ * the account's own direct write) start
  * `pending`: recall ignores them until the owner approves. For a non-owner
  * account they are not stored (like important memories, CORE-05). A link the
  * owner rejected stays rejected.
@@ -46,12 +47,23 @@ export async function graphTablesExist(): Promise<boolean> {
   return tablesReady;
 }
 
-/** Sources the owner has seen: written by an account or approved in a proposal. */
-function ownerReviewed(memory: Memory): boolean {
-  const m = memory.metadata || {};
-  if (m.proposalId || m.source === 'owner') return true;
-  if (m.learned === 'routine') return false;
-  return !['agent', 'extraction', 'outsider', 'learning'].includes(String(m.source || ''));
+/** Version reasons of writes nobody reviewed (auto-saved learning, retention jobs). */
+const UNREVIEWED_REASON = /^(?:learning|retention|agent)[:]/;
+
+/**
+ * True only when the owner has seen the memory's current text: its latest
+ * version was applied from an approved proposal, or written by the account
+ * itself directly (API create/edit). Decided from the server-written version
+ * row, never from memory metadata (a caller can set metadata). Anything else
+ * (no version row, agent, extraction, retention, derived saves) is unreviewed.
+ */
+function* ownerReviewedStep(memory: Memory): Step<boolean> {
+  const v = yield* one<{ created_by: string | null; proposal_id: string | null; reason: string | null }>(
+    'SELECT created_by, proposal_id, reason FROM memory_versions WHERE memory_id = ? AND user_id = ? ORDER BY version DESC LIMIT 1',
+    memory.id, memory.userId);
+  if (!v) return false;
+  if (v.proposal_id) return true;
+  return v.created_by === memory.userId && !UNREVIEWED_REASON.test(v.reason || '');
 }
 
 interface EntityRow { id: string; kind: EntityKind; name: string; norm_name: string; aliases: string }
@@ -148,7 +160,7 @@ export function* writeMemoryGraphStep(memory: Memory, hash: string, ex: GraphExt
     yield* run(`INSERT INTO memory_graph_mentions (memory_id, entity_id, user_id) VALUES (?, ?, ?) ON CONFLICT DO NOTHING`, memory.id, row.id, userId);
   }
 
-  const reviewed = ownerReviewed(memory);
+  const reviewed = yield* ownerReviewedStep(memory);
   let links = 0;
   let pending = 0;
   for (const l of ex.links) {

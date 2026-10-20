@@ -220,6 +220,18 @@ test('an important new link from an agent-learned memory waits for the owner', a
   assert.ok(after.some((h) => h.memory.id === portFact.id), 'approved link is followed');
 });
 
+test('only the owner\'s own write or an approved proposal counts as reviewed; metadata is not trusted', async () => {
+  // A derived save (no version row) claiming an owner source still waits for review.
+  const forged = { id: 'gr-forged', userId: 'gr-owner', type: 'fact', content: 'Quartz Engine replaces Basalt Engine.', importance: 5, importanceScore: 0.5,
+    metadata: { source: 'owner', proposalId: 'fake' }, createdAt: new Date(), drawer: { kind: 'owner' } };
+  await quietly(() => getMemoryStorage().save(forged));
+  await G.graphIdle();
+  assert.equal(linkBetween('Quartz Engine', 'replaces', 'Basalt Engine')?.status, 'pending');
+  // The owner's own direct write of an important link is active at once.
+  await create('Granite Engine replaces Slate Engine.', { kind: 'owner' });
+  assert.equal(linkBetween('Granite Engine', 'replaces', 'Slate Engine')?.status, 'active');
+});
+
 test('a member account\'s important new link is not stored', async () => {
   const res = await call('POST', '/api/memory', 'gr-user', { type: 'fact', content: 'Nadia Karim works on Project Wren.' });
   assert.equal(res.statusCode, 200, res.body);
