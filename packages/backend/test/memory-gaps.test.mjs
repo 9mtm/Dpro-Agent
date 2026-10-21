@@ -151,3 +151,66 @@ test('1. one source of pinned facts: scope facts are in the cached pack and in t
   assert.equal(gone.preview, undefined);
   facts.dept = (await ok('POST', '/api/memory/scopes/pinned', { scope: `department:${dept.id}`, text: 'Engineering ships on Fridays.' }, 201)).fact;
 });
+
+test('3. board task runs get the pinned facts of their scope, with the same access checks', async () => {
+  const { taskRunPinnedFacts } = await import(join(backendDir, 'src/memory/scopes/task-facts.ts'));
+  const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
+  const finalCard = async (id) => {
+    for (let i = 0; i < 500; i++) {
+      const c = (await ok('GET', `/api/small-agent/runs/${id}`)).card;
+      if (['completed', 'failed', 'cancelled', 'waiting_approval'].includes(c.status)) return c;
+      await sleep(20);
+    }
+    throw new Error('run did not finish');
+  };
+  const runWith = async (drawers) => {
+    const before = bodies.length;
+    const res = await ok('POST', '/api/small-agent/runs', { task: 'Summarise the project status.', drawers }, 201);
+    const card = await finalCard(res.run_id);
+    assert.equal(card.status, 'completed', JSON.stringify(card));
+    const calls = bodies.slice(before);
+    assert.ok(calls.length >= 1);
+    return calls[0].messages[0].content;
+  };
+  // A run in the project: company, department and project facts.
+  const inProject = await runWith(['owner', `project:${project.slug}`]);
+  assert.match(inProject, /## Pinned facts[\s\S]*We are Dpro\.[\s\S]*Engineering ships on Fridays\.[\s\S]*Alpha runs on PostgreSQL 17\./);
+  // Only the project drawer open: no company facts (they follow the owner drawer).
+  const projectOnly = await runWith([`project:${project.slug}`]);
+  assert.doesNotMatch(projectOnly, /We are Dpro\./);
+  assert.match(projectOnly, /Alpha runs on PostgreSQL 17\./);
+  // No drawers at all: no facts.
+  assert.doesNotMatch(await runWith([]), /Pinned facts/);
+
+  // A board card made from the project's conversation gives the run its project.
+  const board = db.prepare('SELECT id FROM boards LIMIT 1').get()?.id ?? 'b-mg';
+  if (board === 'b-mg') {
+    db.prepare("INSERT INTO boards (id, owner_id, name) VALUES ('b-mg', ?, 'Board')").run(OWNER);
+    db.prepare("INSERT INTO board_columns (id, board_id, name, position) VALUES ('col-mg', 'b-mg', 'To do', 0)").run();
+  }
+  const col = db.prepare('SELECT id FROM board_columns WHERE board_id = ? LIMIT 1').get(board).id;
+  db.prepare(`INSERT INTO board_cards (id, board_id, column_id, title, position, task_id, created_by, conversation_id) VALUES ('card-mg', ?, ?, 'Status', 0, 'task-mg', ?, ?)`).run(board, col, OWNER, conv.id);
+  const base = { ownerId: OWNER, agentId: 'mg-main', taskId: 'task-mg' };
+  const viaCard = await taskRunPinnedFacts({ ...base, drawers: [{ kind: 'owner' }] });
+  assert.match(viaCard, /We are Dpro\.[\s\S]*Alpha runs on PostgreSQL 17\./);
+  // A contract that narrowed the drawers to no project drawer: company facts only.
+  const narrowed = await taskRunPinnedFacts({ ...base, drawers: [{ kind: 'owner' }], drawersNarrowed: true });
+  assert.match(narrowed, /We are Dpro\./);
+  assert.doesNotMatch(narrowed, /PostgreSQL/);
+  // Another owner's task: nothing. The agent may not read project drawers: no project facts.
+  assert.equal(await taskRunPinnedFacts({ ...base, ownerId: 'mg-user', drawers: [{ kind: 'owner' }] }), '');
+  db.prepare(`INSERT INTO agent_permissions (agent_id, memory_read, memory_write, shared_memory, modes, version) VALUES ('mg-main', '["owner"]', '[]', 0, '{}', 1)
+    ON CONFLICT (agent_id) DO UPDATE SET memory_read = excluded.memory_read`).run();
+  const noProject = await taskRunPinnedFacts({ ...base, drawers: [{ kind: 'owner' }, { kind: 'project', key: project.slug }] });
+  assert.match(noProject, /We are Dpro\./);
+  assert.doesNotMatch(noProject, /PostgreSQL|Fridays/);
+  db.prepare("DELETE FROM agent_permissions WHERE agent_id = 'mg-main'").run();
+  // An archived project adds nothing; the company still applies.
+  const pv = await ok('POST', `/api/memory/scopes/projects/${project.slug}/preview`, { action: 'archive' });
+  await ok('POST', `/api/memory/scopes/projects/${project.slug}/apply`, { action: 'archive', expectedPreviewHash: pv.previewHash, confirm: true });
+  const archived = await taskRunPinnedFacts({ ...base, drawers: [{ kind: 'owner' }] });
+  assert.match(archived, /We are Dpro\./);
+  assert.doesNotMatch(archived, /PostgreSQL/);
+  const pu = await ok('POST', `/api/memory/scopes/projects/${project.slug}/preview`, { action: 'unarchive' });
+  await ok('POST', `/api/memory/scopes/projects/${project.slug}/apply`, { action: 'unarchive', expectedPreviewHash: pu.previewHash, confirm: true });
+});
