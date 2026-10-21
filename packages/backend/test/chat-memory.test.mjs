@@ -171,6 +171,26 @@ test('an agent proposes a memory in the chat; nothing is saved until the owner a
   assert.ok(!memories().some((x) => x.content === 'Lunch is at noon'));
 });
 
+test('a conflict proposed in the chat and kept new shows as saved with the new text (not removed)', async () => {
+  script.push(
+    [{ message: { content: '', tool_calls: [{ function: { name: 'memory_save', arguments: { content: 'The team does not meet every Monday at 9', type: 'fact', drawer: 'experience' } } }] } }, { done: true }],
+    [{ message: { content: 'Proposed.' } }, { done: true }],
+  );
+  const runId = `run-${randomBytes(6).toString('hex')}`;
+  assert.equal((await call('cm-owner', 'POST', `/api/chat/conversations/${conv.id}/runs`, { runId, message: 'We no longer meet on Mondays' })).statusCode, 202);
+  await ended(runId);
+  const p = (await call('cm-owner', 'GET', url)).json().memories.find((x) => x.kind === 'proposed' && x.status === 'pending');
+  assert.ok(p, 'the change waits for the owner');
+  const full = (await call('cm-owner', 'GET', `/api/memory/proposals/${p.proposalId}`)).json();
+  assert.ok(full.conflictWith, 'it is a conflict with the saved memory');
+  const d = await call('cm-owner', 'POST', `/api/memory/proposals/${p.proposalId}/decide`, { decision: 'keep_new', expectedReviewHash: full.reviewHash });
+  assert.equal(d.statusCode, 200, d.body);
+  const after = (await call('cm-owner', 'GET', url)).json().memories.find((x) => x.id === p.id);
+  assert.equal(after.status, 'saved');
+  assert.equal(after.memoryId, full.conflictWith);
+  assert.equal(after.text, 'The team does not meet every Monday at 9');
+});
+
 test('a forgotten memory shows as removed; deleting the conversation removes its links', async () => {
   const first = (await call('cm-owner', 'GET', url)).json().memories.find((x) => x.kind === 'remembered');
   db.prepare('DELETE FROM memories WHERE id = ?').run(first.memoryId);

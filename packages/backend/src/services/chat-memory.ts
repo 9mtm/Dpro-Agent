@@ -169,9 +169,9 @@ export async function conversationMemories(userId: string, conversationId: strin
     if (r.kind === 'proposed') {
       status = r.p_status === 'approved' ? 'removed' : (r.p_status ?? 'cancelled');
       if (r.p_status === 'approved') {
-        // The memory an approved proposal created (if it still exists).
+        // The memory an approved proposal created or changed (a conflict kept new, a topic update), if it still exists.
         const made = await q.one<{ id: string; content: string }>(`SELECT m.id, m.content FROM memory_versions v JOIN memories m ON m.id = v.memory_id AND m.user_id = v.user_id
-          WHERE v.proposal_id = ? AND v.user_id = ? AND v.change = 'create' LIMIT 1`, r.proposal_id!, userId);
+          WHERE v.proposal_id = ? AND v.user_id = ? AND v.change IN ('create', 'update') ORDER BY v.version DESC LIMIT 1`, r.proposal_id!, userId);
         if (made) { memoryId = made.id; text = made.content; status = 'saved'; }
       }
     }

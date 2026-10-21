@@ -111,3 +111,13 @@ test('"Wrong place" moves the memory with the M13 dialog; the reply then shows i
   const html = renderToStaticMarkup(React.createElement(RecallPanel, { c, turnKey: MSG }));
   assert.ok(html.includes('Projects · flowxtra → now in About you') && html.includes('>moved<'));
 });
+
+test('a reply that used nothing still shows its chip when a drawer was closed to the agent ("no access")', async () => {
+  const blocked = { ...trace, items: [], context: { ...trace.context, drawers: { loaded: ['experience'], noAccess: ['owner'] } }, notLoaded: { drawers: [], more: 0 } };
+  const client = { request: async r => ({ status: 200, body: memoryRecallResponse(r.path, 200, { trace: blocked }) }) };
+  const c = new ChatRecallController(client);
+  c.setConversation(CONV); await c.ensure(turn);
+  assert.match(renderToStaticMarkup(React.createElement(RecallChip, { c, turn })), /Remembered 0/);
+  c.toggle(MSG);
+  assert.ok(renderToStaticMarkup(React.createElement(RecallPanel, { c, turnKey: MSG })).includes('Drawers open for this reply: Lessons. Not loaded: About you (no access).'));
+});

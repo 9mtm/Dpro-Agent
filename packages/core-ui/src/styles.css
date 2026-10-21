@@ -1887,7 +1887,7 @@ button.status-item:hover { background:var(--row-hover); color:var(--text); }
 /* MEM-FINISH-01 · M12 Handoffs */
 .mem-link-text { color:var(--mem-link); }
 .mem-dot[data-health="link"] { background:var(--mem-link); }
-.mem-handoffs { display:grid; grid-template-columns:210px minmax(0,440px) minmax(0,1fr); min-block-size:0; border-block-start:1px solid var(--border); }
+.mem-handoffs { display:grid; grid-template-columns:190px minmax(220px,0.8fr) minmax(340px,1.5fr); min-block-size:0; border-block-start:1px solid var(--border); }
 .mem-handoffs-filters { display:grid; gap:12px; align-content:start; padding:14px 12px; border-inline-end:1px solid var(--border); }
 .mem-handoffs-kinds { display:grid; gap:2px; }
 .app-shell .page-ui .mem-handoffs-kinds button { display:flex; justify-content:space-between; padding:7px 9px; border-radius:7px; background:transparent; box-shadow:none; color:var(--text-2); font-size:13px; text-align:start; min-block-size:0; }
@@ -1908,7 +1908,7 @@ button.status-item:hover { background:var(--row-hover); color:var(--text); }
 .mem-handoff-edit-head { display:flex; justify-content:space-between; align-items:flex-start; gap:12px; }
 .mem-handoff-edit-head > div { display:grid; gap:4px; }
 .mem-handoff-edit-head h3 { margin:0; font-size:18px; }
-.mem-handoff-fields { display:grid; grid-template-columns:repeat(2,minmax(0,1fr)); gap:12px; }
+.mem-handoff-fields { display:grid; grid-template-columns:repeat(auto-fit,minmax(200px,1fr)); gap:12px; }
 .mem-handoff-field { display:grid; gap:6px; padding:12px; border-radius:10px; background:var(--surface); box-shadow:inset 0 0 0 1px var(--border); }
 .mem-handoff-field > span { font-size:12.5px; font-weight:600; }
 .mem-handoff-field textarea { resize:vertical; border:0; background:transparent; color:var(--text); font:inherit; font-size:13px; line-height:1.55; }

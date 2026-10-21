@@ -25,7 +25,8 @@ export function RecallChip({ c, turn }: { c: ChatRecallController; turn: { key: 
   const s = useSyncExternalStore(c.subscribe, c.getSnapshot, c.getSnapshot);
   useEffect(() => { void c.ensure(turn); }, [c, turn.key, turn.status]);
   const t = c.trace(turn.key);
-  if (!t || t.items.length === 0) return null;
+  // A reply that used nothing still shows the chip when a drawer was closed to it (board M15: "not loaded").
+  if (!t || (t.items.length === 0 && !t.notLoaded?.drawers.length && !t.context.drawers?.noAccess.length)) return null;
   const open = s.open === turn.key;
   return <button type="button" className="recall-chip" aria-expanded={open} onClick={() => c.toggle(turn.key)}>Remembered {t.items.length} {open ? '⌃' : '⌄'}</button>;
 }
@@ -36,7 +37,10 @@ export function RecallPanel({ c, turnKey, onWrongPlace }: { c: ChatRecallControl
   const t = c.trace(turnKey);
   if (s.open !== turnKey || !t) return null;
   const loaded = t.context.drawers?.loaded ?? [...new Set(t.items.filter(i => i.kind === 'memory' && i.drawer).map(i => i.drawer!))];
-  const notLoaded = t.notLoaded ? [...t.notLoaded.drawers.map(d => drawerName(d.drawer)), ...(t.notLoaded.more ? [`${t.notLoaded.more} more`] : [])] : [];
+  // Not loaded: the owner's drawers this reply did not open (closed to this agent = "no access").
+  const blocked = (t.context.drawers?.noAccess ?? []).filter(d => !t.notLoaded?.drawers.some(x => x.drawer === d)).map(d => ({ drawer: d, why: 'no_access' as const }));
+  const notLoaded = [...(t.notLoaded?.drawers ?? []), ...blocked].map(d => `${drawerName(d.drawer)}${d.why === 'no_access' ? ' (no access)' : d.why === 'archived' ? ' (archived)' : ''}`)
+    .concat(t.notLoaded?.more ? [`${t.notLoaded.more} more`] : []);
   const correcting = s.correcting?.key === turnKey ? s.correcting : null;
   const fixing = correcting ? t.items.find(i => i.id === correcting.memoryId) : undefined;
   return <>
