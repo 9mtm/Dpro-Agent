@@ -24,6 +24,7 @@ import { nowText } from '../db/pg/dialect.js';
 import { DRAWER_KINDS, type DrawerKind } from '../memory/drawers.js';
 import { APPROVAL_REQUIRED_TOOLS } from './approvals.js';
 import type { Tool } from './types.js';
+import { accessSnapshot, accessSnapshotSync, narrowPermissions, type AccessSnapshot } from '../memory/scopes/access.js';
 
 export const PERMISSION_CATEGORIES = ['browser', 'network', 'message', 'delete', 'install', 'money', 'settings'] as const;
 export type PermissionCategory = (typeof PERMISSION_CATEGORIES)[number];
@@ -137,16 +138,38 @@ export function strictest(agentId: string, list: readonly AgentPermissions[]): A
   }), { ...first, agentId });
 }
 
-/** The permissions a run of `agentId` gets: its own, narrowed by every agent it was delegated from. */
-export async function loadRunPermissions(agentId: string, delegatedFrom: readonly string[] = []): Promise<AgentPermissions> {
+/**
+ * MEM-SCALE-01: where a run happens. With a user, every agent's memory kinds
+ * are narrowed by that owner's inherited access policies for the project
+ * (company -> department -> project -> agent exceptions, role template);
+ * the policies only ever narrow, so the agent's own permissions stay the cap.
+ */
+export interface RunScope { userId?: string | null; project?: string | null }
+
+function narrowed(list: AgentPermissions[], scope: RunScope | undefined, snap: () => AccessSnapshot): AgentPermissions[] {
+  if (!scope?.userId) return list;
+  try {
+    const s = snap();
+    return list.map((p) => narrowPermissions(p, s, scope.project ?? null));
+  } catch {
+    // Policies unreadable: no drawers (fail closed), modes unchanged.
+    return list.map((p) => ({ ...p, memoryRead: [], memoryWrite: [] }));
+  }
+}
+
+/** The permissions a run of `agentId` gets: its own, narrowed by every agent it was delegated from (and by the owner's policies for the run's project). */
+export async function loadRunPermissions(agentId: string, delegatedFrom: readonly string[] = [], scope?: RunScope): Promise<AgentPermissions> {
   const ids = [agentId, ...delegatedFrom.filter((d) => d && d !== agentId)];
-  return strictest(agentId, await Promise.all(ids.map((id) => loadAgentPermissions(id))));
+  const list = await Promise.all(ids.map((id) => loadAgentPermissions(id)));
+  let snap: AccessSnapshot | null = null;
+  if (scope?.userId) { try { snap = await accessSnapshot(scope.userId); } catch { snap = null; } }
+  return strictest(agentId, narrowed(list, scope, () => { if (!snap) throw new Error('policies unavailable'); return snap; }));
 }
 
 /** loadRunPermissions, synchronously: SQLite only. */
-export function loadRunPermissionsSync(agentId: string, delegatedFrom: readonly string[] = []): AgentPermissions {
+export function loadRunPermissionsSync(agentId: string, delegatedFrom: readonly string[] = [], scope?: RunScope): AgentPermissions {
   const ids = [agentId, ...delegatedFrom.filter((d) => d && d !== agentId)];
-  return strictest(agentId, ids.map((id) => loadAgentPermissionsSync(id)));
+  return strictest(agentId, narrowed(ids.map((id) => loadAgentPermissionsSync(id)), scope, () => accessSnapshotSync(scope!.userId!)));
 }
 
 /** loadAgentPermissions, synchronously: SQLite only (createToolsRegistry's synchronous path). */

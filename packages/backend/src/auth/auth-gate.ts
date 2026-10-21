@@ -191,6 +191,8 @@ export const TIER_RULES: readonly Rule[] = [
   { methods: '*', prefix: '/api/memory/graph', access: 'owner' },    // memory knowledge graph: view, link review, sync (CORE-MEM-GRAPH)
   { methods: '*', prefix: '/api/memory/import', access: 'owner' },    // safe import: preview, revise, commit to quarantine, roll back (CLI-02)
   { methods: '*', prefix: '/api/memory/doctor', access: 'owner' },    // memory health check + confirmed safe fixes (CORE-MEM-DOCTOR)
+  { methods: '*', prefix: '/api/memory/scopes', access: 'owner' },    // scope tree, pinned facts, project lifecycle, explorer (MEM-SCALE-01)
+  { methods: '*', prefix: '/api/memory/access', access: 'owner' },    // memory access by inheritance: rules, templates, preview, apply (MEM-SCALE-01)
   { methods: ['POST'], exact: '/api/task-runs/:id/steps/:index/resolve', access: 'owner' }, // decide an interrupted step's outcome (CORE-08)
   { methods: ['POST'], exact: '/api/task-runs/:id/review', access: 'owner' }, // accept/reject a result that needs review (R1)
   { methods: '*', prefix: '/api/budget', access: 'owner' },        // paid model spend today + daily cap (R2)

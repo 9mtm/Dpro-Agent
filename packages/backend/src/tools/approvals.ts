@@ -39,6 +39,10 @@ export const APPROVAL_REQUIRED_TOOLS: Readonly<Record<string, ApprovalCategory>>
   storage_delete: 'delete',
   memory_forget: 'delete', // CORE-07: complete, irreversible removal
   memory_doctor_fix: 'delete', // CORE-MEM-DOCTOR: deletes duplicate/expired copies (versioned); the approval is the confirm
+  memory_scope_forget: 'delete', // MEM-SCALE-01: forget a whole project (CORE-07); the approval is the confirm
+  // changing how memory is organised and who may read it
+  memory_scope_apply: 'settings', // MEM-SCALE-01: project lifecycle, departments, pinned facts; the approval is the confirm
+  memory_access_apply: 'settings', // MEM-SCALE-01: inherited access policies; the approval is the confirm
   // spending money
   make_call: 'money',
   trading_execute: 'money',

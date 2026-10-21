@@ -60,6 +60,10 @@ export const DEFAULT_AGENT_TOOLS: readonly string[] = [
   'memory_doctor', // CORE-MEM-DOCTOR: read-only health check, owner's own turns only
   'memory_doctor_fix', // CORE-MEM-DOCTOR: safe fixes; every call needs one-time owner approval
   'memory_graph',  // CORE-MEM-GRAPH: read-only, owner's runs, open drawers only
+  'memory_scopes', // MEM-SCALE-01: read-only scope tree, access, previews; owner's own turns only
+  'memory_scope_apply', // MEM-SCALE-01: project lifecycle, departments, pinned facts; every call needs owner approval
+  'memory_access_apply', // MEM-SCALE-01: inherited access policies; every call needs owner approval
+  'memory_scope_forget', // MEM-SCALE-01: forget a whole project; every call needs owner approval
   'storage_search',
   // BOARD-02: the agent's own board cards only (list, comment, move)
   'board_my_cards',

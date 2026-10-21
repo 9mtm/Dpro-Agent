@@ -31,6 +31,8 @@ import { getCurrentPersonality } from '../../services/personality-store.js';
 import { stripPersonalityExport, traitsToBehavior, type Behavior } from '../../services/personality.js';
 import { outsiderAgentMemoryEnabled } from '../../services/outsider-memory.js';
 import { DrawerInputError, chatTurnDrawers, type DrawerRef } from '../../memory/drawers.js';
+import { pinnedFactsBlock } from '../../memory/scopes/pinned.js';
+import { withoutArchivedDrawers } from '../../memory/scopes/store.js';
 import { createModelRouter, ModelRouter } from '../../services/model-router.js';
 import { CostTracker } from '../../services/cost-tracker.js';
 import { ModelUnavailable, runOllamaAgentLoop } from '../../services/ollama-agent-loop.js';
@@ -405,6 +407,12 @@ export async function executeChatTurn(reply: FastifyReply, input: ChatTurnInput)
       if (err instanceof DrawerInputError) return reply.status(400).send({ error: 'Invalid memoryScope' });
       throw err;
     }
+    // MEM-SCALE-01: an archived project is kept but never loaded into a reply.
+    memoryDrawers = await withoutArchivedDrawers(userId, memoryDrawers);
+    // MEM-SCALE-01: the owner's pinned facts of this scope load first (company, department, project).
+    const pinnedFacts = includeAgentMemory
+      ? await pinnedFactsBlock(userId, memoryDrawers.find((d) => d.kind === 'project')?.key ?? null).catch(() => '')
+      : '';
 
     // Load PERSONALITY.md and MEMORY.md from agent files if agent has ID
     let personalityContent = '';
@@ -437,6 +445,8 @@ export async function executeChatTurn(reply: FastifyReply, input: ChatTurnInput)
         ? `${resolvedSystemPrompt}\n\n${behavior.promptBlock}`
         : behavior.promptBlock;
     }
+
+    if (pinnedFacts) resolvedSystemPrompt += `${resolvedSystemPrompt ? '\n\n' : ''}${pinnedFacts}`;
 
     // Add MEMORY.md content if exists
     if (memoryFileContent) {

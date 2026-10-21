@@ -28,6 +28,7 @@ import { all, one, sql } from './sql-steps.js';
 import { getMemoryStorage } from '../memory/storage.js';
 import { getMemoryRetrieval } from '../memory/retrieval.js';
 import { withGraphRecall } from '../memory/graph/recall.js';
+import { archivedProjects } from '../memory/scopes/store.js';
 import { defaultDrawerForType, drawerSqlFilter, normalizeDrawer, sameDrawer, type DrawerRef } from '../memory/drawers.js';
 import { agentChange, learn, type AgentChangeResult, type LearnOutcome, type LearningCandidate } from '../memory/learning.js';
 import { MemoryTiersService } from '../services/memory-tiers.js';
@@ -165,7 +166,10 @@ export const memoryRecall: MemoryRecallRepository = {
     const { a, userId } = memoryUser(actor);
     const drawers = readDrawers(a, undefined);
     const storage = getMemoryStorage();
-    const rows: Memory[] = drawers ? await storage.getByDrawers(userId, drawers) : await storage.getByUser(userId);
+    const found: Memory[] = drawers ? await storage.getByDrawers(userId, drawers) : await storage.getByUser(userId);
+    // MEM-SCALE-01: an archived project is kept but never recalled.
+    const archived = await archivedProjects(userId);
+    const rows = archived.size ? found.filter((m) => m.drawer?.kind !== 'project' || !archived.has(m.drawer.key || '')) : found;
     return rows.sort((x, y) => (y.importanceScore ?? 0.5) - (x.importanceScore ?? 0.5) || y.createdAt.getTime() - x.createdAt.getTime());
   },
 

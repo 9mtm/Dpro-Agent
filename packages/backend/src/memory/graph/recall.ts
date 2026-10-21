@@ -21,6 +21,7 @@ import { lexicalTokens } from '../text-normalize.js';
 import type { Memory, MemorySearchQuery, MemorySearchResult } from '../types.js';
 import { graphTablesExist } from './store.js';
 import { containsName } from './types.js';
+import { NOT_ARCHIVED_SQL } from '../scopes/store.js';
 
 export const GRAPH_WEIGHT = 0.45;
 export const HOP_WEIGHTS = [1, 0.6, 0.35] as const;
@@ -44,6 +45,8 @@ export function scopedMemoryIds(scope: GraphScope, filters: Pick<MemorySearchQue
     where += ` AND ${f.sql}`;
     params.push(...f.params);
   }
+  // MEM-SCALE-01: an archived project is kept but never recalled.
+  where += ` AND ${NOT_ARCHIVED_SQL}`;
   if (filters.type) { where += ' AND type = ?'; params.push(filters.type); }
   if (filters.layer) { where += ' AND memory_layer = ?'; params.push(filters.layer); }
   if (filters.minImportanceScore !== undefined) { where += ' AND importance_score >= ?'; params.push(filters.minImportanceScore); }

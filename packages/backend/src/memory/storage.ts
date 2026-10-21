@@ -18,6 +18,7 @@ import { LEGACY_HASH_MODEL, getEmbeddingService } from './embedding.js';
 import { lexicalTokens } from './text-normalize.js';
 import { MIN_RECALL_SCORE, WORKING_LAYER_BOOST, bm25Scores, hybridScore, vectorScore } from './hybrid.js';
 import { onMemorySaved } from './graph/store.js';
+import { NOT_ARCHIVED_SQL } from './scopes/store.js';
 import {
   DRAWER_KEY_SQL,
   DRAWER_KIND_SQL,
@@ -449,6 +450,8 @@ export class MemoryStorage implements IMemoryStorage {
       where += ` AND ${filter.sql}`;
       params.push(...filter.params);
     }
+    // MEM-SCALE-01: an archived project is kept but never recalled.
+    where += ` AND ${NOT_ARCHIVED_SQL}`;
 
     // Support both legacy minImportance (1-10) and new minImportanceScore (0-1)
     if (query.minImportanceScore !== undefined) {
