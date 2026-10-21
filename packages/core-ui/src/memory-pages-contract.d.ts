@@ -71,3 +71,6 @@ export function memoryPagesPath(path: string): { route: string; params: Record<s
 export function memoryPagesRoute(path: string): boolean;
 export function allowedMemoryPages(method: string, path: string, body?: unknown): boolean;
 export function memoryPagesResponse(path: string, status: number, body: unknown): unknown;
+export type WeeklySummary = { stored: boolean; periodStart: string; periodEnd: string; text: string; totals: { total: number; created: number; updated: number; deleted: number; forgotten: number; pending: number } };
+export type RetentionConfig = { enabled: boolean; taskTtlDays: number; experienceAfterDays: number; experienceMinGroup: number };
+export type Retention = { config: RetentionConfig; runs?: Array<{ at: string; forgotten: number; dryRun: boolean }> };

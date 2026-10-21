@@ -167,7 +167,7 @@ export function agentCardResponse(path, status, body) {
     case 'memory-versions':
       if (!Array.isArray(body.versions)) fail();
       return { versions: body.versions.slice(0, 200).map(v => ({ version: Number.isSafeInteger(v?.version) ? v.version : 0, change: str(v?.change, 20), type: str(v?.type, 20),
-        content: typeof v?.content === 'string' ? v.content.slice(0, MAX_MEMORY) : '', createdAt: str(v?.createdAt, 40), reason: str(v?.reason, 40), by: versionBy(v?.createdBy), proposal: typeof v?.proposalId === 'string' && /^[A-Za-z0-9-]{1,64}$/.test(v.proposalId) })) };
+        content: typeof v?.content === 'string' ? v.content.slice(0, MAX_MEMORY) : '', createdAt: str(v?.createdAt, 40), reason: str(v?.reason, 40), by: versionBy(v?.createdBy ?? v?.by), proposal: v?.proposal === true || (typeof v?.proposalId === 'string' && /^[A-Za-z0-9-]{1,64}$/.test(v.proposalId)) })) };
   }
   fail();
 }

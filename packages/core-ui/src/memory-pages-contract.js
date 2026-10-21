@@ -36,6 +36,11 @@
 //   PUT    /api/handoffs/:kind/:scopeId                  { agentId, done?, left?, next?, questions? }
 //   Conflicts (CORE-MEM-CONFLICT)
 //   POST   /api/memory/proposals/:id/decide              { decision, expectedReviewHash, note? }
+//   Rules and speed (CORE-05/07, MEM-CACHE-01)
+//   GET    /api/memory/weekly-summary
+//   GET    /api/memory/retention
+//   PUT    /api/memory/retention                         { enabled?, taskTtlDays?, experienceAfterDays?, experienceMinGroup? }
+//   POST   /api/memory/cache/clear                       { confirm: true }
 
 const record = x => !!x && typeof x === 'object' && !Array.isArray(x);
 const onlyKeys = (x, keys) => Object.keys(x).every(k => keys.includes(k));
@@ -134,6 +139,9 @@ export function memoryPagesPath(path) {
     case '/api/memory/graph/entities': return with_('entities', QUERIES.entities);
     case '/api/memory/graph/links': return with_('links', QUERIES.links);
     case '/api/handoffs': return with_('handoffs', QUERIES.handoffs);
+    case '/api/memory/weekly-summary': return with_('weekly', null);
+    case '/api/memory/retention': return with_('retention', null);
+    case '/api/memory/cache/clear': return with_('cache-clear', null);
   }
   if ((m = /^\/api\/memory\/scopes\/pinned\/([^/]+)$/.exec(base)) && plainId(m[1])) return with_('pinned-fact', null, { id: m[1] });
   if ((m = /^\/api\/memory\/scopes\/projects\/([^/]+)\/(preview|apply|export)$/.exec(base)) && slug(m[1])) return with_(`project-${m[2]}`, null, { id: m[1] });
@@ -184,8 +192,14 @@ export function allowedMemoryPages(method, path, body) {
   if (!p) return false;
   const get = method === 'GET' && body === undefined;
   switch (p.route) {
-    case 'tree': case 'search': case 'agents': case 'memories': case 'access': case 'effective': case 'doctor': case 'entities': case 'entity': case 'links': case 'handoffs': case 'project-export':
+    case 'tree': case 'search': case 'agents': case 'memories': case 'access': case 'effective': case 'doctor': case 'entities': case 'entity': case 'links': case 'handoffs': case 'project-export': case 'weekly':
       return get;
+    case 'retention':
+      if (method === 'GET') return body === undefined;
+      return method === 'PUT' && record(body) && onlyKeys(body, ['enabled', 'taskTtlDays', 'experienceAfterDays', 'experienceMinGroup']) && Object.keys(body).length > 0
+        && (body.enabled === undefined || typeof body.enabled === 'boolean')
+        && ['taskTtlDays', 'experienceAfterDays', 'experienceMinGroup'].every(k => body[k] === undefined || (Number.isInteger(body[k]) && body[k] >= 1 && body[k] <= 3650));
+    case 'cache-clear': return method === 'POST' && record(body) && Object.keys(body).length === 1 && body.confirm === true;
     case 'pinned':
       if (method === 'GET') return body === undefined && p.params.scope !== undefined;
       return method === 'POST' && raw(p) && record(body) && onlyKeys(body, ['scope', 'text']) && validRuleScope(body.scope) && text(body.text, MAX_PINNED_TEXT);
@@ -361,8 +375,13 @@ const CODES = {
   doctor: ['confirm_required', 'report_hash_required', 'report_changed', 'invalid_kinds'],
   handoff: ['invalid_handoff', 'not_found'],
   decide: ['already_decided', 'stale', 'review_changed', 'review_hash_required'],
+  rules: ['confirm_required'],
 };
-const family = route => (['doctor', 'doctor-fix'].includes(route) ? 'doctor' : ['handoffs', 'handoff'].includes(route) ? 'handoff' : route === 'decide' ? 'decide' : 'scopes');
+const family = route => (['doctor', 'doctor-fix'].includes(route) ? 'doctor' : ['handoffs', 'handoff'].includes(route) ? 'handoff' : route === 'decide' ? 'decide' : ['weekly', 'retention', 'cache-clear'].includes(route) ? 'rules' : 'scopes');
+function retention(c) {
+  const n = (x, d) => (Number.isSafeInteger(x) && x > 0 ? x : d);
+  return record(c) ? { enabled: c.enabled === true, taskTtlDays: n(c.taskTtlDays, 90), experienceAfterDays: n(c.experienceAfterDays, 180), experienceMinGroup: n(c.experienceMinGroup, 3) } : fail();
+}
 
 export function memoryPagesResponse(path, status, body) {
   const p = memoryPagesPath(path);
@@ -407,9 +426,24 @@ export function memoryPagesResponse(path, status, body) {
     case 'handoff':
       if ('history' in body) return { handoff: body.handoff === null ? null : handoff(body.handoff), history: list(body.history, 20).map(handoff) };
       return { handoff: handoff(body.handoff) };
+    case 'weekly': {
+      // Already projected (the bridge, then the browser): keep it as it is.
+      if (record(body.totals) && !('summary' in body)) return { stored: body.stored === true, periodStart: when(body.periodStart), periodEnd: when(body.periodEnd), text: clip(body.text, 4000), totals: { total: count(body.totals.total), created: count(body.totals.created), updated: count(body.totals.updated), deleted: count(body.totals.deleted), forgotten: count(body.totals.forgotten), pending: count(body.totals.pending) } };
+      const w = record(body.summary) ? body.summary : {};
+      const d = record(w.digest) ? w.digest : {};
+      const t = record(d.totals) ? d.totals : {};
+      return {
+        stored: body.stored === true, periodStart: when(d.periodStart ?? w.periodStart), periodEnd: when(d.periodEnd ?? w.periodEnd),
+        text: clip(typeof w.modelText === 'string' && w.modelText ? w.modelText : w.text, 4000),
+        totals: { total: count(t.total), created: count(t.created), updated: count(t.updated), deleted: count(t.deleted), forgotten: count(t.forgotten), pending: count(t.pending) },
+      };
+    }
+    case 'retention': // the read carries recent runs; the PUT answers the config only
+      return 'runs' in body ? { config: retention(body.config), runs: list(body.runs, 20).filter(record).map(r => ({ at: when(r.createdAt ?? r.at), forgotten: count(r.forgotten), dryRun: r.dryRun === true })) } : { config: retention(body.config) };
+    case 'cache-clear': return { cleared: count(body.cleared) };
     case 'decide': {
       if (!CONFLICT_DECISIONS.includes(body.decision) || !record(body.proposal) || !proposalId(body.proposal.id)) fail();
-      return { decision: body.decision, proposal: { id: body.proposal.id, status: clip(body.proposal.status, 20) }, applied: record(body.applied) };
+      return { decision: body.decision, proposal: { id: body.proposal.id, status: clip(body.proposal.status, 20) }, applied: body.applied === true || record(body.applied) };
     }
   }
   return fail();

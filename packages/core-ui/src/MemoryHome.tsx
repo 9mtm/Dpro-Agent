@@ -191,8 +191,9 @@ export function HomeView({ c, go }: { c: MemoryScopesController; go: (tab: 'revi
       </button>
       <section className="mem-card">
         <h3>This week</h3>
-        <p>{s.weekCount === null ? '…' : `Learned ${s.weekCount}${s.weekMore ? '+' : ''} ${s.weekCount === 1 ? 'memory' : 'memories'} in the last 7 days.`}{s.waiting?.conflicts ? ` ${s.waiting.conflicts} need your decision.` : ''}</p>
-        <button type="button" className="link-button" onClick={() => go('explorer')}>See them in the explorer</button>
+        {s.weekly ? <p>Learned {s.weekly.totals.created}, updated {s.weekly.totals.updated}, forgot {s.weekly.totals.forgotten}{s.weekly.totals.pending ? `; ${s.weekly.totals.pending} wait for you` : ''}.</p>
+          : <p>{s.weekCount === null ? '…' : `Learned ${s.weekCount}${s.weekMore ? '+' : ''} ${s.weekCount === 1 ? 'memory' : 'memories'} in the last 7 days.`}</p>}
+        {s.weekly?.text && <details className="mem-weekly"><summary>Read the weekly summary</summary><p className="mem-weekly-text">{s.weekly.text}</p></details>}
       </section>
       <button type="button" className="mem-card mem-health-card" onClick={() => go('health')}>
         <h3>Health</h3>

@@ -62,7 +62,8 @@ function backend(over = {}) {
     if (!fn) return { status: 404, body: null };
     let out = fn(r.path, r.body); let status = 200;
     if (Array.isArray(out)) [status, out] = out;
-    const body = memoryPagesRoute(r.path) ? memoryPagesResponse(r.path, status, out) : memoryRecallRoute(r.path) ? memoryRecallResponse(r.path, status, out) : out;
+    const once = x => memoryPagesRoute(r.path) ? memoryPagesResponse(r.path, status, x) : memoryRecallRoute(r.path) ? memoryRecallResponse(r.path, status, x) : x;
+    const body = once(once(out)); // the bridge projects, then the browser
     return { status, body };
   } };
   return { client, calls };

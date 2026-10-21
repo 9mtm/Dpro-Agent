@@ -6,7 +6,7 @@
 import { Store, codeOf } from './memory-store';
 import type { Requester } from './memory-store';
 import { queryString } from './memory-pages-contract.js';
-import type { AccessOverview, AccessRule, DoctorReport, EffectiveAccess, ExplorerItem, ExplorerPage, PinnedFact, ProjectAction, ProjectApplied, ProjectExport, ProjectPreview, ScopeTree, TreeProject } from './memory-pages-contract.js';
+import type { AccessOverview, AccessRule, DoctorReport, EffectiveAccess, ExplorerItem, ExplorerPage, PinnedFact, ProjectAction, ProjectApplied, ProjectExport, ProjectPreview, ScopeTree, TreeProject, WeeklySummary } from './memory-pages-contract.js';
 import type { CacheMetrics } from './memory-recall-contract.js';
 
 export type Waiting = { total: number; important: number; conflicts: number; links: number; imported: number; files: number };
@@ -22,7 +22,7 @@ export type ScopeState = Readonly<{
   // Everything (M1)
   recent: readonly ExplorerItem[]; weekCount: number | null; weekMore: boolean; topics: number | null;
   mapEntities: number | null; mapLinks: number | null;
-  waiting: Waiting | null; doctor: DoctorReport | null; cacheHit: number | null; importStatus: ImportStatus | null;
+  waiting: Waiting | null; weekly: WeeklySummary | null; doctor: DoctorReport | null; cacheHit: number | null; importStatus: ImportStatus | null;
   readers: Readonly<Record<string, number>>;
   // A department or a project (M8)
   facts: readonly PinnedFact[]; factsBusy: boolean; topicKeys: readonly string[]; scopeWeek: number | null;
@@ -39,7 +39,7 @@ export class MemoryScopesController extends Store<ScopeState> {
   #ticket = 0;
   constructor(client: Requester, private readonly now = () => Date.now()) {
     super({ phase: 'idle', tree: null, scope: 'company', find: '', open: [], agents: {}, recent: [], weekCount: null, weekMore: false, topics: null, mapEntities: null, mapLinks: null,
-      waiting: null, doctor: null, cacheHit: null, importStatus: null, readers: {}, facts: [], factsBusy: false, topicKeys: [], scopeWeek: null, usage: null, usageChecked: 0, rules: [],
+      waiting: null, weekly: null, doctor: null, cacheHit: null, importStatus: null, readers: {}, facts: [], factsBusy: false, topicKeys: [], scopeWeek: null, usage: null, usageChecked: 0, rules: [],
       action: null, preview: null, previewBusy: false }, client);
   }
 
@@ -87,7 +87,7 @@ export class MemoryScopesController extends Store<ScopeState> {
 
   private async loadHome(t: number) {
     const now = this.now();
-    const [recent, topics, entities, links, proposals, pending, doctor, metrics, auto] = await Promise.all([
+    const [recent, topics, entities, links, proposals, pending, doctor, metrics, auto, weekly] = await Promise.all([
       this.read<ExplorerPage>('/api/memory/scopes/memories' + queryString({ scope: 'company', limit: 200 })),
       this.read<ExplorerPage>('/api/memory/scopes/memories' + queryString({ scope: 'company', topic: 'has', limit: 1 })),
       this.read<{ entities: unknown[] }>('/api/memory/graph/entities?limit=500'),
@@ -97,6 +97,7 @@ export class MemoryScopesController extends Store<ScopeState> {
       this.read<DoctorReport>('/api/memory/doctor'),
       this.read<CacheMetrics>('/api/memory/cache/metrics'),
       this.read<{ settings: ImportStatus }>('/api/memory/import/local/automatic'),
+      this.read<WeeklySummary>('/api/memory/weekly-summary'),
     ]);
     if (t !== this.#ticket) return;
     const items = recent?.items ?? [];
@@ -112,7 +113,7 @@ export class MemoryScopesController extends Store<ScopeState> {
         imported: props.filter(p => p.source === 'import').length, files: props.filter(p => p.source === 'file' || p.source === 'upload').length,
       } : null,
       doctor, cacheHit: metrics ? metrics.recent.packHitRate ?? metrics.process.caches.pack.hitRate : null,
-      importStatus: auto ? auto.settings : null,
+      importStatus: auto ? auto.settings : null, weekly,
     });
     void this.loadReaders(t);
   }

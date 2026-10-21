@@ -158,8 +158,10 @@ export function memoryRecallResponse(path, status, body) {
     }
     case 'metrics': return metrics(body);
     case 'move': {
-      if (!record(body.memory) || !memoryId(body.memory.id) || !drawerId(body.from) || !drawerId(body.to)) fail();
-      return { memoryId: body.memory.id, from: body.from, to: body.to };
+      // The bridge projects first, then the browser: accept the projected shape too.
+      const id = record(body.memory) ? body.memory.id : body.memoryId;
+      if (!memoryId(id) || !drawerId(body.from) || !drawerId(body.to)) fail();
+      return { memoryId: id, from: body.from, to: body.to };
     }
     default: return fail();
   }

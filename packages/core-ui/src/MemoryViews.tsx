@@ -12,6 +12,8 @@ import { MemoryScopesController } from './memory-scopes';
 import { ActionDialog, HomeView, OverviewView, ScopeHeader, ScopeRail } from './MemoryHome';
 import { MemoryReviewController } from './memory-review';
 import { ReviewInbox } from './MemoryReviewInbox';
+import { MemoryExplorerController } from './memory-explorer';
+import { Explorer } from './MemoryExplorer';
 
 const KIND_LABEL: Record<string, string> = { owner: 'About you', experience: 'Lessons', project: 'Project', task: 'Task', people: 'Person' };
 const KIND_PLURAL: Record<string, string> = { project: 'Projects', task: 'Tasks', people: 'People' };
@@ -57,42 +59,34 @@ export type MemoryTab = 'home' | 'review' | 'explorer' | 'import';
 export function MemoryPage({ client, active = false, focus }: { client: SessionClient; active?: boolean; focus?: MemoryFocus | null }) {
   const [tab, setTab] = useState<MemoryTab>('home');
   const owner = useSyncExternalStore(client.subscribe, client.getSnapshot, client.getSnapshot).user?.role === 'owner';
-  const [c, setC] = useState<MemoryItemsController>();
+  const [c, setC] = useState<MemoryExplorerController>();
   const [scopes, setScopes] = useState<MemoryScopesController>();
-  useEffect(() => { const x = new MemoryItemsController(client); setC(x); return () => x.dispose(); }, [client]);
+  useEffect(() => { const x = new MemoryExplorerController(client); setC(x); return () => x.dispose(); }, [client]);
   useEffect(() => { const x = new MemoryScopesController(client); setScopes(x); return () => x.dispose(); }, [client]);
   const [review, setReview] = useState<MemoryReviewController>();
   const [explorerView, setExplorerView] = useState<'table' | 'files'>('table');
   useEffect(() => { if (!scopes) return; const x = new MemoryReviewController(client, () => void scopes.load(true)); setReview(x); return () => x.dispose(); }, [client, scopes]);
   useEffect(() => { if (active && scopes && owner) void scopes.load(); }, [active, scopes, owner]);
   useEffect(() => { if (active && review && owner && tab === 'review') void review.load(); }, [active, review, owner, tab]);
-  // Returning from reviews must read the newly approved memories.
-  useEffect(() => {
-    if (!active || tab !== 'explorer' || !c) return;
-    void c.load();
-    if (!owner) return;
-    const refresh = () => { if (document.visibilityState !== 'hidden') void c.load(true); };
-    const timer = window.setInterval(refresh, 15000);
-    document.addEventListener('visibilitychange', refresh);
-    return () => { window.clearInterval(timer); document.removeEventListener('visibilitychange', refresh); };
-  }, [active, c, tab, owner]);
-  // CHAT-PRO-02 E: "Open in Memory" from a chat opens the memory's drawer and marks it.
+  // Opening the explorer reads the current scope again (agents may have learned meanwhile).
+  useEffect(() => { if (active && c && owner && tab === 'explorer') void c.load(); }, [active, c, owner, tab]);
+  // CHAT-PRO-02 E: "Open in Memory" from a chat opens the memory's drawer and the memory itself.
   useEffect(() => {
     if (!focus || !c) return;
-    setTab('explorer');
-    void (async () => { if (c.getSnapshot().phase !== 'ready') await c.load(); c.setQuery(''); c.openDrawer(focus.drawerId); c.reveal(focus.memoryId); })();
+    setTab('explorer'); setExplorerView('table');
+    c.setScope(focus.drawerId); void c.openMemory(focus.memoryId);
   }, [focus?.n, c]);
   const s = useSyncExternalStore(scopes?.subscribe ?? noop, scopes?.getSnapshot ?? none, scopes?.getSnapshot ?? none);
   function pickScope(scope: string) {
     if (!scopes) return;
     if (scope.startsWith('_')) { scopes.toggle(scope); return; }
-    if (scope.startsWith('people:') || scope.startsWith('agent:')) { setTab('explorer'); if (scope.startsWith('people:')) c?.openDrawer(scope); return; }
+    if (scope.startsWith('people:') || scope.startsWith('agent:')) { setTab('explorer'); setExplorerView('table'); c?.setScope(scope); return; }
     scopes.select(scope);
-    if (tab === 'explorer' && scope.startsWith('project:')) c?.openDrawer(scope); else if (tab !== 'review' && tab !== 'import') setTab('home');
+    if (tab === 'explorer') c?.setScope(scope); else if (tab !== 'review' && tab !== 'import') setTab('home');
   }
   function go(next: 'review' | 'explorer' | 'health' | 'import' | 'map' | 'access', drawer?: string) {
     if (next === 'review' || next === 'explorer' || next === 'import') setTab(next);
-    if (next === 'explorer' && c) { c.setQuery(''); c.openDrawer(drawer ?? (s?.scope.startsWith('project:') ? s.scope : 'all')); }
+    if (next === 'explorer' && c) { setExplorerView('table'); c.setQuery(''); c.setScope(drawer === 'owner' || drawer === 'experience' ? drawer : s?.scope ?? 'company'); }
   }
   const waiting = s?.tree?.company.pendingReviews;
   const tabs: { value: MemoryTab; label: string }[] = [
@@ -105,10 +99,10 @@ export function MemoryPage({ client, active = false, focus }: { client: SessionC
       {(() => {
         const row = <div className="mem-tabs-row">
           <ViewTabs id="memory-view" label="Memory views" value={tab} onChange={setTab} tabs={tabs}/>
-          {owner && <form className="memory-search mem-head-search" role="search" onSubmit={e => { e.preventDefault(); const q = (e.currentTarget.elements.namedItem('q') as HTMLInputElement).value; if (c) { setTab('explorer'); c.openDrawer('all'); c.setQuery(q); void c.searchServer(); } }}>
+          {owner && <form className="memory-search mem-head-search" role="search" onSubmit={e => { e.preventDefault(); const q = (e.currentTarget.elements.namedItem('q') as HTMLInputElement).value; if (c) { setTab('explorer'); setExplorerView('table'); c.setQuery(q); void c.searchMeaning(); } }}>
             <UiIcon name="search" size={13}/><input name="q" type="search" placeholder="Search all memory (Enter = by meaning)" aria-label="Search memories"/>
           </form>}
-          {owner && <button type="button" className="primary" onClick={() => { setTab('explorer'); c?.startAdd(); }}><UiIcon name="plus" size={12}/>Add memory</button>}
+          {owner && <button type="button" className="primary" onClick={() => { setTab('explorer'); setExplorerView('table'); c?.startAdd(); }}><UiIcon name="plus" size={12}/>Add memory</button>}
         </div>;
         return scopes && owner ? <ScopeHeader c={scopes}>{row}</ScopeHeader>
           : <div className="mem-head"><div className="mem-head-row"><h2>Memory</h2>{!owner && <span className="mem-meta">Only the owner manages the memory here.</span>}</div>{row}</div>;
@@ -122,7 +116,7 @@ export function MemoryPage({ client, active = false, focus }: { client: SessionC
         {tab === 'explorer' && <>
           <div className="mem-view-toggle" role="group" aria-label="Explorer view"><button type="button" aria-pressed={explorerView === 'table'} onClick={() => setExplorerView('table')}>Table</button><button type="button" aria-pressed={explorerView === 'files'} onClick={() => setExplorerView('files')}>Files</button></div>
           {explorerView === 'files' ? <><p className="fine-print">Agent files and reviews: each agent's readable memory files (MEMORY.md). Edits you make there come back as reviews.</p><MemoryPanel client={client} active={active && tab === 'explorer'}/></>
-            : c ? <ItemsView c={c} focused={focus?.memoryId}/> : null}
+            : c ? <Explorer c={c} agents={s?.agents ?? {}}/> : null}
         </>}
         {tab === 'import' && <LocalImport client={client} active={active} onReview={() => setTab('review')}/>}
         {tab === 'review' && review && <ReviewInbox c={review}/>}
