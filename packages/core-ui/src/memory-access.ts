@@ -6,7 +6,7 @@
 import { Store, codeOf } from './memory-store';
 import type { Requester } from './memory-store';
 import { DRAWER_KINDS, queryString } from './memory-pages-contract.js';
-import type { AccessChange, AccessMode, AccessOverview, AccessPreview, AccessRule, DrawerKind, EffectiveAccess } from './memory-pages-contract.js';
+import type { AccessChange, AccessColumn, AccessCounts, AccessMode, AccessOverview, AccessPreview, AccessRule, DrawerKind, EffectiveAccess, ScopeAgents, TemplateDetail } from './memory-pages-contract.js';
 
 export type Cell = { read: boolean; write: boolean; own: boolean };
 export type Level = { key: string; scope: string; agentId: string | null; label: string; note: string };
@@ -17,6 +17,8 @@ export type AccessState = Readonly<{
   changes: readonly AccessChange[]; preview: AccessPreview | null; showSample: boolean; result?: string;
   checkAgent: string; effective: EffectiveAccess | null;
   exception: ExceptionDraft | null;
+  /** MEM-GAPS-02: who reads one column of the open scope; "read by N agents" per project; one template's agents. */
+  whoColumn: AccessColumn; who: ScopeAgents | null; counts: AccessCounts | null; template: TemplateDetail | null;
 }>;
 
 const ruleKey = (scope: string, agentId: string | null | undefined, kind: string) => `${scope}|${agentId ?? ''}|${kind}`;
@@ -30,15 +32,29 @@ export function chain(scope: string, departmentOf: (slug: string) => string): st
 
 export class MemoryAccessController extends Store<AccessState> {
   constructor(client: Requester) {
-    super({ phase: 'idle', busy: false, overview: null, agents: [], changes: [], preview: null, showSample: false, checkAgent: '', effective: null, exception: null }, client);
+    super({ phase: 'idle', busy: false, overview: null, agents: [], changes: [], preview: null, showSample: false, checkAgent: '', effective: null, exception: null, whoColumn: 'project', who: null, counts: null, template: null }, client);
   }
 
-  async load() {
+  async load(scope?: string) {
     if (this.getSnapshot().phase !== 'ready') this.publish({ phase: 'loading', notice: undefined });
-    const [o, a] = await Promise.all([this.read<AccessOverview>('/api/memory/access'), this.read<{ agents: Array<{ id: string; name?: string }> }>('/api/agents')]);
+    const [o, a, counts] = await Promise.all([this.read<AccessOverview>('/api/memory/access'), this.read<{ agents: Array<{ id: string; name?: string }> }>('/api/agents'),
+      this.read<AccessCounts>('/api/memory/access/counts' + queryString({ column: 'project', mode: 'read' }))]);
     if (!o) { this.publish({ phase: 'error', notice: 'Access could not be loaded.' }); return; }
-    this.publish({ phase: 'ready', overview: o, agents: (a?.agents ?? []).map(x => ({ id: x.id, name: x.name ?? x.id })).sort((x, y) => x.name.localeCompare(y.name)) });
+    this.publish({ phase: 'ready', overview: o, counts, agents: (a?.agents ?? []).map(x => ({ id: x.id, name: x.name ?? x.id })).sort((x, y) => x.name.localeCompare(y.name)) });
+    if (scope) await this.loadWho(scope);
   }
+
+  /** Who reads one column (a drawer kind, company or department facts) in this scope, today. */
+  async loadWho(scope: string, column: AccessColumn = this.getSnapshot().whoColumn) {
+    this.publish({ whoColumn: column });
+    const r = await this.read<ScopeAgents>('/api/memory/access/agents' + queryString({ scope, column, mode: 'read', limit: 50 }));
+    if (this.getSnapshot().whoColumn === column) this.publish({ who: r });
+  }
+  async openTemplate(id: string) {
+    const r = await this.read<TemplateDetail>(`/api/memory/access/templates/${encodeURIComponent(id)}` + queryString({ limit: 50 }));
+    this.publish(r ? { template: r } : { notice: 'That role template no longer exists.' });
+  }
+  closeTemplate() { this.publish({ template: null }); }
 
   /** Rules as they would be after the draft (the saved rules with the pending changes on top). */
   private rules(): Map<string, { read: AccessMode; write: AccessMode; endsAt: string | null }> {

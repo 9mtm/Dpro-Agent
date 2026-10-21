@@ -3,7 +3,9 @@
 import { useSyncExternalStore } from 'react';
 import { KIND_COLUMNS, MemoryAccessController, cellText, chain, whyText } from './memory-access';
 import type { Level } from './memory-access';
-import type { DrawerKind, ScopeTree } from './memory-pages-contract.js';
+import type { AccessColumn, DrawerKind, ScopeTree } from './memory-pages-contract.js';
+
+const WHO_COLUMNS: Array<[AccessColumn, string]> = [['project', 'Project memories'], ['owner', 'About you'], ['experience', 'Lessons'], ['people', 'People'], ['task', 'Tasks'], ['company', 'Company facts'], ['department', 'Department facts']];
 
 export function AccessView({ c, scope, tree }: { c: MemoryAccessController; scope: string; tree: ScopeTree | null }) {
   const s = useSyncExternalStore(c.subscribe, c.getSnapshot, c.getSnapshot);
@@ -13,7 +15,8 @@ export function AccessView({ c, scope, tree }: { c: MemoryAccessController; scop
   const scopes = chain(scope, departmentOf);
   const nameOf = (x: string) => x === 'company' ? 'Company default' : x.startsWith('department:') ? tree?.departments.find(d => d.id === x.slice(11))?.name ?? x.slice(11) : tree?.projects.find(p => p.slug === x.slice(8))?.name ?? x.slice(8);
   const agentName = (id: string) => s.agents.find(a => a.id === id)?.name ?? id;
-  const noteOf = (x: string) => x === 'company' ? `all ${tree?.agents.total ?? ''} agents`.replace('  ', ' ') : x.startsWith('department:') ? `${tree?.departments.find(d => d.id === x.slice(11))?.projects ?? 0} projects` : 'this project';
+  const readers = (slug: string) => s.counts?.projects[slug];
+  const noteOf = (x: string) => x === 'company' ? `all ${tree?.agents.total ?? ''} agents`.replace('  ', ' ') : x.startsWith('department:') ? `${tree?.departments.find(d => d.id === x.slice(11))?.projects ?? 0} projects` : readers(x.slice(8)) !== undefined ? `this project · read by ${readers(x.slice(8))} agents` : 'this project';
   const levels: Level[] = [
     ...scopes.map(x => ({ key: x, scope: x, agentId: null, label: nameOf(x), note: noteOf(x) })),
     ...c.exceptionAgents(scope).map(a => { const end = c.endsAt(scope, a); return { key: `${scope}|${a}`, scope, agentId: a, label: `Exception: ${agentName(a)}`, note: end ? `temporary · ends ${end.slice(0, 10)}` : `only in ${nameOf(scope)}` }; }),
@@ -52,7 +55,8 @@ export function AccessView({ c, scope, tree }: { c: MemoryAccessController; scop
         <section className="mem-card" aria-label="Role templates">
           <h3>Role templates</h3>
           {s.overview.templates.length === 0 ? <p className="fine-print">No role templates yet.</p>
-            : <div className="mem-templates">{s.overview.templates.map(t => <div key={t.id} className="mem-template"><b>{t.name}</b><span className="fine-print">used by {t.agents} {t.agents === 1 ? 'agent' : 'agents'} · reads {t.memoryRead.length}, writes {t.memoryWrite.length}</span></div>)}</div>}
+            : <div className="mem-templates">{s.overview.templates.map(t => <button key={t.id} type="button" className="mem-template" aria-expanded={s.template?.template.id === t.id} onClick={() => (s.template?.template.id === t.id ? c.closeTemplate() : void c.openTemplate(t.id))}><b>{t.name}</b><span className="fine-print">used by {t.agents} {t.agents === 1 ? 'agent' : 'agents'} · reads {t.memoryRead.length}, writes {t.memoryWrite.length}{t.scopeRead ? ` · company/department facts: ${t.scopeRead.join(', ') || 'none'}` : ''}</span></button>)}</div>}
+          {s.template && <div className="mem-template-agents"><span className="fine-print">{s.template.template.name}: {s.template.agents.length ? s.template.agents.map(a => a.name).join(', ') : 'no agent uses it yet'}{s.template.nextCursor ? ' …' : ''}</span></div>}
         </section>
       </section>
       <aside className="mem-side">
@@ -62,6 +66,14 @@ export function AccessView({ c, scope, tree }: { c: MemoryAccessController; scop
           {e && <>
             <span>Effective here: <b>{KIND_COLUMNS.map(([k, l]) => `${l} ${e.kinds[k]?.write ? 'R+W' : e.kinds[k]?.read ? 'R' : '—'}`).join(' · ')}</b></span>
             <span className="fine-print">{e.template ? `Template: ${e.template.name}. ` : ''}Why (projects): {whyText(e, 'project') || 'company default'}</span>
+          </>}
+        </section>
+        <section className="mem-card" aria-label="Who reads it">
+          <div className="mem-card-head"><h3>Who reads it here</h3><select aria-label="What" value={s.whoColumn} onChange={ev => void c.loadWho(scope, ev.target.value as AccessColumn)}>{WHO_COLUMNS.map(([k, l]) => <option key={k} value={k}>{l}</option>)}</select></div>
+          {!s.who ? <p className="fine-print" role="status">Counting…</p> : <>
+            <span><b>{s.who.count} of {s.who.total}</b> agents read {WHO_COLUMNS.find(w => w[0] === s.who!.column)?.[1].toLowerCase()} in {nameOf(scope)}.</span>
+            {s.who.agents.length > 0 && <ul className="mem-who">{s.who.agents.map(a => <li key={a.id}>{a.name}{a.write ? ' · writes' : ''}{a.template ? ` · ${a.template}` : ''}{a.exception ? ' · exception' : ''}</li>)}</ul>}
+            {s.who.nextCursor && <span className="fine-print">and more…</span>}
           </>}
         </section>
         {s.changes.length > 0 && <section className="mem-card mem-preview" aria-label="Preview before saving">

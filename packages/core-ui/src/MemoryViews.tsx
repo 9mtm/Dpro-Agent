@@ -79,7 +79,6 @@ export function MemoryPage({ client, active = false, focus, onOpenChat, onOpenPr
   const [map, setMap] = useState<MemoryMapController>();
   const [access, setAccess] = useState<MemoryAccessController>();
   useEffect(() => { const x = new MemoryAccessController(client); setAccess(x); return () => x.dispose(); }, [client]);
-  useEffect(() => { if (active && access && owner && tab === 'access') void access.load(); }, [active, access, owner, tab]);
   const [health, setHealth] = useState<MemoryHealthController>();
   useEffect(() => { const x = new MemoryHealthController(client); setHealth(x); return () => x.dispose(); }, [client]);
   useEffect(() => { const x = new MemoryMapController(client); setMap(x); return () => x.dispose(); }, [client]);
@@ -109,6 +108,7 @@ export function MemoryPage({ client, active = false, focus, onOpenChat, onOpenPr
   // Health & rules shows the review rules of the open scope (company, a department or a project).
   const ruleScope = s?.scope && (s.scope.startsWith('department:') || s.scope.startsWith('project:')) ? s.scope : 'company';
   useEffect(() => { if (active && health && owner && tab === 'health') void health.load(ruleScope); }, [active, health, owner, tab, ruleScope]);
+  useEffect(() => { if (active && access && owner && tab === 'access') void access.load(ruleScope); }, [active, access, owner, tab, ruleScope]);
   function pickScope(scope: string) {
     if (!scopes) return;
     if (scope.startsWith('_')) { scopes.toggle(scope); return; }

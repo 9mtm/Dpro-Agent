@@ -8,7 +8,8 @@ import { Store, codeOf, drawerName, oneLine, agentLabel } from './memory-store';
 import type { Requester } from './memory-store';
 import { parseProposal } from './memory';
 import type { Proposal, ProposalSummary } from './memory';
-import type { DecideResult, GraphLink } from './memory-pages-contract.js';
+import type { DecideResult, GraphLink, ReviewGroup, ReviewGroupBy, RoutinePreview } from './memory-pages-contract.js';
+import { queryString } from './memory-pages-contract.js';
 
 export type ReviewKind = 'conflict' | 'important' | 'agent' | 'imported' | 'file' | 'link';
 export type ReviewFilter = 'all' | ReviewKind;
@@ -20,6 +21,10 @@ export type ReviewState = Readonly<{
   detail: Proposal | null; detailBusy: boolean; busy: boolean;
   editing: string | null; confirmBulk: 'approve' | 'reject' | null; result?: string;
   agents: Readonly<Record<string, string>>;
+  /** MEM-GAPS-02: waiting reviews grouped by scope / department / agent (one group opens as a filter). */
+  groupBy: 'kind' | ReviewGroupBy; groups: readonly ReviewGroup[] | null; group: string | null;
+  /** "Accept all routine": the previewed list (approved only with its hash). */
+  routine: RoutinePreview | null;
 }>;
 
 export const FILTERS: ReadonlyArray<[ReviewFilter, string]> = [['all', 'All'], ['important', 'Important'], ['conflict', 'Conflicts'], ['link', 'New links'], ['imported', 'Imported'], ['file', 'File edits'], ['agent', 'Agent changes']];
@@ -48,12 +53,63 @@ const linkText = (l: GraphLink) => `${l.from.name} — ${l.type.replace(/_/g, ' 
 export class MemoryReviewController extends Store<ReviewState> {
   #ticket = 0;
   constructor(client: Requester, private readonly onChanged: () => void = () => {}) {
-    super({ phase: 'idle', items: [], texts: {}, filter: 'all', open: null, checked: [], detail: null, detailBusy: false, busy: false, editing: null, confirmBulk: null, agents: {} }, client);
+    super({ phase: 'idle', items: [], texts: {}, filter: 'all', open: null, checked: [], detail: null, detailBusy: false, busy: false, editing: null, confirmBulk: null, agents: {}, groupBy: 'kind', groups: null, group: null, routine: null }, client);
   }
 
   visible(): ReviewItem[] {
     const s = this.getSnapshot();
+    if (s.groupBy !== 'kind') {
+      const g = s.groups?.find(x => x.key === s.group);
+      return g ? s.items.filter(i => !i.link && g.proposalIds.includes(i.id)) : [...s.items];
+    }
     return s.filter === 'all' ? [...s.items] : s.items.filter(i => i.kind === s.filter);
+  }
+
+  /** Group the waiting reviews by type (the filters), scope, department or agent. */
+  async setGroupBy(groupBy: ReviewState['groupBy']) {
+    this.publish({ groupBy, group: null, groups: null, checked: [] });
+    if (groupBy === 'kind') return;
+    const r = await this.read<{ groups: ReviewGroup[] }>('/api/memory/proposals/groups' + queryString({ by: groupBy }));
+    if (this.getSnapshot().groupBy === groupBy) this.publish({ groups: r?.groups ?? [] });
+  }
+  setGroup(group: string | null) { this.publish({ group, checked: [] }); }
+  /** A group's name: a drawer, a department or an agent. */
+  groupName(key: string): string {
+    const s = this.getSnapshot();
+    if (s.groupBy === 'agent') return key.startsWith('agent:') ? agentLabel(key, s.agents) : key === 'owner' || key === 'you' ? 'You' : key;
+    if (s.groupBy === 'department') return key === 'company' ? 'Company (no project)' : key.replace(/^department:/, '');
+    return key === 'company' ? 'Company' : drawerName(key);
+  }
+
+  /** Step 1: what "accept all routine" would approve (the open group, or everything). */
+  async previewRoutine() {
+    const s = this.getSnapshot();
+    const body: Record<string, string> = {};
+    if (s.group && s.groupBy === 'scope') body.scope = s.group;
+    if (s.group && s.groupBy === 'department') body.scope = s.group;
+    if (s.group && s.groupBy === 'agent' && s.group.startsWith('agent:')) body.agent = s.group.slice(6);
+    this.publish({ busy: true, notice: undefined, result: undefined });
+    try {
+      const r = await this.req('POST', '/api/memory/proposals/accept-routine/preview', body);
+      this.publish({ busy: false, ...(r.status === 200 ? { routine: r.body as RoutinePreview } : { notice: 'The routine list could not be made.' }) });
+    } catch { this.publish({ busy: false, notice: 'The routine list could not be made (no connection).' }); }
+  }
+  cancelRoutine() { this.publish({ routine: null }); }
+  /** Step 2: approves exactly the previewed routine facts (the server stops when the list changed). */
+  async acceptRoutine() {
+    const p = this.getSnapshot().routine;
+    if (!p || !p.count) return;
+    this.publish({ busy: true, notice: undefined });
+    try {
+      const body = { ...(p.filter.scope ? { scope: p.filter.scope } : {}), ...(p.filter.agent ? { agent: p.filter.agent } : {}), expectedPreviewHash: p.previewHash, confirm: true };
+      const r = await this.req('POST', '/api/memory/proposals/accept-routine', body);
+      if (r.status !== 200) { this.publish({ busy: false, routine: null, notice: codeOf(r) === 'preview_changed' ? 'The waiting list changed. Look again before accepting.' : 'Nothing was accepted.' }); return; }
+      const x = r.body as { approved: string[]; skipped: Array<{ id: string }> };
+      this.publish({ busy: false, routine: null, result: `${x.approved.length} routine ${x.approved.length === 1 ? 'fact' : 'facts'} accepted${x.skipped.length ? `; ${x.skipped.length} skipped (changed meanwhile)` : ''}.` });
+      this.onChanged();
+      await this.load();
+      if (this.getSnapshot().groupBy !== 'kind') await this.setGroupBy(this.getSnapshot().groupBy);
+    } catch { this.publish({ busy: false, notice: 'The result is unknown (no connection). Load the list again.' }); }
   }
   count(f: ReviewFilter) { const s = this.getSnapshot(); return f === 'all' ? s.items.length : s.items.filter(i => i.kind === f).length; }
 

@@ -2029,3 +2029,7 @@ button.status-item:hover { background:var(--row-hover); color:var(--text); }
 :root, .shell { --mem-map:#7A4FC0; --mem-map-bg:#F1E9FB; }
 .shell[data-theme="dark"] { --mem-map:#C79BFF; --mem-map-bg:#241B33; }
 .recall-why[data-why="graph"] { background:var(--mem-map-bg); color:var(--mem-map); }
+.mem-routine { display:grid; gap:8px; padding:10px 12px; border-radius:8px; background:var(--mem-warn-bg); box-shadow:inset 0 0 0 1px var(--mem-warn-line); font-size:12.5px; }
+.mem-who { margin:0; padding-inline-start:18px; display:grid; gap:2px; font-size:12.5px; }
+.app-shell .page-ui .mem-templates button.mem-template { text-align:start; justify-content:normal; display:grid; gap:2px; min-block-size:0; }
+.mem-template-agents { padding-block-start:6px; }

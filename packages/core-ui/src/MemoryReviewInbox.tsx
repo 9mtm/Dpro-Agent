@@ -23,7 +23,17 @@ export function ReviewInbox({ c }: { c: MemoryReviewController }) {
   const all = visible.length > 0 && visible.every(i => s.checked.includes(i.key));
   return <div className="mem-inbox" onKeyDown={keys}>
     <nav className="mem-inbox-filters" aria-label="Review filters">
-      {FILTERS.map(([f, label]) => <button key={f} type="button" aria-pressed={s.filter === f} onClick={() => c.setFilter(f)}><span>{label}</span><span className="mem-count">{c.count(f)}</span></button>)}
+      <label className="mem-chip-select">Group by<select value={s.groupBy} onChange={e => void c.setGroupBy(e.target.value as typeof s.groupBy)}><option value="kind">Type</option><option value="scope">Scope</option><option value="department">Department</option><option value="agent">Agent</option></select></label>
+      {s.groupBy === 'kind' ? FILTERS.map(([f, label]) => <button key={f} type="button" aria-pressed={s.filter === f} onClick={() => c.setFilter(f)}><span>{label}</span><span className="mem-count">{c.count(f)}</span></button>)
+        : <>
+          <button type="button" aria-pressed={s.group === null} onClick={() => c.setGroup(null)}><span>All</span><span className="mem-count">{s.items.length}</span></button>
+          {s.groups === null ? <p className="fine-print" role="status">Grouping…</p> : s.groups.map(g => <button key={g.key} type="button" aria-pressed={s.group === g.key} onClick={() => c.setGroup(g.key)}>
+            <span>{c.groupName(g.key)}{g.conflicts ? ` · ${g.conflicts} conflict${g.conflicts === 1 ? '' : 's'}` : ''}{g.reviewerAgentId ? ` · reviewer ${c.groupName(`agent:${g.reviewerAgentId}`)}` : ''}</span><span className="mem-count">{g.count}</span></button>)}
+        </>}
+      {s.routine ? <div className="mem-routine">
+        {s.routine.count ? <span>Accept {s.routine.count} routine {s.routine.count === 1 ? 'fact' : 'facts'}{s.group ? ` in ${c.groupName(s.group)}` : ''}? Conflicts and important facts stay here.</span> : <span>No routine fact waits{s.group ? ` in ${c.groupName(s.group)}` : ''}.</span>}
+        <span className="actions">{s.routine.count > 0 && <button type="button" className="primary" disabled={s.busy} onClick={() => void c.acceptRoutine()}>Accept {s.routine.count}</button>}<button type="button" onClick={() => c.cancelRoutine()}>Cancel</button></span>
+      </div> : <button type="button" className="ghost-outline" disabled={s.busy || !s.items.length} onClick={() => void c.previewRoutine()}>Accept all routine…</button>}
       <p className="fine-print">Routine facts are saved on their own. Only what matters, contradicts or links people waits here.</p>
     </nav>
     <section className="mem-inbox-list" aria-label="Items to review">

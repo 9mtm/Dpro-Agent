@@ -33,7 +33,7 @@ function backend(over = {}) {
     calls.push(r);
     assert.ok(allowedRequest(r.method, r.path, r.body), `${r.method} ${r.path}`); assert.ok(allowed(r.method, r.path, r.body), `bridge ${r.method} ${r.path}`);
     let m;
-    if (r.method === 'GET' && (m = /^\/api\/memory\/proposals\/([^/]+)$/.exec(r.path))) return pending.has(m[1]) ? { status: 200, body: memoryResponse(r.path, proposals[m[1]]) } : { status: 404, body: null };
+    if (r.method === 'GET' && (m = /^\/api\/memory\/proposals\/([^/?]+)$/.exec(r.path)) && m[1] !== 'groups') return pending.has(m[1]) ? { status: 200, body: memoryResponse(r.path, proposals[m[1]]) } : { status: 404, body: null };
     if (r.method === 'POST' && (m = /^\/api\/memory\/proposals\/([^/]+)\/(decide|approve|reject)$/.exec(r.path))) {
       if (over[`${r.method} ${r.path}`]) { const [status, body] = over[`${r.method} ${r.path}`](r.body); return { status, body: memoryPagesRoute(r.path) ? memoryPagesResponse(r.path, status, body) : body }; }
       assert.equal(r.body.expectedReviewHash, proposals[m[1]].reviewHash, 'the decision carries the review hash of what was shown');
@@ -108,4 +108,29 @@ test('bulk approve needs a confirm, skips conflicts and approves links and propo
   assert.ok(calls.some(r => r.path === '/api/memory/graph/links/l-1/approve'));
   assert.ok(changed >= 1);
   c.dispose();
+});
+
+test('MEM-GAPS-02: group by scope / department / agent; accept all routine only after its preview, with the hash (board M2)', async () => {
+  const P = 'e'.repeat(64);
+  let accepted = null;
+  const { client, calls, pending } = backend({
+    'GET /api/memory/proposals/groups': () => ({ by: 'agent', total: 3, groups: [{ key: 'agent:main', count: 2, conflicts: 1, routine: 1, reviewerAgentId: null, proposalIds: ['p-conflict', 'p-birthday'] }, { key: 'owner', count: 1, conflicts: 0, routine: 0, reviewerAgentId: null, proposalIds: ['p-import'] }] }),
+    'POST /api/memory/proposals/accept-routine/preview': body => ({ filter: { scope: null, agent: body.agent ?? null }, count: 1, items: [{ id: 'p-birthday', drawerId: 'owner', reviewHash: H(1) }], previewHash: P }),
+    'POST /api/memory/proposals/accept-routine': body => { accepted = body; pending.delete('p-birthday'); return { approved: ['p-birthday'], skipped: [] }; },
+  });
+  const c = new MemoryReviewController(client);
+  await c.load(); await settle();
+  await c.setGroupBy('agent');
+  c.setGroup('agent:main');
+  assert.deepEqual(c.visible().map(i => i.id), ['p-conflict', 'p-birthday']);
+  const html = renderToStaticMarkup(React.createElement(ReviewInbox, { c }));
+  for (const words of ['Group by', 'Main Agent · 1 conflict', 'Accept all routine…']) assert.ok(html.includes(words), words);
+  await c.previewRoutine();
+  assert.deepEqual(calls.find(r => r.path === '/api/memory/proposals/accept-routine/preview').body, { agent: 'main' });
+  const confirm = renderToStaticMarkup(React.createElement(ReviewInbox, { c }));
+  assert.ok(confirm.includes('Accept 1 routine fact in Main Agent? Conflicts and important facts stay here.'));
+  await c.acceptRoutine();
+  assert.deepEqual(accepted, { agent: 'main', expectedPreviewHash: P, confirm: true });
+  assert.match(c.getSnapshot().result, /1 routine fact accepted/);
+  assert.ok(!c.getSnapshot().items.some(i => i.id === 'p-birthday'));
 });

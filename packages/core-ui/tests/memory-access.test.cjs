@@ -24,6 +24,9 @@ function backend({ changed = false } = {}) {
     if (r.path === '/api/memory/access/apply') { if (changed) return out({ error: 'x', code: 'preview_changed' }, 409); rules = [...rules, rule('r4', r.body.changes[0].scope, r.body.changes[0].drawerKind, r.body.changes[0].read, r.body.changes[0].write)]; return out({ version: 4, preview: { previewHash: H, agentsAffected: 42 } }); }
     if (r.path.startsWith('/api/memory/access/effective/writer')) return out({ agentId: 'writer', agentName: 'Writer', project: 'flowxtra', department: 'marketing', version: 3, template: { id: 't1', name: 'Marketing writer' }, exceptions: [], effective: { memoryRead: ['project'], memoryWrite: ['project'] },
       kinds: { project: { read: true, write: true, readWhy: [{ layer: 'default', value: 'allow' }, { layer: 'department', value: 'allow' }, { layer: 'role-template', value: 'allow', name: 'Marketing writer' }], writeWhy: [{ layer: 'department', value: 'allow' }] }, people: { read: false, write: false, readWhy: [{ layer: 'company', value: 'deny' }], writeWhy: [] } } });
+    if (r.path.startsWith('/api/memory/access/counts')) return out({ column: 'project', mode: 'read', total: 3012, company: 3012, departments: { marketing: 400 }, projects: { flowxtra: 12 } });
+    if (r.path.startsWith('/api/memory/access/agents')) { const col = new URLSearchParams(r.path.split('?')[1]).get('column'); return out({ scope: 'project:flowxtra', column: col, mode: 'read', count: col === 'people' ? 1 : 12, total: 3012, agents: col === 'people' ? [{ id: 'legal-1', name: 'Legal reviewer', read: true, write: false, template: null, exception: true }] : [{ id: 'writer', name: 'Writer', read: true, write: true, template: 'Marketing writer', exception: false }], nextCursor: null }); }
+    if (r.path.startsWith('/api/memory/access/templates/t1')) return out({ template: { id: 't1', name: 'Marketing writer', memoryRead: ['owner', 'project'], memoryWrite: ['project'], scopeRead: null, scopeWrite: null, agents: 18 }, agents: [{ id: 'writer', name: 'Writer' }], nextCursor: 'b' });
     return { status: 404, body: null };
   } };
   return { client, calls };
@@ -84,4 +87,19 @@ test('access changed meanwhile: nothing is applied and the new preview is shown'
   await c.apply();
   assert.match(c.getSnapshot().notice, /changed meanwhile/); assert.equal(c.getSnapshot().changes.length, 1);
   c.dispose();
+});
+
+test('MEM-GAPS-02: who reads a column of the scope, "read by N agents" per project, a template with its agents (boards M9 + M6)', async () => {
+  const { client, calls } = backend();
+  const c = new MemoryAccessController(client);
+  await c.load('project:flowxtra');
+  let html = renderToStaticMarkup(React.createElement(AccessView, { c, scope: 'project:flowxtra', tree }));
+  for (const words of ['this project · read by 12 agents', 'Who reads it here', '12 of 3012', 'agents read project memories in Flowxtra.', 'Writer · writes · Marketing writer']) assert.ok(html.includes(words), words);
+  await c.loadWho('project:flowxtra', 'people');
+  assert.ok(calls.some(r => r.path === '/api/memory/access/agents?scope=project%3Aflowxtra&column=people&mode=read&limit=50'));
+  html = renderToStaticMarkup(React.createElement(AccessView, { c, scope: 'project:flowxtra', tree }));
+  assert.ok(html.includes('1 of 3012') && html.includes('Legal reviewer · exception'));
+  await c.openTemplate('t1');
+  html = renderToStaticMarkup(React.createElement(AccessView, { c, scope: 'project:flowxtra', tree }));
+  assert.ok(html.includes('Marketing writer: Writer …'));
 });
