@@ -1,9 +1,16 @@
 /**
- * The three MCP tools and the result-card rendering.
+ * The MCP tools and the result-card rendering.
  *
  *   spawn_small_agent  { task, kind?, tools?, drawers?, max_steps?, read_dir? } -> run id (+ what was granted)
  *   get_result         { run_id, wait_seconds? }                     -> result card
  *   list_runs          { status?, limit? }                           -> runs + capacity (queue length)
+ *   list_handoffs      { agent_id?, kind?, limit? }                  -> newest handoff note of every chat / board task
+ *   read_handoff       { kind, scope_id, agent_id }                  -> the note + its history
+ *   edit_handoff       { kind, scope_id, agent_id, done?, left?, next?, questions? } -> a new version
+ *                      (source "owner"); the agent's next session starts from it
+ *
+ * The handoff tools use the owner-only /api/handoffs routes (CORE-MEM-HANDOFF):
+ * a session that is not the owner account gets 403, like the small-agent tools.
  *
  * Every tool returns a short Markdown text for the model to read, the same
  * data as JSON text, and `structuredContent` (the JSON object).
@@ -12,6 +19,10 @@
 import { BackendError, type BackendClient } from './backend.js';
 
 export const KINDS = ['lookup', 'summary', 'classification', 'draft', 'other'] as const;
+export const HANDOFF_KINDS = ['conversation', 'task'] as const;
+const HANDOFF_SCOPE = /^[A-Za-z0-9][A-Za-z0-9_.:-]{0,127}$/;
+const AGENT_ID = /^[A-Za-z0-9_][A-Za-z0-9_.-]{0,127}$/;
+const handoffList = (what: string) => ({ type: 'array', maxItems: 8, items: { type: 'string', maxLength: 300 }, description: `${what} (up to 8 short lines; replaces the list)` });
 export const STATUSES = ['queued', 'running', 'waiting_approval', 'completed', 'failed', 'cancelled'] as const;
 const FINAL = new Set(['completed', 'failed', 'cancelled', 'waiting_approval']);
 const RUN_ID = /^[0-9a-f-]{36}$/i;
@@ -74,6 +85,54 @@ export const TOOL_DEFINITIONS = [
         status: { type: 'string', enum: [...STATUSES] },
         limit: { type: 'integer', minimum: 1, maximum: 100, description: 'Default 20.' },
       },
+      additionalProperties: false,
+    },
+  },
+  {
+    name: 'list_handoffs',
+    title: 'List agent handoff notes',
+    description: 'Owner only. The newest done / left / next note of every chat and board task, per agent, newest first. Read one in full with read_handoff.',
+    inputSchema: {
+      type: 'object',
+      properties: {
+        agent_id: { type: 'string', maxLength: 128, description: 'Only this agent\'s notes.' },
+        kind: { type: 'string', enum: [...HANDOFF_KINDS], description: 'conversation (a saved chat) or task (a board task).' },
+        limit: { type: 'integer', minimum: 1, maximum: 200, description: 'Default 50.' },
+      },
+      additionalProperties: false,
+    },
+  },
+  {
+    name: 'read_handoff',
+    title: 'Read one handoff note and its history',
+    description: 'Owner only. The current handoff note of one agent for one chat or board task, with every earlier version.',
+    inputSchema: {
+      type: 'object',
+      properties: {
+        kind: { type: 'string', enum: [...HANDOFF_KINDS] },
+        scope_id: { type: 'string', maxLength: 128, description: 'The conversation id or the board task id.' },
+        agent_id: { type: 'string', maxLength: 128 },
+      },
+      required: ['kind', 'scope_id', 'agent_id'],
+      additionalProperties: false,
+    },
+  },
+  {
+    name: 'edit_handoff',
+    title: 'Edit a handoff note (as the owner)',
+    description: 'Owner only. Save a corrected done / left / next note for one agent in one chat or board task. It is kept as a new version (the old one stays in the history) and the agent\'s next session starts from it. Lists you leave out stay as they are; never put keys, passwords or tokens in a note.',
+    inputSchema: {
+      type: 'object',
+      properties: {
+        kind: { type: 'string', enum: [...HANDOFF_KINDS] },
+        scope_id: { type: 'string', maxLength: 128 },
+        agent_id: { type: 'string', maxLength: 128 },
+        done: handoffList('What is finished'),
+        left: handoffList('What is still open'),
+        next: handoffList('The next steps'),
+        questions: handoffList('Open questions for the owner'),
+      },
+      required: ['kind', 'scope_id', 'agent_id'],
       additionalProperties: false,
     },
   },
@@ -179,6 +238,9 @@ export async function callTool(name: string, rawArgs: unknown, deps: HandlerDeps
       case 'spawn_small_agent': return await spawn(args, deps);
       case 'get_result': return await getResult(args, deps);
       case 'list_runs': return await list(args, deps);
+      case 'list_handoffs': return await listHandoffs(args, deps);
+      case 'read_handoff': return await readHandoff(args, deps);
+      case 'edit_handoff': return await editHandoff(args, deps);
       default: return fail(`Unknown tool "${name}"`);
     }
   } catch (err) {
@@ -258,4 +320,70 @@ async function list(args: Record<string, unknown>, { backend }: HandlerDeps): Pr
   const capacity = { ...res.capacity, queue_length: (res.capacity?.queued ?? 0) + (res.capacity?.waiting ?? 0) };
   const data = { runs: res.runs ?? [], capacity };
   return ok(renderList(data.runs, capacity), data);
+}
+
+// ---------------------------------------------------------------------------
+// Handoff notes (owner only)
+// ---------------------------------------------------------------------------
+
+function handoffTarget(args: Record<string, unknown>): { kind: string; scopeId: string; agentId: string } {
+  if (!(HANDOFF_KINDS as readonly unknown[]).includes(args.kind)) throw new InputError(`kind must be one of ${HANDOFF_KINDS.join(', ')}`);
+  if (typeof args.scope_id !== 'string' || !HANDOFF_SCOPE.test(args.scope_id)) throw new InputError('scope_id must be a conversation or board task id');
+  if (typeof args.agent_id !== 'string' || !AGENT_ID.test(args.agent_id)) throw new InputError('agent_id must be an agent id');
+  return { kind: args.kind as string, scopeId: args.scope_id, agentId: args.agent_id };
+}
+
+const handoffPath = (t: { kind: string; scopeId: string }) => `/api/handoffs/${encodeURIComponent(t.kind)}/${encodeURIComponent(t.scopeId)}`;
+
+function renderHandoff(h: any): string {
+  if (!h) return 'No handoff note yet.';
+  const section = (title: string, items: unknown) => (Array.isArray(items) && items.length ? [`**${title}:**`, ...items.map((i) => `- ${String(i)}`)] : []);
+  return [
+    `### Handoff: ${h.agentName ?? h.agentId} — ${h.kind} \`${h.scopeId}\` (version ${h.version}, ${h.source}, ${h.createdAt})`,
+    ...section('Done', h.done), ...section('Left', h.left), ...section('Next', h.next), ...section('Open questions', h.questions),
+  ].join('\n');
+}
+
+async function listHandoffs(args: Record<string, unknown>, { backend }: HandlerDeps): Promise<ToolCallResult> {
+  only(args, ['agent_id', 'kind', 'limit']);
+  if (args.agent_id !== undefined && (typeof args.agent_id !== 'string' || !AGENT_ID.test(args.agent_id))) throw new InputError('agent_id must be an agent id');
+  if (args.kind !== undefined && !(HANDOFF_KINDS as readonly unknown[]).includes(args.kind)) throw new InputError(`kind must be one of ${HANDOFF_KINDS.join(', ')}`);
+  const limit = intIn(args.limit, 'limit', 1, 200);
+  const q = new URLSearchParams();
+  if (args.agent_id) q.set('agentId', String(args.agent_id));
+  if (args.kind) q.set('kind', String(args.kind));
+  if (limit) q.set('limit', String(limit));
+  const qs = q.toString();
+  const res = await backend.request('GET', `/api/handoffs${qs ? `?${qs}` : ''}`);
+  const handoffs = Array.isArray(res?.handoffs) ? res.handoffs : [];
+  const md = handoffs.length
+    ? ['### Handoff notes', '', ...handoffs.map((h: any) => `- ${h.agentName ?? h.agentId} — ${h.kind} \`${h.scopeId}\` v${h.version} (${h.createdAt}): ${Array.isArray(h.next) && h.next.length ? `next: ${h.next[0]}` : `${(h.done ?? []).length} done, ${(h.left ?? []).length} left`}`)].join('\n')
+    : 'No handoff notes yet.';
+  return ok(md, { handoffs });
+}
+
+async function readHandoff(args: Record<string, unknown>, { backend }: HandlerDeps): Promise<ToolCallResult> {
+  only(args, ['kind', 'scope_id', 'agent_id']);
+  const t = handoffTarget(args);
+  const res = await backend.request('GET', `${handoffPath(t)}?agentId=${encodeURIComponent(t.agentId)}`);
+  const history = Array.isArray(res?.history) ? res.history : [];
+  return ok([renderHandoff(res?.handoff ?? null), ...(history.length > 1 ? ['', `${history.length - 1} earlier version(s).`] : [])].join('\n'), { handoff: res?.handoff ?? null, history });
+}
+
+async function editHandoff(args: Record<string, unknown>, { backend }: HandlerDeps): Promise<ToolCallResult> {
+  only(args, ['kind', 'scope_id', 'agent_id', 'done', 'left', 'next', 'questions']);
+  const t = handoffTarget(args);
+  const body: Record<string, unknown> = { agentId: t.agentId };
+  for (const k of ['done', 'left', 'next', 'questions'] as const) {
+    if (args[k] === undefined) continue;
+    const v = args[k];
+    if (!Array.isArray(v) || v.length > 8 || !v.every((x) => typeof x === 'string' && x.length <= 300)) throw new InputError(`${k} must be a list of at most 8 short lines`);
+    body[k] = v;
+  }
+  if (Object.keys(body).length === 1) throw new InputError('give at least one of done, left, next, questions');
+  // Lists left out keep their current text.
+  const current = (await backend.request('GET', `${handoffPath(t)}?agentId=${encodeURIComponent(t.agentId)}`))?.handoff;
+  for (const k of ['done', 'left', 'next', 'questions'] as const) if (body[k] === undefined && Array.isArray(current?.[k])) body[k] = current[k];
+  const res = await backend.request('PUT', handoffPath(t), body);
+  return ok(`Saved as version ${res?.handoff?.version ?? '?'}. The agent's next session starts from it.\n\n${renderHandoff(res?.handoff)}`, { handoff: res?.handoff ?? null });
 }

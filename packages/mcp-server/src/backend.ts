@@ -1,6 +1,7 @@
 /**
- * Minimal client for the owner-only small-agent API of the local backend
- * (packages/backend/src/api/routes/small-agent.ts). The bearer token comes
+ * Minimal client for the owner-only APIs of the local backend: small-agent
+ * runs (packages/backend/src/api/routes/small-agent.ts) and agent handoff
+ * notes (agent-handoffs.ts). The bearer token comes
  * from the CLI token store on every call; it is never part of a message,
  * and redirects are refused so it cannot be carried to another host.
  * Before every request the backend must answer an identity challenge
@@ -17,7 +18,7 @@ export class BackendError extends Error {
 }
 
 export interface BackendClient {
-  request(method: 'GET' | 'POST', path: string, body?: unknown): Promise<any>;
+  request(method: 'GET' | 'POST' | 'PUT', path: string, body?: unknown): Promise<any>;
 }
 
 export function createBackendClient(env: NodeJS.ProcessEnv = process.env, timeoutMs = 30_000): BackendClient {
@@ -72,7 +73,7 @@ export function createBackendClient(env: NodeJS.ProcessEnv = process.env, timeou
       }
       if (!res.ok) {
         if (res.status === 401) throw new BackendError(NOT_SIGNED_IN, 401);
-        if (res.status === 403) throw new BackendError('The saved Agent Player session is not the owner account; small-agent runs are owner-only.', 403);
+        if (res.status === 403) throw new BackendError('The saved Agent Player session is not the owner account; these tools are owner-only.', 403);
         const detail = data && typeof data.error === 'string' ? data.error.slice(0, 300) : '';
         throw new BackendError(`Agent Player backend refused the request (${res.status})${detail ? `: ${detail}` : ''}`, res.status, data);
       }

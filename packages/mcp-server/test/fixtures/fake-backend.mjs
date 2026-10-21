@@ -17,6 +17,8 @@ const RUN = '11111111-2222-3333-4444-555555555555';
 const INSTANCE_ID = process.env.FAKE_INSTANCE_ID || '';
 const INSTANCE_SECRET = SCENARIO === 'rogue' ? randomBytes(32).toString('hex') : (process.env.FAKE_INSTANCE_SECRET || '');
 let cardCalls = 0;
+let handoffVersion = 1;
+let handoffBody = { done: ['Set up the repository'], left: ['Release notes'], next: ['Write the release notes'], questions: [] };
 
 const log = (entry) => { if (LOG) appendFileSync(LOG, `${JSON.stringify(entry)}\n`); };
 const json = (status, body) => new Response(JSON.stringify(body), { status, headers: { 'content-type': 'application/json' } });
@@ -66,6 +68,21 @@ globalThis.fetch = async (input, init = {}) => {
   }
   if (entry.method === 'GET' && path.startsWith('/api/small-agent/runs')) {
     return json(200, { runs: [{ run_id: RUN, status: 'running', kind: 'lookup', summary: null, steps_used: 1, max_steps: 15, created_at: '2026-10-14 10:00:00', finished_at: null }], capacity: capacity(2) });
+  }
+  // Agent handoff notes (owner only, CORE-MEM-HANDOFF).
+  if (path.startsWith('/api/handoffs')) {
+    if (SCENARIO === 'notowner') return json(403, { error: 'This action requires the owner account' });
+    const note = { id: 'h-1', agentId: 'main-agent', kind: 'conversation', scopeId: 'conv-1', projectId: null, version: handoffVersion, source: handoffVersion > 1 ? 'owner' : 'agent', runId: null, createdAt: '2026-10-21 09:00:00', ...handoffBody };
+    if (entry.method === 'GET' && path.startsWith('/api/handoffs?') || path === '/api/handoffs') return json(200, { handoffs: [note] });
+    if (path.startsWith('/api/handoffs/conversation/conv-1')) {
+      if (entry.method === 'GET') return new URL(url).searchParams.get('agentId') === 'main-agent' ? json(200, { handoff: note, history: [note] }) : json(404, { error: 'Not found', code: 'not_found' });
+      if (entry.method === 'PUT') {
+        handoffVersion++;
+        handoffBody = { done: entry.body.done ?? [], left: entry.body.left ?? [], next: entry.body.next ?? [], questions: entry.body.questions ?? [] };
+        return json(200, { handoff: { ...note, version: handoffVersion, source: 'owner', ...handoffBody } });
+      }
+    }
+    return json(404, { error: 'Not found', code: 'not_found' });
   }
   return json(404, { error: 'not found' });
 };
