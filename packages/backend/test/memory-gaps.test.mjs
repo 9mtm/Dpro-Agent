@@ -8,7 +8,9 @@
 //    recall trace of its own replies (approval-gated where they change memory);
 //  - graph clusters -> topic suggestions (preview changes nothing, apply only
 //    after confirm, never renames a key; dismiss);
+//  - bridge: activity log filters and the "hide from Git" option (API + tools);
 //  - owner-only "clear cache" with confirm.
+// (The owner handoff tools of packages/mcp-server are tested there.)
 // Throwaway DB/keys/HOME; a dead OLLAMA_URL and a stubbed fetch (no real model).
 // Run: node --import tsx --test test/memory-gaps.test.mjs
 import test from 'node:test';
@@ -418,4 +420,21 @@ test('7. graph clusters -> topic suggestions: preview changes nothing, apply aft
   db.exec('COMMIT');
   const big = await C.graphClusters({ userId: OWNER, drawers: [{ kind: 'project', key: 'big' }] }, { limit: 200 });
   assert.equal(big.reduce((n, x) => n + x.entities.length, 0), C.MAX_CLUSTER_NODES);
+});
+
+test('8. "Clear cache": owner only, needs confirm, drops only this owner\'s cached context; the next turn rebuilds it', async () => {
+  const warm = await turn(conv.id, 'Status of Alpha?');
+  const again = await turn(conv.id, 'Status of Alpha?');
+  assert.equal(again.trace.context.fromCache.pack, true, warm.trace.context.fromCache.pack ? 'warm' : 'built then reused');
+  assert.equal((await call('mg-user', 'POST', '/api/memory/cache/clear', { confirm: true })).statusCode, 403);
+  assert.equal((await call(OWNER, 'POST', '/api/memory/cache/clear', {})).statusCode, 400);
+  assert.equal((await call(OWNER, 'POST', '/api/memory/cache/clear', { confirm: 'yes' })).statusCode, 400);
+  const before = db.prepare('SELECT COUNT(*) AS n FROM memories').get().n;
+  const { cleared } = await ok('POST', '/api/memory/cache/clear', { confirm: true });
+  assert.ok(cleared >= 1);
+  assert.equal(db.prepare('SELECT COUNT(*) AS n FROM memories').get().n, before, 'no stored memory touched');
+  assert.ok(db.prepare("SELECT 1 FROM audit_logs WHERE action = 'memory_cache.clear'").get());
+  const fresh = await turn(conv.id, 'Status of Alpha?');
+  assert.equal(fresh.trace.context.fromCache.pack, false);
+  assert.match(system(fresh.body), /We are Dpro\./);
 });

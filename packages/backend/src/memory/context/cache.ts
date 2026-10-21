@@ -20,8 +20,11 @@ export class LruCache<V> {
     this.map.set(key, { userId, value });
     while (this.map.size > this.size) this.map.delete(this.map.keys().next().value as string);
   }
-  dropUser(userId: string): void {
-    for (const [k, e] of this.map) if (e.userId === userId) this.map.delete(k);
+  /** Drop a user's entries; returns how many. */
+  dropUser(userId: string): number {
+    let n = 0;
+    for (const [k, e] of this.map) if (e.userId === userId) { this.map.delete(k); n++; }
+    return n;
   }
   clear(): void { this.map.clear(); }
   get entries(): number { return this.map.size; }
@@ -38,9 +41,9 @@ export function registerCache<V>(size: number): LruCache<V> {
   return c;
 }
 
-/** Drop every cached pack and recall of a user (forget). */
-export function dropContextCache(userId: string): void {
-  for (const c of caches) c.dropUser(userId);
+/** Drop every cached pack and recall of a user (forget, the owner's "Clear cache"); returns how many. */
+export function dropContextCache(userId: string): number {
+  return caches.reduce((n, c) => n + c.dropUser(userId), 0);
 }
 
 /** Test hook. */
