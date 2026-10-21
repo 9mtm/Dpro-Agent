@@ -1,4 +1,6 @@
 import { agentSkillsPrompt } from '../skills/central-store.js';
+import { HANDOFF_NOTE } from '../memory/handoff/store.js';
+import { taskHandoffText } from '../memory/handoff/scope.js';
 /**
  * Durable task-run executor + startup recovery (CORE-08, R2).
  *
@@ -313,6 +315,7 @@ export async function executeTaskRun(runId: string, owner: string = WORKER_ID): 
     if (!orchestrator.getTask(taskId)) return await fail(`Task ${taskId} no longer exists.`, agent.id);
 
     const isSmall = agent.id === SMALL_AGENT_ID;
+    const contract: TaskContract | null = await runContract(run);
     // SECURITY (S1.2): the agent's current grants, intersected with every
     // agent this task was delegated from; re-checked on every attempt.
     const registry = await createAgentToolsRegistry({
@@ -349,15 +352,20 @@ export async function executeTaskRun(runId: string, owner: string = WORKER_ID): 
         return await fail(msg, agent.id);
       }
       systemPrompt = (agent.system_prompt ?? `You are ${agent.name}, an AI agent.`) + await agentSkillsPrompt(agent.id);
+      // CORE-MEM-HANDOFF: the agent's newest note for this board task, and how to leave the next one.
+      // A contract that names its tools, or a delegated task, leaves the handoff tools out, so the note on using them too.
+      const handoff = await taskHandoffText(run).catch(() => '');
+      const handoffTools = !contract?.allowedTools && delegatingAgents(taskId).length === 0;
+      const parts = [handoff, handoffTools ? HANDOFF_NOTE : ''].filter(Boolean);
+      if (parts.length) systemPrompt += `\n\n${parts.join('\n\n')}`;
       claudeClient = new ClaudeClient(apiKey, agent.model);
       driver = claudeDriver(claudeClient, agent, systemPrompt, registry.getToolsForAPI());
     }
     const prompt = await runPrompt(run);
     // R1: the contract pinned on the run narrows tools and drawers for this
     // attempt (never wider than the agent's grants now).
-    const contract: TaskContract | null = await runContract(run);
     if (contract?.allowedTools) {
-      registry.updateContext({ grants: intersectGrants(registry.getContext().grants!, staticGrants(contract.allowedTools)) });
+      registry.updateContext({ grants: intersectGrants(registry.getContext().grants!, staticGrants(contract.allowedTools)), handoffTools: false });
     }
     if (contract?.allowedDrawers) {
       // SECURITY: intersect with the run's effective drawers (the stored

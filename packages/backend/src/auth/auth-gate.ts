@@ -195,6 +195,7 @@ export const TIER_RULES: readonly Rule[] = [
   { methods: ['POST'], exact: '/api/task-runs/:id/review', access: 'owner' }, // accept/reject a result that needs review (R1)
   { methods: '*', prefix: '/api/budget', access: 'owner' },        // paid model spend today + daily cap (R2)
   { methods: '*', prefix: '/api/small-agent', access: 'owner' },   // delegate light tasks to the small local agent (MCP-01)
+  { methods: '*', prefix: '/api/handoffs', access: 'owner' },      // the agents' handoff notes (CORE-MEM-HANDOFF)
   { methods: '*', prefix: '/api/mcp', access: 'owner' },           // MCP client servers: start processes / reach URLs for agents (M1)
 
   // --- owner or admin: configuration, outbound requests, money, other users' data ---

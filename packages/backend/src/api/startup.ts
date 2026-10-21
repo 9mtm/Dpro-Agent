@@ -33,6 +33,7 @@ export const BACKGROUND_JOBS: ReadonlyArray<{ id: string; off: string }> = [
   { id: 'evolution-scheduler', off: 'initializeEvolutionScheduler not called (and the cron engine guard)' },
   { id: 'agent-cron', off: 'startAgentCronService not called; registerAgentCron creates no task' },
   { id: 'task-run-recovery', off: 'startTaskRunRecovery not called (no timer, no recovery kick)' },
+  { id: 'handoff-sweep', off: 'startHandoffSweep not called (no generated handoff notes for idle chats / ended task runs)' },
   { id: 'login-pruning', off: 'startLoginRecordPruning not called' },
   { id: 'scheduled-notifications', off: '60 s interval not started' },
   { id: 'calendar-sync', off: 'startCalendarSyncScheduler not called' },
@@ -221,6 +222,11 @@ export async function initializeBackend(fastify: FastifyInstance): Promise<Start
     // leases), and continue runs whose approval was decided.
     const { startTaskRunRecovery } = await import('../services/task-run-executor.js');
     startTaskRunRecovery();
+
+    // CORE-MEM-HANDOFF: one generated handoff note per idle conversation /
+    // ended task run that has none (local model, fallback when none answers).
+    const { startHandoffSweep } = await import('../memory/handoff/generate.js');
+    startHandoffSweep();
 
     // S0-Q.21: prune old sign-in attempts (30 days) and expired device
     // tokens now and daily (unref'd timer, errors logged, never thrown).
