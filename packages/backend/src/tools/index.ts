@@ -52,6 +52,7 @@ import {
   memoryDoctorTool,
   memoryDoctorFixTool,
   memoryGraphTool,
+  memoryMoveTool,
 } from './memory/index.js';
 
 import {
@@ -99,7 +100,7 @@ const CORE_TOOLS: Tool[] = [
   execTool, readTool, writeTool, webFetchTool, executeCodeTool,
   browserNavigateTool, browserScreenshotTool, browserExtractTool, browserInteractTool,
   memorySaveTool, memorySearchTool, memoryReflectTool, memoryStatsTool, memoryEditTool, memoryDeleteTool, memoryForgetTool, memoryGraphTool,
-  memoryDoctorTool, memoryDoctorFixTool,
+  memoryDoctorTool, memoryDoctorFixTool, memoryMoveTool,
   desktopControlTool,
   storageSaveTool, storageSearchTool, storageDeleteTool,
   createReminderTool,

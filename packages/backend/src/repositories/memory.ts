@@ -33,7 +33,7 @@ import { memoryShared, type MemorySharedRepository } from './memory-shared.js';
 import { one, sql } from './sql-steps.js';
 import { getMemoryStorage, TopicKeyTakenError } from '../memory/storage.js';
 import { defaultDrawerForType, normalizeDrawer, sameDrawer, type DrawerRef } from '../memory/drawers.js';
-import { deleteVersioned, saveVersioned, setTopicKeyVersioned, updateVersioned } from '../memory/learning.js';
+import { deleteVersioned, moveVersioned, saveVersioned, setTopicKeyVersioned, updateVersioned } from '../memory/learning.js';
 import { memoryVersions } from '../memory/versions.js';
 import { forgetMemory, forgettableDrawer, listTombstones, type ForgetResult } from '../memory/forget.js';
 import { checkMemory, fixMemory, type DoctorFixResult, type DoctorReport } from '../memory/doctor.js';
@@ -80,6 +80,14 @@ export interface MemoryRepository extends MemoryRecallRepository, MemoryOwnerRep
   versions(actor: Actor | null | undefined, id: string): Promise<any[]>;
   /** null when the memory does not exist (or is not the actor's). */
   forget(actor: Actor | null | undefined, id: string): Promise<ForgetResult | null>;
+  /**
+   * Move an own memory to another drawer (MEM-CACHE-01 / owner only): the
+   * owner account, or an agent run of the owner (not answering an outsider)
+   * with both drawers open and writable. Versioned. 404 unknown memory,
+   * 403 closed drawer / not the owner; MoveError (same drawer) and
+   * TopicKeyTakenError (key used in the target drawer) are thrown as such.
+   */
+  move(actor: Actor | null | undefined, id: string, to: DrawerRef, reason?: string | null): Promise<{ memory: Memory; from: DrawerRef }>;
   tombstones(actor: Actor | null | undefined): Promise<Awaited<ReturnType<typeof listTombstones>>>;
 
   // Owner only (CORE-04)
@@ -234,6 +242,25 @@ export const memoryRepository: MemoryRepository = {
       if (!drawerWritable(a, drawer)) throw new ScopeError(403, DRAWER_CLOSED);
     }
     return forgetMemory(userId, id, versionActor(a));
+  },
+
+  async move(actor, id, to, reason) {
+    const a = requireActor(actor);
+    const target = normalizeDrawer(to);
+    let userId: string;
+    if (a.kind === 'agent') {
+      if (a.channel) throw new ScopeError(403, OUTSIDER_REFUSED);
+      if (a.role !== 'owner' || !a.userId) throw new ScopeError(403, 'Moving memory is only for the owner');
+      userId = a.userId;
+      await ownMemory(a, userId, id, true);
+      if (!drawerWritable(a, target)) throw new ScopeError(403, DRAWER_CLOSED);
+    } else {
+      userId = owner(a);
+      await ownMemory(a, userId, id);
+    }
+    const moved = await moveVersioned(userId, id, target, versionActor(a), reason);
+    if (!moved) throw new ScopeError(404, NOT_FOUND);
+    return moved;
   },
 
   async tombstones(actor) {

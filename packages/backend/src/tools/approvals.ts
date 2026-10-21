@@ -39,6 +39,7 @@ export const APPROVAL_REQUIRED_TOOLS: Readonly<Record<string, ApprovalCategory>>
   storage_delete: 'delete',
   memory_forget: 'delete', // CORE-07: complete, irreversible removal
   memory_doctor_fix: 'delete', // CORE-MEM-DOCTOR: deletes duplicate/expired copies (versioned); the approval is the confirm
+  memory_move: 'other', // MEM-CACHE-01: moving a memory changes which turns may load it; the owner approves each move
   // spending money
   make_call: 'money',
   trading_execute: 'money',

@@ -68,6 +68,13 @@ export async function conversationHandoffText(ownerId: string, conversationId: s
   return h && scope ? handoffBlock(h, scope) : '';
 }
 
+/** The newest note for an owner's own conversation as { id, scope, text } (MEM-CACHE-01 context pack / trace), or null. */
+export async function packHandoffText(ownerId: string, conversationId: string, agentId?: string | null): Promise<{ id: string; scope: string; text: string } | null> {
+  const scope = await conversationScope(ownerId, conversationId, agentId);
+  const h = scope ? await handoffFor(scope) : undefined;
+  return h && scope ? { id: h.id, scope: `${h.kind}:${h.scopeId}`, text: handoffBlock(h, scope) } : null;
+}
+
 /** The prompt block of the agent's newest note for a task run's board task, or ''. */
 export async function taskHandoffText(run: { task_id: string; agent_id: string; user_id: string | null }): Promise<string> {
   const scope = await taskRunScope(run);

@@ -11,3 +11,4 @@ export { memoryEditTool, memoryDeleteTool } from './edit.js';
 export { memoryForgetTool } from './forget.js';
 export { memoryDoctorTool, memoryDoctorFixTool } from './doctor.js';
 export { memoryGraphTool } from './graph.js';
+export { memoryMoveTool } from './move.js';

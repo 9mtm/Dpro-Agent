@@ -486,7 +486,7 @@ export function* lockProposalQueue(userId: string): Step<void> {
  * be exactly as `before`, otherwise the proposal goes stale.
  */
 export interface ChangeProposalInput {
-  userId: string; agentId: string; drawer: DrawerRef; changes: MemoryChange[]; source: 'learning' | 'agent' | 'import';
+  userId: string; agentId: string; drawer: DrawerRef; changes: MemoryChange[]; source: 'learning' | 'agent' | 'import' | 'file';
   reasons: string[]; note?: string | null; createdBy: string; importBatchId?: string | null;
   /** Import (CLI-02) checks capacity for the whole batch up front. */
   skipPendingLimit?: boolean;

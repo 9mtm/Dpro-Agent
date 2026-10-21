@@ -7,6 +7,8 @@
  * id where it matters; the routes never pass one from the request body.
  */
 
+import { deleteSessionSummaries } from '../memory/context/summaries.js';
+import { deleteSessionTraces } from '../memory/context/trace.js';
 import { randomUUID } from 'node:crypto';
 import { execFile } from 'node:child_process';
 import fs from 'node:fs';
@@ -113,7 +115,10 @@ export async function patchConversation(userId: string, id: string, patch: { tit
 
 /** Deletes the conversation and its messages (ON DELETE CASCADE). */
 export async function deleteConversation(userId: string, id: string): Promise<boolean> {
-  return (await q.run('DELETE FROM chat_sessions WHERE id = ? AND user_id = ?', id, userId)).changes > 0;
+  const gone = (await q.run('DELETE FROM chat_sessions WHERE id = ? AND user_id = ?', id, userId)).changes > 0;
+  // MEM-CACHE-01: its turn summaries and reply traces go with it.
+  if (gone) await Promise.all([deleteSessionSummaries(id), deleteSessionTraces(id)]).catch(() => undefined);
+  return gone;
 }
 
 export async function listConversationMessages(sessionId: string): Promise<ConversationMessage[]> {

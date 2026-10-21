@@ -60,6 +60,7 @@ export const DEFAULT_AGENT_TOOLS: readonly string[] = [
   'memory_doctor', // CORE-MEM-DOCTOR: read-only health check, owner's own turns only
   'memory_doctor_fix', // CORE-MEM-DOCTOR: safe fixes; every call needs one-time owner approval
   'memory_graph',  // CORE-MEM-GRAPH: read-only, owner's runs, open drawers only
+  'memory_move',   // MEM-CACHE-01: owner's runs, both drawers open; every call needs one-time owner approval
   'storage_search',
   // BOARD-02: the agent's own board cards only (list, comment, move)
   'board_my_cards',
