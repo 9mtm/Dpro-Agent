@@ -34,6 +34,7 @@ export const BACKGROUND_JOBS: ReadonlyArray<{ id: string; off: string }> = [
   { id: 'agent-cron', off: 'startAgentCronService not called; registerAgentCron creates no task' },
   { id: 'task-run-recovery', off: 'startTaskRunRecovery not called (no timer, no recovery kick)' },
   { id: 'handoff-sweep', off: 'startHandoffSweep not called (no generated handoff notes for idle chats / ended task runs)' },
+  { id: 'memory-bridge-sync', off: 'startMemoryBridgeSync not called (managed project files and back-flow only on owner request)' },
   { id: 'login-pruning', off: 'startLoginRecordPruning not called' },
   { id: 'scheduled-notifications', off: '60 s interval not started' },
   { id: 'calendar-sync', off: 'startCalendarSyncScheduler not called' },
@@ -227,6 +228,11 @@ export async function initializeBackend(fastify: FastifyInstance): Promise<Start
     // ended task run that has none (local model, fallback when none answers).
     const { startHandoffSweep } = await import('../memory/handoff/generate.js');
     startHandoffSweep();
+
+    // MEM-BRIDGE-01: confirmed project folders get their managed AGENTS.md /
+    // CLAUDE.md / GEMINI.md section refreshed; opted-in back-flow runs.
+    const { startMemoryBridgeSync } = await import('../memory/bridge/sync.js');
+    startMemoryBridgeSync();
 
     // S0-Q.21: prune old sign-in attempts (30 days) and expired device
     // tokens now and daily (unref'd timer, errors logged, never thrown).

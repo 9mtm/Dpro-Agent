@@ -46,6 +46,7 @@ export const APPROVAL_REQUIRED_TOOLS: Readonly<Record<string, ApprovalCategory>>
   skill_install: 'install',
   // changing stored secrets / settings
   credentials_save: 'settings',
+  memory_bridge_apply: 'settings', // MEM-BRIDGE-01: writes CLI configs / project files; the approval is the confirm
   // handing work to the owner's signed-in coding app (CORE-ROUTE-01)
   ask_coding_app: 'other',
 };

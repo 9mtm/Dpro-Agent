@@ -21,6 +21,7 @@ import { fileURLToPath } from 'url';
 import { sessionsRoutes } from './routes/sessions.js';
 import { chatConversationRoutes } from './routes/chat-conversations.js';
 import { agentHandoffRoutes } from './routes/agent-handoffs.js'; // CORE-MEM-HANDOFF: owner-only done/left/next notes
+import { memoryBridgeRoutes } from './routes/memory-bridge.js'; // MEM-BRIDGE-01: one memory for Claude Code, Codex, Gemini CLI, Antigravity
 import { modelsRoutes } from './routes/models.js';
 import { chatRoutes } from './routes/chat.js';
 import { smartChatRoutes } from './routes/smart-chat.js';
@@ -302,6 +303,7 @@ export async function buildServer(options: BuildServerOptions = {}): Promise<Fas
   await fastify.register(chatRoutes);
   await fastify.register(chatConversationRoutes); // saved conversations + resumable runs (CHAT-REBUILD-01)
   await fastify.register(agentHandoffRoutes); // CORE-MEM-HANDOFF: the agents' handoff notes (owner only)
+  await fastify.register(memoryBridgeRoutes); // MEM-BRIDGE-01: owner API + the dpro-memory MCP server's two loopback routes
   await fastify.register(smartChatRoutes); // 🧠 Smart Agent System
   await fastify.register(settingsRoutes); // ⚙️ Settings API
   await fastify.register(agentsStatusRoutes); // 📊 Agents Status

@@ -52,6 +52,8 @@ import {
   memoryDoctorTool,
   memoryDoctorFixTool,
   memoryGraphTool,
+  memoryBridgeTool,
+  memoryBridgeApplyTool,
 } from './memory/index.js';
 
 import {
@@ -100,6 +102,7 @@ const CORE_TOOLS: Tool[] = [
   browserNavigateTool, browserScreenshotTool, browserExtractTool, browserInteractTool,
   memorySaveTool, memorySearchTool, memoryReflectTool, memoryStatsTool, memoryEditTool, memoryDeleteTool, memoryForgetTool, memoryGraphTool,
   memoryDoctorTool, memoryDoctorFixTool,
+  memoryBridgeTool, memoryBridgeApplyTool, // MEM-BRIDGE-01: owner-only; apply needs owner approval
   desktopControlTool,
   storageSaveTool, storageSearchTool, storageDeleteTool,
   createReminderTool,
