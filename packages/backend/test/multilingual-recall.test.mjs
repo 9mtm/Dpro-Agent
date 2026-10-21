@@ -26,6 +26,7 @@ process.env.DATABASE_PATH = join(dir, '.data', 'agent-player.db');
 process.env.JWT_SECRET = randomBytes(64).toString('hex'); // throwaway, test only
 process.env.ENCRYPTION_KEY = randomBytes(32).toString('hex'); // throwaway, test only
 process.env.MEMORY_EMBEDDINGS = 'hash';
+process.env.MEMORY_GRAPH_MODEL = 'off'; // this test may reach the real local embeddings, never the chat model
 
 const OLLAMA = (process.env.OLLAMA_URL || 'http://127.0.0.1:11434').replace(/\/+$/, '');
 const EMBED_MODEL = process.env.MEMORY_EMBEDDING_MODEL || 'qwen3-embedding:0.6b';
