@@ -8,7 +8,9 @@ import type { PersonalityController } from './personality';
 import { PersonalityReview } from './PersonalityReview';
 import { permissionCategories, drawerKinds } from './hire-contract.js';
 import type { TraitName } from './agent-card-contract.js';
-import { MemoryCard, drawerLabel } from './MemoryViews';
+import { drawerLabel } from './MemoryViews';
+import { AgentMemoryController, handoffLine } from './agent-memory';
+import { ago, oneLine } from './memory-store';
 import { validatedDisplayName } from './naming';
 import { UiIcon } from './ui-icons';
 
@@ -31,7 +33,7 @@ const DIALECT: Record<string, string> = { 'ar-IQ': 'Arabic (Iraqi)', ar: 'Arabic
  */
 export function AgentCard({ client, agentId, agents, personality, onBack, onOpenMemory }: {
   client: ConstructorParameters<typeof AgentCardController>[0]; agentId: string; agents: AgentsController; personality: PersonalityController;
-  onBack: () => void; onOpenMemory?: () => void;
+  onBack: () => void; onOpenMemory?: (agentId?: string) => void;
 }) {
   const [card, setCard] = useState<AgentCardController>();
   useEffect(() => { const c = new AgentCardController(client, agentId); setCard(c); void c.load(); void agents.select(agentId); return () => c.dispose(); }, [client, agentId, agents]);
@@ -39,7 +41,7 @@ export function AgentCard({ client, agentId, agents, personality, onBack, onOpen
   return <CardView card={card} agents={agents} personality={personality} onBack={onBack} onOpenMemory={onOpenMemory}/>;
 }
 
-export function CardView({ card, agents, personality, onBack, onOpenMemory }: { card: AgentCardController; agents?: AgentsController; personality?: PersonalityController; onBack: () => void; onOpenMemory?: () => void }) {
+export function CardView({ card, agents, personality, onBack, onOpenMemory }: { card: AgentCardController; agents?: AgentsController; personality?: PersonalityController; onBack: () => void; onOpenMemory?: (agentId?: string) => void }) {
   const s = useSyncExternalStore(card.subscribe, card.getSnapshot, card.getSnapshot);
   const a = s.agent;
   const busy = s.phase === 'saving' || s.phase === 'loading';
@@ -200,23 +202,67 @@ function PermissionsTab({ card, busy }: { card: AgentCardController; busy: boole
   </div>;
 }
 
-function MemoryTab({ card, onOpenMemory }: { card: AgentCardController; onOpenMemory?: () => void }) {
+/**
+ * The agent's memory (board M6): what it may remember (drawers read / write,
+ * shared with the team; its role template and exceptions from Memory › Access),
+ * the notes it wrote itself, its handoffs, and its skills and tools at a glance.
+ */
+function MemoryTab({ card, onOpenMemory }: { card: AgentCardController; onOpenMemory?: (agentId?: string) => void }) {
   const s = useSyncExternalStore(card.subscribe, card.getSnapshot, card.getSnapshot);
-  const perms = s.permissions;
-  if (!s.memories || !perms) return <p className="fine-print">Loading memory…</p>;
-  const mine = s.memories.filter(m => readable(m, perms));
-  const groups = new Map<string, typeof mine>();
-  for (const m of mine) { const k = drawerLabel(m.drawer); groups.set(k, [...(groups.get(k) ?? []), m]); }
-  return <div className="card-section">
-    <p className="drawer-chips">Can read: {perms.memoryRead.length ? perms.memoryRead.map(k => <span key={k} className="chip">{drawerLabel({ kind: k as never })}</span>) : <span className="fine-print">nothing</span>}
-      {perms.memoryWrite.length > 0 && <> · can add to: {perms.memoryWrite.map(k => <span key={k} className="chip">{drawerLabel({ kind: k as never })}</span>)}</>}</p>
-    {mine.length === 0 ? <p className="empty-note">No memories in the drawers this agent can read yet.</p>
-      : [...groups].map(([label, items]) => <section key={label} className="card-sub"><h4>{label} <small className="fine-print">{items.length}</small></h4>
-        <div className="memory-list">{items.map(m => <MemoryCard key={m.id} item={m}/>)}</div></section>)}
-    <div className="card-actions">{onOpenMemory && <button type="button" onClick={onOpenMemory}>Open the Memory page</button>}
-      <span className="fine-print">Memories belong to you; this agent reads them through its permissions.</span></div>
+  const [mem, setMem] = useState<AgentMemoryController>();
+  useEffect(() => { const m = new AgentMemoryController(card.client as never, s.agentId); setMem(m); void m.load(); return () => m.dispose(); }, [card, s.agentId]);
+  const m = useSyncExternalStore(mem?.subscribe ?? noopSubscribe, mem?.getSnapshot ?? noSnapshot, mem?.getSnapshot ?? noSnapshot);
+  const d = s.permissionDraft, g = s.grants, gd = s.grantDraft ?? [];
+  const busy = s.phase === 'saving' || s.phase === 'loading';
+  const name = s.agent?.name ?? 'This agent';
+  if (!d) return <p className="fine-print">Loading memory…</p>;
+  const a = m?.access;
+  return <div className="card-section agent-memory">
+    <div className="agent-memory-grid">
+      <section className="card-sub" aria-label="Drawer access">
+        <h4>What {name} may remember</h4>
+        <table className="perm-table"><thead><tr><th scope="col">Drawer</th><th scope="col">Read</th><th scope="col">Write</th></tr></thead>
+          <tbody>{drawerKinds.map(k => <tr key={k}><th scope="row">{drawerLabel({ kind: k as never })}</th>
+            <td><input type="checkbox" aria-label={`Read ${k}`} checked={d.memoryRead.includes(k)} disabled={busy} onChange={() => card.toggleDrawer(k, 'read')}/></td>
+            <td><input type="checkbox" aria-label={`Write ${k}`} checked={d.memoryWrite.includes(k)} disabled={busy} onChange={() => card.toggleDrawer(k, 'write')}/></td></tr>)}</tbody></table>
+        <label className="check"><input type="checkbox" checked={d.sharedMemory} disabled={busy} onChange={e => card.setShared(e.target.checked)}/>Share what it learns with the team</label>
+        <div className="card-actions"><button type="button" className="primary" disabled={busy || !card.permissionsChanged()} onClick={() => void card.savePermissions(false)}>Save memory access</button></div>
+        {a && <p className="fine-print">{a.template ? <>Role template: <b>{a.template.name}</b>. </> : 'No role template. '}{a.exceptions.length ? `${a.exceptions.length} ${a.exceptions.length === 1 ? 'exception' : 'exceptions'} in Memory › Access.` : ''} Effective now: reads {a.effective.memoryRead.map(k => drawerLabel({ kind: k as never })).join(', ') || 'nothing'}.</p>}
+        <p className="fine-print">Off / ask / allow per action stays under Permissions.</p>
+      </section>
+      <div className="agent-memory-col">
+        <section className="card-sub" aria-label="Its own notes">
+          <h4>Its own notes <small className="fine-print">{m?.notes ? `${m.notes.total} ${m.notes.total === 1 ? 'note' : 'notes'}` : '…'}</small></h4>
+          {m?.notes && m.notes.items.length === 0 && <p className="fine-print">{name} has not written a memory yet.</p>}
+          <ul className="agent-notes">{(m?.notes?.items ?? []).map(n => <li key={n.id} dir="auto">{oneLine(n.preview)}</li>)}</ul>
+          {onOpenMemory && <div className="card-actions"><button type="button" onClick={() => onOpenMemory(s.agentId)}>Edit notes</button><button type="button" onClick={() => onOpenMemory(s.agentId)}>History</button></div>}
+        </section>
+        <section className="card-sub" aria-label="Handoffs">
+          <h4>Handoffs</h4>
+          {m?.handoffs === null || !m ? <p className="fine-print">…</p> : m.handoffs.length === 0 ? <p className="fine-print">No handoff notes yet. The agent writes one when a larger piece of work ends.</p>
+            : <ul className="agent-handoffs">{m.handoffs.map(h => <li key={h.id}><span className="fine-print">{h.kind === 'conversation' ? 'Chat' : 'Board task'} · {ago(h.createdAt)}</span><span>{handoffLine(h)}</span></li>)}</ul>}
+        </section>
+      </div>
+      <div className="agent-memory-col">
+        <section className="card-sub" aria-label="Skills">
+          <h4>Skills <button type="button" className="link-button" onClick={() => void card.openTab('skills')}>Choose…</button></h4>
+          {m?.skills === null || !m ? <p className="fine-print">…</p> : m.skills.length === 0 ? <p className="fine-print">No skills assigned.</p>
+            : <div className="mem-chips">{m.skills.map(k => <span key={k} className="chip">{k}</span>)}</div>}
+          <p className="fine-print">From the central skill library; updates arrive with the library.</p>
+        </section>
+        <section className="card-sub" aria-label="Tools and MCP">
+          <h4>Tools &amp; MCP <button type="button" className="link-button" onClick={() => void card.openTab('permissions')}>Manage…</button></h4>
+          {g ? TOOL_GROUPS.map(group => { const tools = g.available.filter(t => toolGroup(t.name) === group); if (!tools.length) return null;
+            return <span key={group} className="mem-line"><span>{group}</span><span className="fine-print">{tools.filter(t => gd.includes(t.name)).length} of {tools.length} on</span></span>; }) : <p className="fine-print">…</p>}
+          <button type="button" className="link-button" onClick={() => void card.openTab('mcp')}>MCP connections</button>
+          <p className="fine-print">New MCP tools stay off until you turn them on.</p>
+        </section>
+      </div>
+    </div>
   </div>;
 }
+const noopSubscribe = () => () => {};
+const noSnapshot = () => undefined;
 
 /** The agent's default model: installed local models, and Claude only when a key exists. */
 function ModelField({ card, busy }: { card: AgentCardController; busy: boolean }) {

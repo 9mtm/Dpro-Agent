@@ -139,7 +139,7 @@ export function SignedInShell({ client, notice }: { client: SessionClient; notic
           onOpenCard={(boardId, cardId) => { setPage('board'); void board?.reveal(boardId, cardId); }}
           onOpenMemory={(drawerId, memoryId) => { setMemoryFocus(f => ({ drawerId, memoryId, n: (f?.n ?? 0) + 1 })); setPage('memory'); }}/> : null}
       </section>
-      <section className="page page-scroll" hidden={page !== 'agents'}><div className="page-column"><AgentsDestination key={`agents-${connectorsFocus}`} client={client} active={page === 'agents'} focusConnectors={connectorsFocus > 0} onOpenMemory={() => setPage('memory')}/></div></section>
+      <section className="page page-scroll" hidden={page !== 'agents'}><div className="page-column"><AgentsDestination key={`agents-${connectorsFocus}`} client={client} active={page === 'agents'} focusConnectors={connectorsFocus > 0} onOpenMemory={agentId => { if (agentId) setMemoryFocus(f => ({ scope: `agent:${agentId}`, n: (f?.n ?? 0) + 1 })); setPage('memory'); }}/></div></section>
       <section className="page page-scroll page-board page-ui" hidden={page !== 'board'}>{board && <TaskBoard controller={board} active={page === 'board'} onOpenChat={id => { void chat?.open(id); setPage('chat'); }}/>}</section>
       {user.role==='owner'&&<section className="page page-scroll" hidden={page!=='approvals'}><ApprovalPage client={client} active={page==='approvals'} onDecision={pendingApprovals.reload}/></section>}
       <section className="page page-ui mem-host" hidden={page !== 'memory'}><MemoryPage client={client} active={page === 'memory'} focus={memoryFocus}/></section>

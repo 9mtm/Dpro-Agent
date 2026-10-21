@@ -94,8 +94,9 @@ test('agent card: profile, persona versions, lock, rollback and permissions', as
 
   await c.openTab('memory');
   html = renderToStaticMarkup(React.createElement(CardView, { card: c, onBack: () => {} }));
-  assert.match(html, /Can read:/);
-  assert.match(html, /memory-card/);
+  // Board M6: drawer access, its own notes, handoffs, skills and tools at a glance.
+  for (const words of [/may remember/, /Share what it learns with the team/, /Save memory access/, /Its own notes/, /Handoffs/, /Skills/, /Tools &amp; MCP/, /Memory \d+ of \d+ on|of \d+ on/])
+    assert.match(html, words);
 });
 
 test('memory page: drawers, add to a project, edit, history and forget', async t => {

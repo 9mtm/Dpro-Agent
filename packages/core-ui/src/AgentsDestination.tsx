@@ -11,7 +11,7 @@ import type { NamingLanguage } from './naming';
 import type { SessionClient } from './session';
 import { ConnectorsSection } from './ConnectorsSection';
 
-export function AgentsDestination({ client, active = false, onOpenMemory, focusConnectors = false }: { client: SessionClient; active?: boolean; onOpenMemory?: () => void; focusConnectors?: boolean }) {
+export function AgentsDestination({ client, active = false, onOpenMemory, focusConnectors = false }: { client: SessionClient; active?: boolean; onOpenMemory?: (agentId?: string) => void; focusConnectors?: boolean }) {
   const [open, setOpen] = useState<string | null>(null);
   // The effect owns subscription cleanup; construction also supports offline SSR without reads.
   const [controller, setController] = useState<AgentsController>();

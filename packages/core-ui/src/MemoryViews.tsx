@@ -79,6 +79,7 @@ export function MemoryPage({ client, active = false, focus }: { client: SessionC
   useEffect(() => {
     if (!focus || !c) return;
     setTab('explorer'); setExplorerView('table');
+    if ('scope' in focus) { c.setScope(focus.scope); return; }
     c.setScope(focus.drawerId); void c.openMemory(focus.memoryId);
   }, [focus?.n, c]);
   const s = useSyncExternalStore(scopes?.subscribe ?? noop, scopes?.getSnapshot ?? none, scopes?.getSnapshot ?? none);
@@ -134,7 +135,7 @@ const noop = () => () => {};
 const none = () => undefined;
 
 /** A memory to show when the page opens from elsewhere (n changes on every request). */
-export type MemoryFocus = { drawerId: string; memoryId: string; n: number };
+export type MemoryFocus = { drawerId: string; memoryId: string; n: number } | { scope: string; n: number };
 
 export function ItemsView({ c, focused }: { c: MemoryItemsController; focused?: string }) {
   const s = useSyncExternalStore(c.subscribe, c.getSnapshot, c.getSnapshot);
