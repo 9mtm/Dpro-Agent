@@ -50,6 +50,13 @@ w(join(home, '.claude', 'CLAUDE.md'), '# Global\nChat in Arabic.\n');
 w(join(home, '.codex', 'config.toml'), '[mcp_servers.docs]\ncommand = "node"\nargs = ["docs.js"]\n');
 w(join(home, '.ssh', 'config'), 'Host *\n  ServerAliveInterval 30\nHost devbox build\n  HostName devbox.local\n  User mo\n  Port 2222\n  IdentityFile ~/.ssh/id_ed25519\n');
 w(join(home, '.ssh', 'id_ed25519'), KEY);
+// More of the owner's notes deeper in the project, and copies / other people's code that are left out.
+w(join(shop, 'packages', 'api', 'AGENTS.md'), '# API\nUse Fastify.\n');
+w(join(shop, '.cursor', 'rules', 'style.mdc'), 'Use tabs.\n');
+w(join(shop, '.github', 'copilot-instructions.md'), 'Short answers.\n');
+w(join(shop, 'docs', 'code', 'someone-else', 'AGENTS.md'), '# Not ours\n');
+w(join(home, 'Documents', 'old-archive', 'shop', 'CLAUDE.md'), '# Old copy\n');
+w(join(home, 'Documents', 'tools', 'other-programs', 'x', 'CLAUDE.md'), '# Other program\n');
 
 const { getDatabase, closeDatabase } = await loadFile(join(backendDir, 'src/db/database.ts'));
 const db = getDatabase();
@@ -78,7 +85,9 @@ test('one scan finds every kind, grouped by project folder, with where each goes
   assert.deepEqual([find(v, 'memory', 'owner-language').to, find(v, 'memory', 'brand-voices').to, find(v, 'memory', 'brand-colors').to], ['About you', 'Lessons', 'Projects · shop']);
   assert.equal(find(v, 'memory', 'brand-colors').rootId, shopRoot.id);
   assert.ok(!v.items.some((i) => i.name === 'MEMORY'), 'the index file is not a memory');
-  assert.deepEqual(v.items.filter((i) => i.kind === 'note').map((i) => i.name).sort(), ['CLAUDE.md', 'CLAUDE.md', `docs${sep}HANDOFF.md`].sort());
+  assert.deepEqual(v.items.filter((i) => i.kind === 'note').map((i) => i.name).sort(), ['CLAUDE.md', 'CLAUDE.md', `docs${sep}HANDOFF.md`, `packages${sep}api${sep}AGENTS.md`, `.cursor${sep}rules${sep}style.mdc`, `.github${sep}copilot-instructions.md`].sort());
+  assert.equal(v.leftOut, 3, 'copies, archives and other people\'s code are left out');
+  assert.ok(v.items.filter((i) => i.kind === 'note' && i.name !== 'CLAUDE.md' || i.rootId === shopRoot.id).every((i) => i.rootId === shopRoot.id || i.kind !== 'note'), 'sub-package notes belong to the project root');
   assert.deepEqual(v.items.filter((i) => i.kind === 'skill').map((i) => [i.name, i.state]).sort(), [['shop-release', 'decision'], ['writer', 'decision']]);
   const mcp = find(v, 'mcp', 'shop-admin'); assert.match(mcp.from, /1 secret inside/); assert.equal(mcp.rootId, shopRoot.id); assert.match(mcp.to, /off · secret → Credentials/);
   assert.ok(find(v, 'mcp', 'docs'));
@@ -180,6 +189,14 @@ test('only what this page added can be removed; a skill with a taken name is not
   p = await previewOf(find(v, 'skill', 'writer'));
   assert.equal(p.blocked, 'skill_name_taken');
   assert.equal((await call('POST', `${BASE}/import`, { items: [{ id: p.id, previewHash: p.previewHash }] })).json().results[0].code, 'skill_name_taken');
+});
+
+test('project notes, also a Cursor rules file, go to the project-files import (the local model reads them)', async () => {
+  v = (await call('GET', BASE)).json();
+  const rule = v.items.find((i) => i.kind === 'note' && i.name.endsWith('style.mdc'));
+  const p = await previewOf(rule); assert.match(p.text, /Use tabs/);
+  const r = (await call('POST', `${BASE}/import`, { items: [{ id: p.id, previewHash: p.previewHash }] })).json().results[0];
+  assert.ok(r.ok && r.jobId, JSON.stringify(r));
 });
 
 test('owner only; inputs checked', async () => {

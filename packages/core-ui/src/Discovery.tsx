@@ -51,7 +51,7 @@ export function DiscoveryView({ c, active }: { c: DiscoveryController; active: b
     </nav>
     <section className="disc-main" aria-label="Found on this computer">
       <div className="disc-head">
-        <div><h3>Found on this computer</h3><p className="fine-print">What coding agents left here: memory files, project notes, skills, MCP servers, SSH hosts. Dpro only reads; your files never change.</p></div>
+        <div><h3>Found on this computer</h3><p className="fine-print">What coding agents left here: memory files, project notes, skills, MCP servers, SSH hosts. Dpro only reads; your files never change.{v.leftOut > 0 ? ` ${v.leftOut} files were left out: copies, archives and other people's code.` : ''}</p></div>
         <span className="fine-print">Last scan {ago(v.scannedAt)}{v.ms ? ` · ${(v.ms / 1000).toFixed(1)} s` : ''}</span>
         <button type="button" disabled={s.scanning} onClick={() => void c.scan()}>{s.scanning ? 'Scanning…' : 'Scan now'}</button>
         <label className="term-check check"><input type="checkbox" checked={v.settings.watch} disabled={s.busy} onChange={e => void c.setWatch(e.target.checked, v.settings.intervalMinutes)}/>Watch</label>

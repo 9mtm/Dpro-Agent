@@ -13,8 +13,10 @@ type Entry = { id: string; root: string; file: string; digest: string; relative:
 export type ProjectDocument = Omit<Entry, 'file' | 'digest'>;
 const skip = /^(?:node_modules|vendor|dist|build|coverage|target|venv|__pycache__|Library|Applications|Pictures|Movies|Music|Caches|Trash|_migration|backups|archives|external-sources|reference|references)$/i;
 const secret = /(?:^|[._-])(?:secret|secrets|credential|credentials|password|passwords|token|tokens|private[-_]key)(?:[._-]|$)/i;
-const named = /^(?:claude|agents|readme|handoff|backlog|tasks|project_memory|architecture|decisions|design_brief)(?:[._-].*)?\.(?:md|txt|rst)$/i;
-function eligible(relative: string) { const parts=relative.split(path.sep); return !parts.some(x=>x.startsWith('.') || skip.test(x) || secret.test(x)) && /\.(md|txt|rst)$/i.test(relative) && (named.test(parts.at(-1)!) || parts.slice(0,-1).some(x=>/^(docs|documentation)$/i.test(x))); }
+const named = /^(?:claude|agents|gemini|memory|readme|handoff|backlog|tasks|project_memory|architecture|decisions|design_brief)(?:[._-].*)?\.(?:md|txt|rst)$/i;
+/** Agent instruction files kept in a dot folder (DISCOVER-01): GitHub Copilot's and Cursor's rules. */
+const agentRules = (parts: string[]) => (parts.length === 2 && parts[0] === '.github' && parts[1] === 'copilot-instructions.md') || (parts.length === 3 && parts[0] === '.cursor' && parts[1] === 'rules' && /^[^.][^/]*\.mdc?$/i.test(parts[2]));
+function eligible(relative: string) { const parts=relative.split(path.sep); if (agentRules(parts)) return !secret.test(parts.at(-1)!); return !parts.some(x=>x.startsWith('.') || skip.test(x) || secret.test(x)) && /\.(md|txt|rst)$/i.test(relative) && (named.test(parts.at(-1)!) || parts.slice(0,-1).some(x=>/^(docs|documentation)$/i.test(x))); }
 const catalogFile = (user: string) => dataPath('project-document-catalogs', hash(user)+'.json');
 async function catalog(user: string): Promise<Record<string,Entry>> { try { return JSON.parse(await fs.readFile(catalogFile(user),'utf8')); } catch (e: any) { if(e.code==='ENOENT')return {};throw e; } }
 async function save(user: string, entries: Record<string,Entry>) { const file=catalogFile(user);await fs.mkdir(path.dirname(file),{recursive:true,mode:0o700});const temp=file+'.'+randomUUID()+'.tmp';await fs.writeFile(temp,JSON.stringify(entries),{mode:0o600,flag:'wx'});await fs.rename(temp,file); }

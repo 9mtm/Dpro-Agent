@@ -57,7 +57,7 @@ type Found = {
 export type DiscoveryItem = { id: string; kind: DiscoveryKind; name: string; from: string; rootId: string | null; to: string; state: DiscoveryState; updatedAt: string };
 export type DiscoveryRoot = { id: string; name: string; path: string | null; project: string | null; count: number; fresh: number; watch: boolean };
 type Row = { item_id: string; kind: DiscoveryKind; name: string; root: string | null; state: 'imported' | 'ignored' | 'kept'; ref: string | null; hash: string | null };
-type Scan = { at: number; ms: number; found: Found[] };
+type Scan = { at: number; ms: number; found: Found[]; leftOut: number };
 
 const sha = (t: string) => createHash('sha256').update(t).digest('hex');
 const itemId = (kind: DiscoveryKind, rel: string, key = '') => sha(`${kind}\0${rel}\0${key}`).slice(0, 32);
@@ -147,6 +147,48 @@ async function memoryFiles(home: string, roots: Map<string, ProjectRoot>): Promi
 }
 
 // ---- project notes ----
+/** Folders that hold copies, archives or other people's code: their notes are left out (counted, not offered). */
+const NOT_OURS = /(^|\/)(\.local-runtime|[^/]*-archive[^/]*|archives?|worktrees|[^/]*-wt|external|external-sources|other-programs|references?|third[_-]party|examples?|fixtures?|tmp|backups?|_migration)(\/|$)|\/docs\/code\//i;
+const WALK_SKIP = new Set(['node_modules', 'vendor', '.git', 'dist', 'build', '.next', 'storage', 'public', '__pycache__', 'venv', '.venv', 'target', 'coverage', 'Pods', '.cache', 'Library', '.Trash', 'Applications', 'Pictures', 'Movies', 'Music']);
+const NOTE_FILE = new Set([...NOTE_NAMES, 'CLAUDE.local.md', 'MEMORY.md']);
+/** Where people keep projects, on macOS, Windows and Linux. */
+const PROJECT_PLACES = ['Documents', 'Desktop', 'Developer', 'Projects', 'projects', 'code', 'Code', 'src', 'work', 'repos', 'Sites', 'dev', 'source'];
+/**
+ * Every project note of the owner's own projects: CLAUDE / AGENTS / GEMINI / HANDOFF / … .md anywhere in a
+ * project (also sub-packages), GitHub Copilot instructions and Cursor rules. Each belongs to its git root.
+ */
+async function projectNotes(home: string, extra: string[]): Promise<{ found: Found[]; leftOut: number }> {
+  const out: Found[] = []; let leftOut = 0, visited = 0; const until = Date.now() + 30_000;
+  // Known project folders first, then the usual places; a folder already walked is not walked again.
+  const starts = [...new Set([...extra, ...PROJECT_PLACES.map((p) => path.join(home, p))])];
+  const walked = new Set<string>();
+  const seen = new Set<string>(); const roots = new Map<string, string>();
+  const rootOf = async (dir: string) => { if (!roots.has(dir)) roots.set(dir, (await projectRoot(dir, home))?.root ?? dir); return roots.get(dir)!; };
+  const walk = async (dir: string, depth: number): Promise<void> => {
+    if (depth > 12 || visited > 600_000 || out.length >= 2000 || Date.now() > until || walked.has(dir)) return;
+    walked.add(dir);
+    let entries; try { entries = await fs.readdir(dir, { withFileTypes: true }); } catch { return; }
+    visited += entries.length;
+    const slash = dir.split(path.sep).join('/');
+    for (const e of entries) {
+      const p = path.join(dir, e.name);
+      if (e.isSymbolicLink()) continue;
+      if (e.isDirectory()) { if (!WALK_SKIP.has(e.name) && (!e.name.startsWith('.') || e.name === '.github' || e.name === '.cursor' || e.name === 'rules' && slash.endsWith('/.cursor'))) await walk(p, depth + 1); continue; }
+      if (!e.isFile()) continue;
+      const hit = NOTE_FILE.has(e.name) || (e.name === 'copilot-instructions.md' && slash.endsWith('/.github')) || (slash.endsWith('/.cursor/rules') && /\.mdc?$/i.test(e.name));
+      if (!hit || seen.has(p)) continue;
+      seen.add(p);
+      if (NOT_OURS.test(p.split(path.sep).join('/'))) { leftOut++; continue; }
+      const root = await rootOf(dir);
+      if (root === home) continue;
+      const t = await readText(p, MAX_NOTE); if (!t) continue;
+      out.push({ id: itemId('note', path.relative(home, p)), kind: 'note', name: path.relative(root, p), from: 'project notes', root, file: p, hash: sha(t.text), updatedAt: t.mtime, note: { root } });
+    }
+  };
+  for (const s of starts) if (await isDir(s)) await walk(s, 0);
+  if (visited > 600_000 || Date.now() > until) console.warn('[Discovery] project notes: stopped at the size limit; some folders were not read');
+  return { found: out, leftOut };
+}
 async function notes(home: string, roots: string[]): Promise<Found[]> {
   const out: Found[] = [];
   const add = async (root: string | null, docRoot: string, file: string, label: string) => {
@@ -155,7 +197,6 @@ async function notes(home: string, roots: string[]): Promise<Found[]> {
     out.push({ id: itemId('note', path.relative(home, file)), kind: 'note', name: path.relative(docRoot, file), from: label, root, file, hash: sha(t.text), updatedAt: t.mtime, note: { root: docRoot } });
   };
   for (const [dir, name] of [[path.join(home, '.claude'), 'CLAUDE.md'], [path.join(home, '.codex'), 'AGENTS.md'], [path.join(home, '.gemini'), 'GEMINI.md']]) await add(null, dir, path.join(dir, name), 'global agent notes');
-  for (const root of roots) for (const sub of ['', 'docs']) for (const name of NOTE_NAMES) await add(root, root, path.join(root, sub, name), sub ? 'project notes (docs)' : 'project notes');
   return out;
 }
 
@@ -256,9 +297,12 @@ export async function scan(userId: string, opts: DiscoveryOptions = {}): Promise
     const mcpRoots = await Promise.all([...new Set(mcp.map((m) => m.root).filter((r): r is string => !!r && !roots.has(r)))].map((r) => projectRoot(r, home)));
     moved = await relocateGoneRoots([...mcpRoots, ...here()], home);
     for (const m of mcp) { const to = m.root ? moved.get(m.root) : null; if (to) m.root = to.root; }
-    const found = [...mem, ...await notes(home, list), ...await skills(home, list), ...mcp, ...await sshHosts(home)]
+    const pn = await projectNotes(home, list);
+    for (const n of pn.found) if (n.root) roots.add(n.root);
+    const all = [...roots].filter((r) => r !== home);
+    const found = [...mem, ...await notes(home, all), ...pn.found, ...await skills(home, all), ...mcp, ...await sshHosts(home)]
       .filter((f) => !unwatched.has(rootId(f.root)));
-    const s: Scan = { at: Date.now(), ms: Date.now() - t0, found };
+    const s: Scan = { at: Date.now(), ms: Date.now() - t0, found, leftOut: pn.leftOut };
     scans.set(userId, s);
     return s;
   })().finally(() => running.delete(userId));
@@ -307,7 +351,7 @@ async function stateOf(f: Found, row: Row | undefined, mcp: LocalMcpImport): Pro
   return 'new';
 }
 
-export type DiscoveryView = { scannedAt: string | null; ms: number; settings: { watch: boolean; intervalMinutes: number }; roots: DiscoveryRoot[]; items: DiscoveryItem[] };
+export type DiscoveryView = { scannedAt: string | null; ms: number; leftOut: number; settings: { watch: boolean; intervalMinutes: number }; roots: DiscoveryRoot[]; items: DiscoveryItem[] };
 /** The page: projects, items and their state (scans first when nothing was read yet). */
 export async function view(userId: string, opts: DiscoveryOptions & { rescan?: boolean } = {}): Promise<DiscoveryView> {
   await init();
@@ -340,7 +384,7 @@ export async function view(userId: string, opts: DiscoveryOptions & { rescan?: b
   });
   for (const id of unwatched) roots.push({ id, name: 'Not watched', path: null, project: null, count: 0, fresh: 0, watch: false });
   roots.sort((a, b) => (a.id === 'computer' ? -1 : b.id === 'computer' ? 1 : b.count - a.count));
-  return { scannedAt: new Date(s.at).toISOString(), ms: s.ms, settings: await settings(userId), roots, items };
+  return { scannedAt: new Date(s.at).toISOString(), ms: s.ms, leftOut: s.leftOut, settings: await settings(userId), roots, items };
 }
 
 function foundItem(userId: string, id: string): Found {

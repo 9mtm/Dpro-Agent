@@ -3,7 +3,7 @@ export type DiscoveryState = 'new' | 'changed' | 'decision' | 'imported' | 'igno
 export type DiscoveryItem = { id: string; kind: DiscoveryKind; name: string; from: string; rootId: string | null; to: string; state: DiscoveryState; updatedAt: string };
 export type DiscoveryRoot = { id: string; name: string; path: string | null; project: string | null; count: number; fresh: number; watch: boolean };
 export type DiscoverySettings = { watch: boolean; intervalMinutes: 15 | 30 | 60 };
-export type DiscoveryView = { scannedAt: string | null; ms: number; settings: DiscoverySettings; roots: DiscoveryRoot[]; items: DiscoveryItem[] };
+export type DiscoveryView = { scannedAt: string | null; ms: number; leftOut: number; settings: DiscoverySettings; roots: DiscoveryRoot[]; items: DiscoveryItem[] };
 export type DiscoveryPreview = { id: string; kind: DiscoveryKind; name: string; from: string; to: string; state: DiscoveryState; text: string; truncated: boolean; secrets: string[]; blocked: string | null; previewHash: string };
 export type DiscoveryResult = { id: string; ok: boolean; state?: DiscoveryState; code?: string; jobId?: string };
 export const DISCOVERY_PATH: '/api/memory/import/discovery';

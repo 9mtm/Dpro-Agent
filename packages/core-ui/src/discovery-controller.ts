@@ -49,8 +49,16 @@ export class DiscoveryController {
   }
   async load() {
     if (this.#disposed) return; this.publish({ phase: this.#state.view ? 'ready' : 'loading', notice: null });
-    try { const r = await this.request('GET', DISCOVERY_PATH); if (r.status !== 200 || !this.take(r.body)) this.publish({ phase: 'error', notice: r.status === 403 ? 'Only the owner can read this computer, on this computer.' : 'This computer could not be read. Try again.' }); }
-    catch { this.publish({ phase: 'error', notice: 'This computer could not be read (no connection).' }); }
+    try {
+      // The first read after a start can take longer than one request waits: the server keeps reading, so ask again.
+      for (let attempt = 0; attempt < 6 && !this.#disposed; attempt++) {
+        const r = await this.request('GET', DISCOVERY_PATH);
+        if (r.status === 200 && this.take(r.body)) return;
+        if (r.status !== 504 && r.status !== 503) { this.publish({ phase: 'error', notice: r.status === 403 ? 'Only the owner can read this computer, on this computer.' : 'This computer could not be read. Try again.' }); return; }
+        await new Promise(res => setTimeout(res, 1500));
+      }
+      this.publish({ phase: 'error', notice: 'Reading this computer is taking long. Try again in a minute.' });
+    } catch { this.publish({ phase: 'error', notice: 'This computer could not be read (no connection).' }); }
   }
   async scan() {
     if (this.#state.scanning) return; this.publish({ scanning: true, notice: null, result: null });

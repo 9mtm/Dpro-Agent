@@ -51,7 +51,7 @@ function root(x) {
 const view = b => {
   const s = settings(b.settings);
   if (!s || !Array.isArray(b.items) || !Array.isArray(b.roots)) throw Error('protocol');
-  return { scannedAt: str(b.scannedAt, 40), ms: n(b.ms), settings: s, roots: b.roots.slice(0, 1000).map(root).filter(Boolean), items: b.items.slice(0, 5000).map(item).filter(Boolean) };
+  return { scannedAt: str(b.scannedAt, 40), ms: n(b.ms), leftOut: n(b.leftOut), settings: s, roots: b.roots.slice(0, 1000).map(root).filter(Boolean), items: b.items.slice(0, 5000).map(item).filter(Boolean) };
 };
 
 export function discoveryResponse(path, status, body) {

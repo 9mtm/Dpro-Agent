@@ -25,7 +25,7 @@ const items = () => [
 ];
 function backend() {
   const calls = []; let list = items();
-  const view = () => ({ scannedAt: new Date().toISOString(), ms: 1900, settings: { watch: true, intervalMinutes: 30 }, file: '/secret/path',
+  const view = () => ({ scannedAt: new Date().toISOString(), ms: 1900, leftOut: 261, settings: { watch: true, intervalMinutes: 30 }, file: '/secret/path',
     roots: [{ id: 'computer', name: 'This computer', path: null, project: 'not a project · SSH, user skills', count: 2, fresh: 1, watch: true }, { id: R1, name: 'flowxtra', path: '~/work/flowxtra', project: 'Dpro project Flowxtra', count: 5, fresh: 3, watch: true }],
     items: list });
   const client = { request: async r => {
@@ -67,7 +67,7 @@ test('the page: projects with new counts, kinds and states, where each item goes
   const html = renderToStaticMarkup(React.createElement(DiscoveryView, { c, active: false }));
   for (const words of ['By project folder', 'This computer', 'flowxtra', '3 new', 'Found on this computer', 'Dpro only reads; your files never change', 'Scan now', 'Watch', '30 min',
     'Memory files', 'Project notes', 'MCP servers', 'SSH hosts', 'Needs your decision', 'Gone from this computer', 'Dpro project Flowxtra', '~/work/flowxtra', 'Stop watching this project',
-    'brand-voices', 'Lessons', 'Changed', 'Update', 'Review', 'Keep', 'Import selected', 'Memory files go in as they are (no model)', 'Rules of this page', 'private SSH keys, .env files'])
+    'brand-voices', 'Lessons', 'Changed', 'Update', 'Review', 'Keep', 'Import selected', 'Memory files go in as they are (no model)', 'Rules of this page', '261 files were left out: copies, archives and other people', 'private SSH keys, .env files'])
     assert.ok(html.includes(words), words);
   c.setKind('memory'); assert.deepEqual(c.shown().map(i => i.name), ['brand-voices', 'brand-colors', 'old-server']);
   c.setState('changed'); assert.deepEqual(c.shown().map(i => i.name), ['brand-colors']);
@@ -119,4 +119,12 @@ test('ignore, remove (from the opened item), keep, watch settings, stop watching
   assert.deepEqual(calls.find(r => r.path === `${BASE}/settings`).body, { watch: true, intervalMinutes: 15 });
   await c.setRootWatch(R1, false);
   assert.deepEqual(calls.find(r => r.path === `${BASE}/roots/${R1}`).body, { watch: false });
+});
+
+test('a slow first read (504) is asked again, not shown as an error', async () => {
+  const { client } = backend(); let first = true;
+  const slow = { request: async r => { if (first && r.path === BASE) { first = false; return { status: 504, body: null }; } return client.request(r); } };
+  const c = new DiscoveryController(slow);
+  await c.load();
+  assert.equal(c.getSnapshot().phase, 'ready');
 });
