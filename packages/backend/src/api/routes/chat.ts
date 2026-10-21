@@ -242,6 +242,14 @@ export async function chatRoutes(fastify: FastifyInstance) {
     if (!messages || !Array.isArray(messages) || messages.length === 0) {
       return reply.status(400).send({ error: 'Messages array is required' });
     }
+    // CORE-03: a bad memoryScope is refused before any SSE stream opens (a
+    // channel turn opens no drawers, so its scope is never read).
+    if (!channelTurn) {
+      try { chatTurnDrawers(true, memoryScope); } catch (err) {
+        if (err instanceof DrawerInputError) return reply.status(400).send({ error: 'Invalid memoryScope' });
+        throw err;
+      }
+    }
 
     // BE-UI-01: turn ids on every frame/body; a repeated Idempotency-Key from
     // the same user within 10 minutes returns the first outcome instead of
