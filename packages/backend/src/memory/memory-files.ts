@@ -410,6 +410,33 @@ export async function exportDrawerFileIfPresent(userId: string, drawer: DrawerRe
   return done;
 }
 
+/**
+ * MEM-UX-02 background re-export: rewrite a drawer's exported files that are
+ * out of date AND untouched (the entries in the file still hash to the base
+ * written in its header). A file the owner edited is never overwritten: its
+ * changes reach the database only as a reviewed proposal. Returns the agents
+ * re-exported and the files left alone because they were edited.
+ */
+export async function refreshUntouchedExports(userId: string, drawer: DrawerRef): Promise<{ reexported: string[]; edited: string[] }> {
+  const out = { reexported: [] as string[], edited: [] as string[] };
+  let agents: string[] = [];
+  try { agents = await fs.readdir(agentsRoot()); } catch { return out; }
+  const current = drawerHash(await sql().read(currentMemories(userId, normalizeDrawer(drawer))));
+  for (const agentId of agents) {
+    if (!isValidAgentId(agentId)) continue;
+    let text: string;
+    try { text = await readDrawerFile(userId, agentId, drawer); } catch { continue; }
+    let parsed: ParsedFile;
+    try { parsed = parseDrawerFile(text); } catch { out.edited.push(agentId); continue; }
+    if (parsed.baseHash === current) continue;
+    const h = createHash('sha256');
+    for (const e of parsed.entries) { h.update(JSON.stringify([e.id, e.type, e.importance, e.content])); h.update('\n'); }
+    if (h.digest('hex') !== parsed.baseHash) { out.edited.push(agentId); continue; }
+    try { await exportDrawerFile(userId, agentId, drawer); out.reexported.push(agentId); } catch { /* next round */ }
+  }
+  return out;
+}
+
 /** Read the exported file of a drawer as it is on disk (owner edited it). */
 export async function readDrawerFile(userId: string, agentId: string, drawer: DrawerRef): Promise<string> {
   const file = drawerFilePath(agentId, userId, drawer);

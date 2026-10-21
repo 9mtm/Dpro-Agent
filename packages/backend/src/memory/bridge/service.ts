@@ -10,7 +10,10 @@
  *                CLI runs in; nothing for a folder Dpro does not know
  */
 import { designBlock, getDesign } from '../project-design.js';
+import fs from 'node:fs';
 import os from 'node:os';
+import path from 'node:path';
+import { q } from '../../repositories/sql-steps.js';
 import type { Project } from '../../repositories/chat-conversations.js';
 import { findProject, listProjects } from '../../repositories/chat-conversations.js';
 import { getMemoryStorage } from '../storage.js';
@@ -193,6 +196,61 @@ export async function syncOwner(ownerId: string): Promise<{ written: number; pro
       }
     }
     if (f.backflowEnabled) out.proposed += (await runBackflow(ownerId, p, { home: where().home })).proposed;
+  }
+  return out;
+}
+
+// --- automatic connection (MEM-UX-02) ---------------------------------------
+
+/**
+ * Once the owner allowed reading this computer (at least one folder allowed in
+ * Settings › Memory › Folders and drives, DISCOVER-02), coding apps connect on
+ * their own:
+ *   - each coding app whose config is on this computer gets the dpro-memory
+ *     server registered (the same preview + apply: the original config is
+ *     backed up first; Undo restores it). An app the owner switched off, or
+ *     whose registration the owner undid, is never registered again by itself.
+ *   - each project folder without folder settings gets its managed files
+ *     (default on; written only between Dpro's markers). A folder the owner
+ *     turned off stays off; a conflict is recorded once and left alone.
+ * Every step is audited ('automatic'). Never throws.
+ */
+export async function autoConnect(ownerId: string, allowed: boolean): Promise<{ registered: BridgeClient[]; folders: string[]; conflicts: number }> {
+  const out = { registered: [] as BridgeClient[], folders: [] as string[], conflicts: 0 };
+  if (!allowed) return out;
+  const w = where();
+  const regs = await listRegistrations(ownerId);
+  const decided = new Set((await q.all<{ client: string }>('SELECT client FROM memory_bridge_clients WHERE owner_id = ?', ownerId)).map((r) => r.client));
+  for (const cl of BRIDGE_CLIENTS) {
+    if (decided.has(cl) || regs.some((r) => r.client === cl)) continue;
+    const file = clientConfigFile(cl, w);
+    const dirOk = path.dirname(file) !== (w.home ?? os.homedir()) && fs.existsSync(path.dirname(file));
+    if (!fs.existsSync(file) && !dirOk) continue; // the app is not on this computer
+    try {
+      const preview = previewRegistration(cl, w);
+      if (preview.action === 'conflict' || !launchReady(serverLaunch(cl))) continue;
+      await applyRegistration(ownerId, cl, { previewHash: preview.previewHash, confirm: true }, w);
+      await setClientEnabled(ownerId, cl, true);
+      await audit(ownerId, 'registered', { client: cl, note: `${preview.action} automatic` });
+      out.registered.push(cl);
+    } catch (err) {
+      if (!(err instanceof RegistrationError)) console.warn('[Memory bridge] automatic registration failed:', (err as Error)?.message);
+    }
+  }
+  const known = new Set((await allFolderSettings(ownerId)).map((f) => f.projectId));
+  for (const p of (await listProjects(ownerId)).filter((x) => x.folder && !known.has(x.id))) {
+    try {
+      const brief = await projectBrief(ownerId, p);
+      applyFiles(p.id, brief, p.folder, true, null);
+      await patchFolder(ownerId, p.id, { filesEnabled: true, briefHash: briefHash(brief), confirmed: true, written: true });
+      await audit(ownerId, 'files-written', { projectId: p.id, note: 'automatic' });
+      out.folders.push(p.id);
+    } catch (err) {
+      if (!(err instanceof ManagedFileError)) { console.warn('[Memory bridge] automatic files failed:', (err as Error)?.message); continue; }
+      out.conflicts++;
+      await patchFolder(ownerId, p.id, { filesEnabled: false });
+      await audit(ownerId, 'files-conflict', { projectId: p.id, note: `automatic: ${err.message}` });
+    }
   }
   return out;
 }
