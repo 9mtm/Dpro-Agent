@@ -15,6 +15,10 @@
  *
  * A department's reviewer (scope rules) is shown on its group; the owner
  * still approves every decision.
+ *
+ * An agent tool passes a `limit`: only proposals of drawers open in its run
+ * (and, to accept, of drawer kinds it may write) are grouped, previewed or
+ * accepted; the previewHash covers that same list.
  */
 
 import { createHash } from 'node:crypto';
@@ -27,6 +31,11 @@ export type ReviewGroupBy = (typeof REVIEW_GROUP_BY)[number];
 /** Reasons that make a waiting proposal routine. */
 export const ROUTINE_REVIEW_REASONS: ReadonlySet<string> = new Set(['chat', 'scope-rule']);
 export const MAX_ACCEPT = 200;
+
+/** An agent run's view: drawer ids open in the run; drawer kinds it may write (undefined = no limit). */
+export interface ReviewLimit { drawers: readonly string[]; writeKinds?: readonly string[] }
+const within = (p: MemoryProposal, limit?: ReviewLimit, write = false) =>
+  !limit || (limit.drawers.includes(p.drawerId) && (!write || !limit.writeKinds || limit.writeKinds.includes(p.drawer.kind)));
 
 export function isRoutineProposal(p: MemoryProposal): boolean {
   return p.status === 'pending' && !p.conflictWith && (p.source === 'learning' || p.source === 'agent')
@@ -68,10 +77,10 @@ const departmentOf = (p: MemoryProposal, deptOf: Map<string, string>): string | 
   p.drawer.kind === 'project' ? deptOf.get(p.drawer.key || '') ?? GENERAL_DEPARTMENT : null;
 
 /** Waiting reviews in groups, most waiting first. */
-export async function reviewGroups(ownerId: string, byInput: unknown = 'scope'): Promise<{ by: ReviewGroupBy; total: number; groups: ReviewGroup[] }> {
+export async function reviewGroups(ownerId: string, byInput: unknown = 'scope', limit?: ReviewLimit): Promise<{ by: ReviewGroupBy; total: number; groups: ReviewGroup[] }> {
   if (!(REVIEW_GROUP_BY as readonly unknown[]).includes(byInput)) throw new ScopeInputError(`by must be one of ${REVIEW_GROUP_BY.join(', ')}`);
   const by = byInput as ReviewGroupBy;
-  const pending = await listPendingProposals(ownerId);
+  const pending = (await listPendingProposals(ownerId)).filter((p) => within(p, limit));
   const { deptOf, reviewer } = await departments(ownerId);
   const groups = new Map<string, ReviewGroup>();
   for (const p of pending) {
@@ -104,8 +113,8 @@ export function parseRoutineFilter(body: Record<string, unknown>): RoutineFilter
 
 export interface RoutinePreview { filter: RoutineFilter; count: number; items: Array<{ id: string; drawerId: string; reviewHash: string }>; previewHash: string }
 
-async function routineItems(ownerId: string, filter: RoutineFilter): Promise<RoutinePreview> {
-  const pending = await listPendingProposals(ownerId);
+async function routineItems(ownerId: string, filter: RoutineFilter, limit?: ReviewLimit): Promise<RoutinePreview> {
+  const pending = (await listPendingProposals(ownerId)).filter((p) => within(p, limit, true));
   const { deptOf } = await departments(ownerId);
   const items = pending.filter(isRoutineProposal).filter((p) => {
     if (filter.agent && proposalMaker(p) !== `agent:${filter.agent}`) return false;
@@ -114,20 +123,20 @@ async function routineItems(ownerId: string, filter: RoutineFilter): Promise<Rou
     if (filter.scope.startsWith('department:')) return departmentOf(p, deptOf) === filter.scope.slice('department:'.length);
     return p.drawerId === filter.scope;
   }).slice(0, MAX_ACCEPT).map((p) => ({ id: p.id, drawerId: p.drawerId, reviewHash: p.reviewHash }));
-  const previewHash = createHash('sha256').update(JSON.stringify(['accept-routine/v1', ownerId, filter, items])).digest('hex');
+  const previewHash = createHash('sha256').update(JSON.stringify(['accept-routine/v1', ownerId, filter, limit ?? null, items])).digest('hex');
   return { filter, count: items.length, items, previewHash };
 }
 
 /** What "accept all routine" would approve (changes nothing). */
-export function previewAcceptRoutine(ownerId: string, body: Record<string, unknown>): Promise<RoutinePreview> {
-  return routineItems(ownerId, parseRoutineFilter(body));
+export function previewAcceptRoutine(ownerId: string, body: Record<string, unknown>, limit?: ReviewLimit): Promise<RoutinePreview> {
+  return routineItems(ownerId, parseRoutineFilter(body), limit);
 }
 
 /** Approve every routine proposal of the preview (same list, else 409). */
-export async function acceptRoutine(ownerId: string, body: Record<string, unknown>, decidedBy: string): Promise<{ approved: string[]; skipped: Array<{ id: string; code: string }> }> {
+export async function acceptRoutine(ownerId: string, body: Record<string, unknown>, decidedBy: string, limit?: ReviewLimit): Promise<{ approved: string[]; skipped: Array<{ id: string; code: string }> }> {
   const filter = parseRoutineFilter(body);
   if (typeof body.expectedPreviewHash !== 'string' || !body.expectedPreviewHash) throw new ScopeInputError('expectedPreviewHash is required (preview first)', 400, 'preview_hash_required');
-  const now = await routineItems(ownerId, filter);
+  const now = await routineItems(ownerId, filter, limit);
   if (now.previewHash !== body.expectedPreviewHash) throw new ScopeInputError('The waiting reviews changed since the preview. Preview again.', 409, 'preview_changed');
   const approved: string[] = [];
   const skipped: Array<{ id: string; code: string }> = [];
@@ -144,7 +153,7 @@ export async function acceptRoutine(ownerId: string, body: Record<string, unknow
 }
 
 /** The departments an agent reviews, with their waiting reviews (ids and counts only). */
-export async function assignedReviews(ownerId: string, agentId: string): Promise<ReviewGroup[]> {
-  const { groups } = await reviewGroups(ownerId, 'department');
+export async function assignedReviews(ownerId: string, agentId: string, limit?: ReviewLimit): Promise<ReviewGroup[]> {
+  const { groups } = await reviewGroups(ownerId, 'department', limit);
   return groups.filter((g) => g.reviewerAgentId === agentId);
 }
