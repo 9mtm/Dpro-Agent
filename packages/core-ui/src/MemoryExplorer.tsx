@@ -22,7 +22,9 @@ function drawerChoices(facets: Readonly<Record<string, number>>, extra: string[]
   return [...new Set(['owner', 'experience', ...Object.keys(facets), ...extra])].filter(d => d && d !== '?');
 }
 
-export function Explorer({ c, agents }: { c: MemoryExplorerController; agents: Readonly<Record<string, string>> }) {
+const SOURCE: Record<string, string> = { owner: 'You', agent: 'An agent', outsider: 'Outside sender', chat: 'Chat', conversation: 'Chat', learning: 'Learned', import: 'Import', memory_file: 'Memory file', retention: 'Retention' };
+
+export function Explorer({ c, agents, onMove }: { c: MemoryExplorerController; agents: Readonly<Record<string, string>>; onMove?: (m: { id: string; text: string; drawerId: string; topicKey: string | null }) => void }) {
   const s = useSyncExternalStore(c.subscribe, c.getSnapshot, c.getSnapshot);
   const open = c.item(s.open);
   const choices = drawerChoices(s.facets.drawer, open ? [open.drawerId] : []);
@@ -48,6 +50,16 @@ export function Explorer({ c, agents }: { c: MemoryExplorerController; agents: R
       </select></label>
       <label className="mem-chip-select">Topic<select value={s.topic} onChange={e => c.setTopic(e.target.value as '' | 'has' | 'none')}>
         <option value="">Any</option><option value="has">Has a topic</option><option value="none">No topic</option>
+      </select></label>
+      <label className="mem-chip-select">Source<select value={s.source} onChange={e => c.setSource(e.target.value)}>
+        <option value="">Anyone</option>
+        {[...new Set([...Object.keys(s.facets.source ?? {}), ...(s.source ? [s.source] : [])])].map(x => <option key={x} value={x}>{SOURCE[x] ?? x}{s.facets.source?.[x] !== undefined ? ` · ${s.facets.source[x]}` : ''}</option>)}
+      </select></label>
+      <label className="mem-chip-select">Importance<select value={s.importance} onChange={e => c.setImportance(e.target.value as typeof s.importance)}>
+        <option value="">Any</option><option value="8-10">High (8–10)</option><option value="5-7">Medium (5–7)</option><option value="1-4">Low (1–4)</option>
+      </select></label>
+      <label className="mem-chip-select">Date<select value={s.since} onChange={e => c.setSince(e.target.value as typeof s.since)}>
+        <option value="">Any time</option><option value="7">Last 7 days</option><option value="30">Last 30 days</option><option value="90">Last 90 days</option>
       </select></label>
     </div>
     {s.notice && <p className="card-notice" role="alert">{s.notice}</p>}
@@ -83,6 +95,10 @@ export function Explorer({ c, agents }: { c: MemoryExplorerController; agents: R
         <div className="mem-history-head"><span className="fine-print">{open.topicKey ? `Topic · ${open.topicKey} · ` : ''}{drawerName(open.drawerId)}</span><button type="button" className="link-button" aria-label="Close" onClick={() => c.close()}>×</button></div>
         <h3 dir="auto">{oneLine(s.full ?? open.preview)}</h3>
         <div className="mem-chips"><span className="mem-chip">{open.type}</span><span className="mem-chip">importance {open.importance}</span>{open.sourceAgentId && <span className="mem-chip">from {agentLabel(open.sourceAgentId, agents)}</span>}</div>
+        {s.detail && s.detail.id === open.id && <div className="mem-detail-facts">
+          <span className="fine-print">Used in {s.detail.usage.usedIn} {s.detail.usage.usedIn === 1 ? 'reply' : 'replies'}{s.detail.usage.lastUsedAt ? ` · last ${ago(s.detail.usage.lastUsedAt)}` : ''} · {s.detail.readers.all ? 'read by every agent' : `read by ${s.detail.readers.count} of ${s.detail.readers.total} agents`}{s.detail.readers.archived ? ' · archived project (never loaded)' : ''}</span>
+          {s.detail.graph.entities.length > 0 && <span className="mem-chips">On the map: {s.detail.graph.entities.map(e => <span key={e.id} className="mem-chip" data-kind={e.kind}>{e.name}</span>)}</span>}
+        </div>}
         {s.editing ? <div className="mem-edit">
           <textarea aria-label="Memory text" dir="auto" rows={6} value={s.draft} maxLength={50000} onChange={e => c.editDraft(e.target.value)}/>
           <label className="field inline"><span>Importance</span><input type="range" min={1} max={10} value={s.draftImportance} onChange={e => c.editImportance(Number(e.target.value))}/><span>{s.draftImportance}</span></label>
@@ -104,7 +120,7 @@ export function Explorer({ c, agents }: { c: MemoryExplorerController; agents: R
           <div className="actions"><button type="button" className="danger-solid" disabled={s.busy} onClick={() => void c.forget()}>Forget for good</button><button type="button" onClick={() => c.cancelForget()}>Keep</button></div></div>}
         {!s.editing && !s.moving && !s.confirmForget && <div className="mem-history-actions">
           <button type="button" onClick={() => c.startEdit()}>Edit</button>
-          <button type="button" onClick={() => c.startMove()}>Move drawer</button>
+          <button type="button" onClick={() => (onMove ? onMove({ id: open.id, text: s.full ?? open.preview, drawerId: open.drawerId, topicKey: open.topicKey }) : c.startMove())}>Move drawer</button>
           <button type="button" className="mem-reject mem-push" onClick={() => c.askForget()}>Forget…</button>
         </div>}
       </aside>}

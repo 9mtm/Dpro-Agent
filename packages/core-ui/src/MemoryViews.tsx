@@ -24,6 +24,8 @@ import { MemoryHandoffsController } from './memory-handoffs';
 import { HandoffsView } from './MemoryHandoffs';
 import { MemoryBridgeController } from './memory-bridge';
 import { BridgeView } from './MemoryBridge';
+import { MemoryMoveController } from './memory-move';
+import { MoveDialog } from './MemoryDialogs';
 
 const KIND_LABEL: Record<string, string> = { owner: 'About you', experience: 'Lessons', project: 'Project', task: 'Task', people: 'Person' };
 const KIND_PLURAL: Record<string, string> = { project: 'Projects', task: 'Tasks', people: 'People' };
@@ -80,7 +82,6 @@ export function MemoryPage({ client, active = false, focus, onOpenChat, onOpenPr
   useEffect(() => { if (active && access && owner && tab === 'access') void access.load(); }, [active, access, owner, tab]);
   const [health, setHealth] = useState<MemoryHealthController>();
   useEffect(() => { const x = new MemoryHealthController(client); setHealth(x); return () => x.dispose(); }, [client]);
-  useEffect(() => { if (active && health && owner && tab === 'health') void health.load(); }, [active, health, owner, tab]);
   useEffect(() => { const x = new MemoryMapController(client); setMap(x); return () => x.dispose(); }, [client]);
   useEffect(() => { if (active && map && owner && tab === 'map') void map.load(); }, [active, map, owner, tab]);
   const [handoffs, setHandoffs] = useState<MemoryHandoffsController>();
@@ -89,6 +90,8 @@ export function MemoryPage({ client, active = false, focus, onOpenChat, onOpenPr
   const [bridge, setBridge] = useState<MemoryBridgeController>();
   useEffect(() => { const x = new MemoryBridgeController(client); setBridge(x); return () => x.dispose(); }, [client]);
   useEffect(() => { if (active && bridge && owner && tab === 'bridge') void bridge.load(); }, [active, bridge, owner, tab]);
+  const [mover, setMover] = useState<MemoryMoveController>();
+  useEffect(() => { if (!c) return; const x = new MemoryMoveController(client, (id, drawer) => c.moved(id, drawer)); setMover(x); return () => x.dispose(); }, [client, c]);
   const [explorerView, setExplorerView] = useState<'table' | 'files'>('table');
   useEffect(() => { if (!scopes) return; const x = new MemoryReviewController(client, () => void scopes.load(true)); setReview(x); return () => x.dispose(); }, [client, scopes]);
   useEffect(() => { if (active && scopes && owner) void scopes.load(); }, [active, scopes, owner]);
@@ -103,6 +106,9 @@ export function MemoryPage({ client, active = false, focus, onOpenChat, onOpenPr
     c.setScope(focus.drawerId); void c.openMemory(focus.memoryId);
   }, [focus?.n, c]);
   const s = useSyncExternalStore(scopes?.subscribe ?? noop, scopes?.getSnapshot ?? none, scopes?.getSnapshot ?? none);
+  // Health & rules shows the review rules of the open scope (company, a department or a project).
+  const ruleScope = s?.scope && (s.scope.startsWith('department:') || s.scope.startsWith('project:')) ? s.scope : 'company';
+  useEffect(() => { if (active && health && owner && tab === 'health') void health.load(ruleScope); }, [active, health, owner, tab, ruleScope]);
   function pickScope(scope: string) {
     if (!scopes) return;
     if (scope.startsWith('_')) { scopes.toggle(scope); return; }
@@ -136,6 +142,7 @@ export function MemoryPage({ client, active = false, focus, onOpenChat, onOpenPr
       })()}
       {s?.notice && <p className="card-notice" role="status">{s.notice}</p>}
       {scopes && <ActionDialog c={scopes}/>}
+      {mover && <MoveDialog c={mover}/>}
       <div id="memory-view-panel" role="tabpanel" aria-labelledby={`memory-view-${tab}`} className="mem-panel">
         {tab === 'home' && scopes && (s?.phase === 'error' ? <p className="empty-note">{s.notice} <button type="button" className="link-button" onClick={() => void scopes.load()}>Try again</button></p>
           : s?.phase !== 'ready' ? <p className="empty-note" role="status">Loading memory…</p>
@@ -143,7 +150,7 @@ export function MemoryPage({ client, active = false, focus, onOpenChat, onOpenPr
         {tab === 'explorer' && <>
           <div className="mem-view-toggle" role="group" aria-label="Explorer view"><button type="button" aria-pressed={explorerView === 'table'} onClick={() => setExplorerView('table')}>Table</button><button type="button" aria-pressed={explorerView === 'files'} onClick={() => setExplorerView('files')}>Files</button></div>
           {explorerView === 'files' ? <><p className="fine-print">Agent files and reviews: each agent's readable memory files (MEMORY.md). Edits you make there come back as reviews.</p><MemoryPanel client={client} active={active && tab === 'explorer'}/></>
-            : c ? <Explorer c={c} agents={s?.agents ?? {}}/> : null}
+            : c ? <Explorer c={c} agents={s?.agents ?? {}} onMove={m => void mover?.open(m)}/> : null}
         </>}
         {tab === 'map' && map && <KnowledgeMap c={map} onOpenMemories={name => { if (!c) return; setTab('explorer'); setExplorerView('table'); c.setQuery(name); c.setScope('company'); }}/>}
         {tab === 'access' && access && <AccessView c={access} scope={s?.scope.startsWith('project:') || s?.scope.startsWith('department:') ? s.scope : 'company'} tree={s?.tree ?? null}/>}

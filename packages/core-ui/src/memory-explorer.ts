@@ -7,15 +7,17 @@
 import { Store, codeOf, drawerName } from './memory-store';
 import type { Requester } from './memory-store';
 import { queryString } from './memory-pages-contract.js';
-import type { ExplorerItem, ExplorerPage } from './memory-pages-contract.js';
+import type { ExplorerItem, ExplorerPage, MemoryDetail } from './memory-pages-contract.js';
 import type { Drawer, MemoryItem, MemoryType, MemoryVersion } from './agent-card-contract.js';
 
 export type NewMemory = { type: MemoryType; content: string; importance: number; drawer: Drawer; topicKey: string };
 export type ExplorerState = Readonly<{
   phase: 'idle' | 'loading' | 'ready' | 'error'; notice?: string; busy: boolean;
   scope: string; query: string; meaning: boolean; type: string; topic: '' | 'has' | 'none';
+  /** MEM-GAPS-02 filters: who saved it, how important, how recent (days). */
+  source: string; importance: '' | '8-10' | '5-7' | '1-4'; since: '' | '7' | '30' | '90';
   items: readonly ExplorerItem[]; total: number; nextCursor: string | null; facets: ExplorerPage['facets'];
-  open: string | null; versions: readonly MemoryVersion[] | null; full: string | null;
+  open: string | null; versions: readonly MemoryVersion[] | null; full: string | null; detail: MemoryDetail | null;
   editing: boolean; draft: string; draftImportance: number;
   moving: boolean; moveTo: string;
   confirmForget: boolean;
@@ -32,14 +34,15 @@ const EMPTY_FACETS = { type: {}, layer: {}, drawer: {} };
 export class MemoryExplorerController extends Store<ExplorerState> {
   #ticket = 0;
   constructor(client: Requester) {
-    super({ phase: 'idle', busy: false, scope: 'company', query: '', meaning: false, type: '', topic: '', items: [], total: 0, nextCursor: null, facets: EMPTY_FACETS,
-      open: null, versions: null, full: null, editing: false, draft: '', draftImportance: 5, moving: false, moveTo: '', confirmForget: false,
+    super({ phase: 'idle', busy: false, scope: 'company', query: '', meaning: false, type: '', topic: '', source: '', importance: '', since: '', items: [], total: 0, nextCursor: null, facets: EMPTY_FACETS,
+      open: null, versions: null, full: null, detail: null, editing: false, draft: '', draftImportance: 5, moving: false, moveTo: '', confirmForget: false,
       checked: [], bulk: null, bulkTo: '', adding: null }, client);
   }
 
   private path(cursor?: string | null) {
     const s = this.getSnapshot();
-    return '/api/memory/scopes/memories' + queryString({ scope: s.scope, q: s.query.trim().slice(0, 200), type: s.type, topic: s.topic, cursor: cursor ?? undefined, limit: 50 });
+    const from = s.since ? new Date(Date.now() - Number(s.since) * 86400000).toISOString().slice(0, 10) : undefined;
+    return '/api/memory/scopes/memories' + queryString({ scope: s.scope, q: s.query.trim().slice(0, 200), type: s.type, topic: s.topic, source: s.source, importance: s.importance, from, cursor: cursor ?? undefined, limit: 50 });
   }
 
   /** First page of the current scope, search and filters (words; the server counts). */
@@ -90,7 +93,9 @@ export class MemoryExplorerController extends Store<ExplorerState> {
 
   /** Opens a memory in the side panel with its topic history. */
   async openMemory(id: string) {
-    this.publish({ open: id, versions: null, full: null, editing: false, moving: false, confirmForget: false, result: undefined });
+    this.publish({ open: id, versions: null, full: null, detail: null, editing: false, moving: false, confirmForget: false, result: undefined });
+    // M3: used in N replies, the map entities it names, and who reads it.
+    void this.read<{ memory: MemoryDetail }>(`/api/memory/scopes/memories/${encodeURIComponent(id)}`).then(d => { if (d && this.getSnapshot().open === id) this.publish({ detail: d.memory }); });
     try {
       const r = await this.req('GET', `/api/memory/${id}/versions`);
       if (this.getSnapshot().open !== id) return;
@@ -99,7 +104,12 @@ export class MemoryExplorerController extends Store<ExplorerState> {
       this.publish({ versions, full: live?.content ?? this.item(id)?.preview ?? null });
     } catch { if (this.getSnapshot().open === id) this.publish({ versions: [] }); }
   }
-  close() { this.publish({ open: null, versions: null, full: null, editing: false, moving: false, confirmForget: false }); }
+  close() { this.publish({ open: null, versions: null, full: null, detail: null, editing: false, moving: false, confirmForget: false }); }
+  setSource(source: string) { this.publish({ source }); void this.load(); }
+  setImportance(importance: ExplorerState['importance']) { this.publish({ importance }); void this.load(); }
+  setSince(since: ExplorerState['since']) { this.publish({ since }); void this.load(); }
+  /** After a move made elsewhere (the M13 dialog): the row shows its new drawer. */
+  moved(id: string, drawer: string) { const s = this.getSnapshot(); this.publish({ result: `Moved to ${drawerName(drawer)}.`, items: s.items.map(x => (x.id === id ? { ...x, drawerId: drawer } : x)) }); if (s.open === id) void this.openMemory(id); }
   item(id: string | null) { return id ? this.getSnapshot().items.find(i => i.id === id) ?? null : null; }
 
   startEdit() { const s = this.getSnapshot(); const i = this.item(s.open); if (i) this.publish({ editing: true, moving: false, confirmForget: false, draft: s.full ?? i.preview, draftImportance: Math.max(1, i.importance) }); }
