@@ -388,12 +388,20 @@ test('7. graph clusters -> topic suggestions: preview changes nothing, apply aft
   assert.equal(db.prepare('SELECT topic_key FROM memories WHERE id = ?').get(keyed.id).topic_key, 'orion-lead', 'never renamed');
   assert.ok(db.prepare("SELECT 1 FROM memory_versions WHERE memory_id = ? AND reason = 'topic-key:orion-status'").get(result.memoryId), 'versioned');
   assert.equal((await ok('POST', `/api/memory/graph/clusters/${c.id}/topic-preview`, { topicKey: 'orion-status' })).preview.blocked.code, 'already_topic');
+  assert.ok(!(await ok('GET', '/api/memory/graph/clusters?drawers=project:orion')).clusters.some((x) => x.id === c.id), 'a group made a topic is not suggested again');
+  // Without that record (a topic made earlier), a group whose memory holds its suggested key is not suggested either.
+  db.prepare('DELETE FROM memory_graph_cluster_dismissals WHERE cluster_id = ?').run(c.id);
+  assert.ok((await ok('GET', '/api/memory/graph/clusters?drawers=project:orion')).clusters.some((x) => x.id === c.id), 'listed again without the record');
+  db.prepare('UPDATE memories SET topic_key = ? WHERE id = ?').run(c.suggestedTopicKey, result.memoryId);
+  assert.ok(!(await ok('GET', '/api/memory/graph/clusters?drawers=project:orion')).clusters.some((x) => x.id === c.id), 'its memory holds the suggested key');
+  db.prepare('UPDATE memories SET topic_key = ? WHERE id = ?').run('orion-status', result.memoryId);
+  db.prepare("INSERT INTO memory_graph_cluster_dismissals (user_id, cluster_id, drawer_id, dismissed_by) VALUES (?, ?, ?, 'topic:orion-status')").run(OWNER, c.id, c.drawer);
 
   // Agent tools: read ops are free, apply / dismiss need the owner's approval; owner's own turns only.
   assert.ok(approvalCategory({ name: 'memory_graph_topic' }));
   const ctx = { workspaceDir: dir, userId: OWNER, agentId: 'mg-main', memoryDrawers: [orion] };
   const tl = await T.memoryGraphTool.execute({ op: 'clusters' }, ctx);
-  assert.ok(tl.data.clusters.some((x) => x.id === c.id), tl.content[0].text);
+  assert.ok(!(tl.data?.clusters ?? []).some((x) => x.id === c.id), 'the agent tool does not suggest a group made a topic either');
   const tp = await T.memoryGraphTool.execute({ op: 'topic_preview', cluster_id: c.id, topic_key: 'orion-history' }, ctx);
   assert.ok(tp.data.preview, tp.error);
   assert.ok((await T.memoryGraphTool.execute({ op: 'clusters' }, { ...ctx, memoryDrawers: [{ kind: 'owner' }] })).data.clusters.every((x) => x.id !== c.id), 'closed drawer');

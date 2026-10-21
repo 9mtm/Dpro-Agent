@@ -167,7 +167,10 @@ export async function graphClusters(scope: GraphScope, opts: { limit?: number; i
       .sort((a, b) => b.memories - a.memories || a.name.localeCompare(b.name) || a.id.localeCompare(b.id));
     const id = sha(JSON.stringify([g.drawer, ents.map((e) => e.id).sort()])).slice(0, 32);
     if (dismissed.has(id)) continue;
-    out.push({ id, drawer: g.drawer, name: ents[0].name, suggestedTopicKey: suggestTopicKey(ents[0].name), entities: ents, memoryIds });
+    const suggestedTopicKey = suggestTopicKey(ents[0].name);
+    // Already a topic: one of its memories holds the suggested key (also topics made before dismissals were recorded).
+    if (!opts.includeDismissed && suggestedTopicKey && memoryIds.some((m) => byId.get(m)?.topic_key === suggestedTopicKey)) continue;
+    out.push({ id, drawer: g.drawer, name: ents[0].name, suggestedTopicKey, entities: ents, memoryIds });
   }
   out.sort((a, b) => b.memoryIds.length - a.memoryIds.length || b.entities.length - a.entities.length || a.id.localeCompare(b.id));
   // The map never gets more than MAX_CLUSTER_NODES entities.
@@ -225,6 +228,11 @@ export async function applyTopic(scope: GraphScope, clusterId: unknown, input: {
   const memory = await getMemoryStorage().getOwned(scope.userId, p.target.memoryId);
   if (!memory) throw new ClusterError('The cluster changed since the preview; preview again', 409, 'stale');
   await setTopicKeyVersioned(memory, p.topicKey, actor);
+  // A group made a topic is not suggested again until its members change (like "not a topic").
+  if (await dismissTable()) {
+    await sql().read(run(`INSERT INTO memory_graph_cluster_dismissals (user_id, cluster_id, drawer_id, dismissed_by) VALUES (?, ?, ?, ?)
+      ON CONFLICT (user_id, cluster_id) DO NOTHING`, scope.userId, p.cluster.id, p.cluster.drawer, `topic:${p.topicKey}`.slice(0, 120)));
+  }
   return { topicKey: p.topicKey, memoryId: memory.id, drawer: p.cluster.drawer };
 }
 
