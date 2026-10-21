@@ -159,6 +159,27 @@ export async function listHandoffs(ownerId: string, filter: { agentId?: string; 
 }
 
 /**
+ * The shown name of each note's scope (board M12): the conversation title
+ * (only the owner's own chats) or the board card title of the task; null when
+ * there is none. Keyed by "<kind>:<scopeId>".
+ */
+export async function handoffTitles(ownerId: string, notes: readonly Pick<Handoff, 'kind' | 'scopeId'>[]): Promise<Map<string, string | null>> {
+  const out = new Map<string, string | null>();
+  const conv = [...new Set(notes.filter((n) => n.kind === 'conversation').map((n) => n.scopeId))].slice(0, 200);
+  const task = [...new Set(notes.filter((n) => n.kind === 'task').map((n) => n.scopeId))].slice(0, 200);
+  const marks = (n: number) => Array.from({ length: n }, () => '?').join(', ');
+  if (conv.length) {
+    const rows = await sql().read(all<{ id: string; title: string | null }>(`SELECT id, title FROM chat_sessions WHERE user_id = ? AND id IN (${marks(conv.length)})`, ownerId, ...conv));
+    for (const r of rows) out.set(`conversation:${r.id}`, r.title?.trim() ? r.title.trim().slice(0, 200) : null);
+  }
+  if (task.length) {
+    const rows = await sql().read(all<{ task_id: string; title: string }>(`SELECT task_id, title FROM board_cards WHERE task_id IN (${marks(task.length)})`, ...task)).catch(() => []);
+    for (const r of rows) out.set(`task:${r.task_id}`, r.title?.trim() ? r.title.trim().slice(0, 200) : null);
+  }
+  return out;
+}
+
+/**
  * The note handed to the next session of this agent: the newest of this
  * conversation / task, else (a conversation in a project) the newest of the
  * agent in that project.

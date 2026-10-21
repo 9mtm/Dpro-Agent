@@ -48,6 +48,7 @@ export const APPROVAL_REQUIRED_TOOLS: Readonly<Record<string, ApprovalCategory>>
   memory_review_routine: 'other', // MEM-GAPS-02: accepts every routine review of a preview; the approval is the confirm
   memory_graph_review: 'other', // CORE-MEM-GRAPH: an approved link is used by recall; the approval is the confirm
   memory_graph_topic: 'other', // MEM-GRAPH-CLUSTER: gives a memory a topic key / dismisses a suggestion; the approval is the confirm
+  memory_graph_sync: 'other', // MEM-FINISH-01 (M14 Rebuild map): re-indexes the map and prunes orphan links; the approval is the confirm
   // spending money
   make_call: 'money',
   trading_execute: 'money',

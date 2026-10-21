@@ -64,6 +64,7 @@ import {
   memoryReviewRoutineTool,
   memoryGraphReviewTool,
   memoryGraphTopicTool,
+  memoryGraphSyncTool,
   memoryRecallTool,
 } from './memory/index.js';
 
@@ -115,7 +116,7 @@ const CORE_TOOLS: Tool[] = [
   memoryDoctorTool, memoryDoctorFixTool, memoryMoveTool,
   memoryScopesTool, memoryScopeApplyTool, memoryAccessApplyTool, memoryScopeForgetTool,
   memoryBridgeTool, memoryBridgeApplyTool, // MEM-BRIDGE-01: owner-only; apply needs owner approval
-  memoryReviewTool, memoryReviewDecideTool, memoryReviewRoutineTool, memoryGraphReviewTool, memoryGraphTopicTool, memoryRecallTool, // owner's review inbox, topics + reply trace; decisions need owner approval
+  memoryReviewTool, memoryReviewDecideTool, memoryReviewRoutineTool, memoryGraphReviewTool, memoryGraphTopicTool, memoryGraphSyncTool, memoryRecallTool, // owner's review inbox, topics + reply trace; decisions need owner approval
   desktopControlTool,
   storageSaveTool, storageSearchTool, storageDeleteTool,
   createReminderTool,

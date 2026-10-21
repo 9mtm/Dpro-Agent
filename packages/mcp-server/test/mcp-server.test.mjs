@@ -358,6 +358,10 @@ test('handoff notes: list, read and edit through the owner-only API; a non-owner
     const list = await srv.callTool('list_handoffs', { kind: 'conversation', limit: 5 });
     assert.equal(list.isError, undefined, list.content[0].text);
     assert.match(list.content[0].text, /main-agent — conversation `conv-1` v1/);
+    const byProject = await srv.callTool('list_handoffs', { project_id: 'proj-1' });
+    assert.equal(byProject.isError, undefined, byProject.content[0].text);
+    assert.ok(fetchLog(ctx).some((e) => e.method === 'GET' && e.url.endsWith('/api/handoffs?projectId=proj-1')), 'M12 project filter reaches the API');
+    assert.ok((await srv.callTool('list_handoffs', { project_id: '../x' })).isError);
     const read = await srv.callTool('read_handoff', { kind: 'conversation', scope_id: 'conv-1', agent_id: 'main-agent' });
     assert.match(read.content[0].text, /\*\*Next:\*\*\n- Write the release notes/);
     const edit = await srv.callTool('edit_handoff', { kind: 'conversation', scope_id: 'conv-1', agent_id: 'main-agent', next: ['Ship on Friday'] });

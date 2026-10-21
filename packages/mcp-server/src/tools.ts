@@ -4,7 +4,7 @@
  *   spawn_small_agent  { task, kind?, tools?, drawers?, max_steps?, read_dir? } -> run id (+ what was granted)
  *   get_result         { run_id, wait_seconds? }                     -> result card
  *   list_runs          { status?, limit? }                           -> runs + capacity (queue length)
- *   list_handoffs      { agent_id?, kind?, limit? }                  -> newest handoff note of every chat / board task
+ *   list_handoffs      { agent_id?, kind?, project_id?, limit? }     -> newest handoff note of every chat / board task
  *   read_handoff       { kind, scope_id, agent_id }                  -> the note + its history
  *   edit_handoff       { kind, scope_id, agent_id, done?, left?, next?, questions? } -> a new version
  *                      (source "owner"); the agent's next session starts from it
@@ -97,6 +97,7 @@ export const TOOL_DEFINITIONS = [
       properties: {
         agent_id: { type: 'string', maxLength: 128, description: 'Only this agent\'s notes.' },
         kind: { type: 'string', enum: [...HANDOFF_KINDS], description: 'conversation (a saved chat) or task (a board task).' },
+        project_id: { type: 'string', maxLength: 128, description: 'Only notes of chats in this chat project.' },
         limit: { type: 'integer', minimum: 1, maximum: 200, description: 'Default 50.' },
       },
       additionalProperties: false,
@@ -345,19 +346,21 @@ function renderHandoff(h: any): string {
 }
 
 async function listHandoffs(args: Record<string, unknown>, { backend }: HandlerDeps): Promise<ToolCallResult> {
-  only(args, ['agent_id', 'kind', 'limit']);
+  only(args, ['agent_id', 'kind', 'project_id', 'limit']);
   if (args.agent_id !== undefined && (typeof args.agent_id !== 'string' || !AGENT_ID.test(args.agent_id))) throw new InputError('agent_id must be an agent id');
+  if (args.project_id !== undefined && (typeof args.project_id !== 'string' || !/^[A-Za-z0-9][A-Za-z0-9_.:-]{0,127}$/.test(args.project_id))) throw new InputError('project_id must be a chat project id');
   if (args.kind !== undefined && !(HANDOFF_KINDS as readonly unknown[]).includes(args.kind)) throw new InputError(`kind must be one of ${HANDOFF_KINDS.join(', ')}`);
   const limit = intIn(args.limit, 'limit', 1, 200);
   const q = new URLSearchParams();
   if (args.agent_id) q.set('agentId', String(args.agent_id));
   if (args.kind) q.set('kind', String(args.kind));
+  if (args.project_id) q.set('projectId', String(args.project_id));
   if (limit) q.set('limit', String(limit));
   const qs = q.toString();
   const res = await backend.request('GET', `/api/handoffs${qs ? `?${qs}` : ''}`);
   const handoffs = Array.isArray(res?.handoffs) ? res.handoffs : [];
   const md = handoffs.length
-    ? ['### Handoff notes', '', ...handoffs.map((h: any) => `- ${h.agentName ?? h.agentId} — ${h.kind} \`${h.scopeId}\` v${h.version} (${h.createdAt}): ${Array.isArray(h.next) && h.next.length ? `next: ${h.next[0]}` : `${(h.done ?? []).length} done, ${(h.left ?? []).length} left`}`)].join('\n')
+    ? ['### Handoff notes', '', ...handoffs.map((h: any) => `- ${h.agentName ?? h.agentId} — ${h.kind} ${h.title ? `"${h.title}" ` : ''}\`${h.scopeId}\` v${h.version} (${h.createdAt}): ${Array.isArray(h.next) && h.next.length ? `next: ${h.next[0]}` : `${(h.done ?? []).length} done, ${(h.left ?? []).length} left`}`)].join('\n')
     : 'No handoff notes yet.';
   return ok(md, { handoffs });
 }

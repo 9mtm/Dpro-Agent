@@ -3,7 +3,8 @@
  * handler check). The owner sees and edits only their own notes; an edit is
  * a new version (source "owner") that the agent's next session starts from.
  *
- *   GET /api/handoffs?agentId=&kind=&projectId=&limit= newest note of every scope { handoffs } (projectId = chat project id)
+ *   GET /api/handoffs?agentId=&kind=&projectId=&limit= newest note of every scope { handoffs } (projectId = chat project id;
+ *                                                      each with `title`: the chat or board card name, else null)
  *   GET /api/handoffs/coding-apps?projectId=&client=&limit=
  *                                                      notes coding apps wrote through the memory bridge, read only { handoffs }
  *   GET /api/handoffs/:kind/:scopeId?agentId=          { handoff, history } (kind: conversation | task)
@@ -14,7 +15,7 @@
 
 import type { FastifyInstance, FastifyReply, FastifyRequest } from 'fastify';
 import { authorizeActiveRole } from '../../auth/route-guards.js';
-import { cleanHandoff, handoffHistory, HandoffInputError, HANDOFF_KINDS, listHandoffs, saveHandoff, type HandoffKind, type HandoffScope } from '../../memory/handoff/store.js';
+import { cleanHandoff, handoffHistory, handoffTitles, HandoffInputError, HANDOFF_KINDS, listHandoffs, saveHandoff, type HandoffKind, type HandoffScope } from '../../memory/handoff/store.js';
 import { conversationScope } from '../../memory/handoff/scope.js';
 import { one, sql } from '../../repositories/sql-steps.js';
 import { listBridgeHandoffs } from '../../memory/bridge/store.js';
@@ -57,7 +58,9 @@ export async function agentHandoffRoutes(fastify: FastifyInstance) {
     const n = limit === undefined ? undefined : Number(limit);
     if (n !== undefined && (!Number.isInteger(n) || n < 1 || n > 200)) return bad(reply, 'limit must be 1-200');
     if (projectId !== undefined && !(await ownProject(ownerId, projectId))) return notFound(reply);
-    return { handoffs: await listHandoffs(ownerId, { agentId, kind: kind as HandoffKind | undefined, projectId, limit: n }) };
+    const handoffs = await listHandoffs(ownerId, { agentId, kind: kind as HandoffKind | undefined, projectId, limit: n });
+    const titles = await handoffTitles(ownerId, handoffs);
+    return { handoffs: handoffs.map((h) => ({ ...h, title: titles.get(`${h.kind}:${h.scopeId}`) ?? null })) };
   });
 
   // MEM-GAPS-02 (board M12): notes coding apps wrote through the memory bridge, read only here.

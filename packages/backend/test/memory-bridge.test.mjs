@@ -356,6 +356,14 @@ test('folder settings: files can be stopped, turning them on needs preview + con
   const audit = (await call(OWNER, 'GET', '/api/memory-bridge/audit')).json().entries;
   assert.ok(audit.some((e) => e.action === 'registered') && audit.some((e) => e.action === 'mcp-propose'));
   assert.ok(!JSON.stringify(audit).includes(SECRET));
+  // M11: reads are in the activity log by tool name only (never the query text), and each app shows its last call.
+  const reads = audit.filter((e) => e.action === 'mcp-read' && e.client === 'claude-code');
+  assert.ok(reads.some((e) => e.detail === 'memory_search') && reads.some((e) => e.detail === 'project_brief'));
+  assert.ok(!JSON.stringify(audit).includes('release script'), 'the search text is not logged');
+  const status = (await call(OWNER, 'GET', '/api/memory-bridge')).json();
+  const cc = status.clients.find((c) => c.client === 'claude-code');
+  assert.ok(cc.lastCallAt && typeof cc.lastTool === 'string', 'Claude Code has a last call');
+  assert.equal(status.clients.find((c) => c.client === 'antigravity').lastCallAt, null);
 });
 
 test('the real stdio server starts the way a CLI starts it, lists its tools and only talks to loopback', async () => {

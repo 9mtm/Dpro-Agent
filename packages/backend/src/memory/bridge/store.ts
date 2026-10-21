@@ -176,6 +176,18 @@ export async function audit(ownerId: string, action: string, detail: { client?: 
     randomUUID(), ownerId, detail.client ?? null, detail.projectId ?? null, action.slice(0, 64), detail.note ? detail.note.slice(0, 300) : null, now());
 }
 
+/** Each coding app's newest call through dpro-memory (board M11 "Last call"): tool name and time, or absent. */
+export async function lastCalls(ownerId: string): Promise<Map<string, { at: string; tool: string }>> {
+  const rows = await q.all<{ client: string; action: string; detail: string | null; created_at: string }>(
+    `SELECT a.client, a.action, a.detail, a.created_at FROM memory_bridge_audit a WHERE a.owner_id = ? AND a.client IS NOT NULL
+       AND a.action IN ('mcp-read', 'mcp-propose', 'mcp-handoff')
+       AND a.created_at = (SELECT MAX(b.created_at) FROM memory_bridge_audit b WHERE b.owner_id = a.owner_id AND b.client = a.client AND b.action IN ('mcp-read', 'mcp-propose', 'mcp-handoff'))`, ownerId);
+  const out = new Map<string, { at: string; tool: string }>();
+  const TOOL: Record<string, string> = { 'mcp-propose': 'memory_propose', 'mcp-handoff': 'handoff_write' };
+  for (const r of rows) out.set(r.client, { at: r.created_at, tool: r.action === 'mcp-read' ? (r.detail ?? 'read') : TOOL[r.action] });
+  return out;
+}
+
 /** What the bridge did, newest first; optionally only one CLI or one project. */
 export async function auditLog(ownerId: string, limit = 100, filter: { client?: string; projectId?: string } = {}): Promise<Array<{ id: string; client: string | null; projectId: string | null; action: string; detail: string | null; createdAt: string }>> {
   const where = ['owner_id = ?'];

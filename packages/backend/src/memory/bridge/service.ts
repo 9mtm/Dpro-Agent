@@ -22,7 +22,7 @@ import { applyRegistration, previewRegistration, RegistrationError, undoRegistra
 import { runBackflow, type BackflowResult } from './backflow.js';
 import { ensureToken, revokeToken, tokenMatches, checkSessionProof } from './auth.js';
 import {
-  allFolderSettings, audit, auditLog, bridgeOwner, clientEnabled, clientStates, folderSettings, listRegistrations, patchFolder,
+  allFolderSettings, audit, auditLog, bridgeOwner, clientEnabled, clientStates, folderSettings, lastCalls, listRegistrations, patchFolder,
   projectForFolder, saveBridgeHandoff, setClientEnabled,
 } from './store.js';
 
@@ -63,10 +63,13 @@ export async function bridgeStatus(ownerId: string) {
   const regs = await listRegistrations(ownerId);
   const folders = new Map((await allFolderSettings(ownerId)).map((f) => [f.projectId, f]));
   const projects = (await listProjects(ownerId)).filter((p) => p.folder);
+  const calls = await lastCalls(ownerId);
   return {
     clients: BRIDGE_CLIENTS.map((c) => {
       const active = regs.find((r) => r.client === c && r.status === 'applied');
-      return { client: c, name: CLIENT_NAMES[c], enabled: states[c], configPath: clientConfigFile(c, where()), registrationId: active?.id ?? null, registeredAt: active?.createdAt ?? null };
+      const last = calls.get(c);
+      return { client: c, name: CLIENT_NAMES[c], enabled: states[c], configPath: clientConfigFile(c, where()), registrationId: active?.id ?? null, registeredAt: active?.createdAt ?? null,
+        lastCallAt: last?.at ?? null, lastTool: last?.tool ?? null };
     }),
     projects: projects.map((p) => {
       const f = folders.get(p.id);
@@ -221,6 +224,8 @@ export async function mcpCall(c: unknown, token: unknown, cwd: unknown, tool: un
   const project = typeof cwd === 'string' ? await projectForFolder(ownerId, cwd) : null;
   if (!project) throw new BridgeError('Dpro does not know this folder. Add it as a project folder in Dpro first.', 404, 'unknown_folder');
   const a = args && typeof args === 'object' && !Array.isArray(args) ? args : {};
+  // Reads are logged too (tool name only, never the query), so the owner sees which app used the memory and when.
+  if (tool !== 'memory_propose' && tool !== 'handoff_write') await audit(ownerId, 'mcp-read', { client: cl, projectId: project.id, note: tool });
 
   switch (tool as McpTool) {
     case 'project_brief': {

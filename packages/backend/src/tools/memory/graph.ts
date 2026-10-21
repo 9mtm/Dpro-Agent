@@ -17,6 +17,9 @@
  * memory_graph_topic (approval-gated): make a previewed cluster a topic, or
  * dismiss it ("not a topic").
  *
+ * memory_graph_sync (approval-gated): "Rebuild map" (board M14) — index the
+ * memories that have no current graph entry and prune orphan links.
+ *
  * Same gates as the owner-only graph API: read-only, the run user must be the
  * owner account, never in a turn that answers an outsider, and only what the
  * drawers open for this run hold (memory/graph/read.ts scope). Pending links
@@ -26,7 +29,7 @@
 import type { Tool, ToolResult, ToolExecutionContext } from '../types.js';
 import { toolMemoryDrawers, toolMemoryUser, toolOwnerTurn } from './scope.js';
 import { one, sql } from '../../repositories/sql-steps.js';
-import { entityDetail, findEntity, graphRecall, listEntities, listLinks, memoryEntities, type GraphScope } from '../../memory/graph/index.js';
+import { entityDetail, findEntity, graphRecall, listEntities, listLinks, memoryEntities, syncMemoryGraph, type GraphScope } from '../../memory/graph/index.js';
 import { ScopeInputError, agentViewMap } from '../../memory/scopes/index.js';
 import { applyTopic, ClusterError, dismissCluster, graphClusters, topicPreview, type TopicPreview } from '../../memory/graph/clusters.js';
 
@@ -226,5 +229,25 @@ action "dismiss" (cluster_id): "not a topic"; it is not suggested again until it
       if (err instanceof ClusterError) return fail(err.message);
       throw err;
     }
+  },
+};
+
+export const memoryGraphSyncTool: Tool = {
+  name: 'memory_graph_sync',
+  description: `Rebuild the owner's memory map after the owner approves this call: index memories that have no current map entry (up to limit, default 200) and remove links and entities nothing mentions any more. Memory text is not changed.`,
+  input_schema: {
+    type: 'object',
+    properties: { limit: { type: 'number', description: 'Memories to index in this call (1-1000, default 200)' } },
+  },
+  async execute(params: Record<string, unknown>, context?: ToolExecutionContext): Promise<ToolResult> {
+    const userId = toolMemoryUser(context);
+    if (!userId) return fail('no user for this memory');
+    if (!toolOwnerTurn(context)) return fail("only in the owner's own turn, not in a board task run");
+    if (context?.toolPolicy) return fail('not available when answering someone else');
+    if (!(await isOwnerAccount(userId))) return fail('the memory graph is for the owner only');
+    const limit = typeof params.limit === 'number' && Number.isInteger(params.limit) ? Math.min(1000, Math.max(1, params.limit)) : 200;
+    // The owner's approval of this call is the explicit confirm.
+    const r = await syncMemoryGraph(userId, limit);
+    return { content: [{ type: 'text', text: `Map rebuilt: ${r.indexed} memories indexed, ${r.unchanged} unchanged, ${r.pruned.links} links and ${r.pruned.entities} entities removed.` }], data: { success: true, ...r } } as ToolResult;
   },
 };

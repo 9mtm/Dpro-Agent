@@ -264,6 +264,8 @@ test('owner-only API: list, read with history, edit as a new version', async () 
   const list = (await call('ho-owner', 'GET', '/api/handoffs?agentId=ho-writer')).json().handoffs;
   assert.ok(list.some((h) => h.scopeId === conv.id && h.version === 2), 'newest version per scope');
   assert.ok(list.every((h) => h.agentId === 'ho-writer'));
+  assert.equal(list.find((h) => h.scopeId === conv.id).title, 'Launch', 'M12: the chat title names the note');
+  assert.ok(list.filter((h) => h.kind === 'task').every((h) => h.title === null), 'a task without a board card has no title');
   const one = (await call('ho-owner', 'GET', `${path}?agentId=ho-writer`)).json();
   assert.equal(one.handoff.version, 2);
   assert.deepEqual(one.history.map((h) => h.version), [2, 1]);

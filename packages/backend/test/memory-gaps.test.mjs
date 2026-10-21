@@ -403,6 +403,13 @@ test('7. graph clusters -> topic suggestions: preview changes nothing, apply aft
   assert.ok(dismissed.data?.success, dismissed.error);
   assert.ok(!(await ok('GET', '/api/memory/graph/clusters?drawers=project:orion')).clusters.some((x) => x.id === c.id), 'not suggested again');
 
+  // M14 "Rebuild map" for an agent: approval-gated, owner's own turns only, never for an outsider.
+  assert.ok(approvalCategory({ name: 'memory_graph_sync' }));
+  assert.ok((await T.memoryGraphSyncTool.execute({}, { ...ctx, userId: 'mg-user' })).error);
+  assert.ok((await T.memoryGraphSyncTool.execute({}, { ...ctx, toolPolicy: { channel: 'telegram', allowedTools: [] } })).error);
+  const synced = await T.memoryGraphSyncTool.execute({ limit: 50 }, ctx);
+  assert.ok(synced.data?.success && Number.isInteger(synced.data.indexed), synced.error);
+
   // Scale: the map never gets more than 150 entities.
   const insEnt = db.prepare('INSERT INTO memory_graph_entities (id, user_id, kind, name, norm_name) VALUES (?, ?, ?, ?, ?)');
   const insMem = db.prepare(`INSERT INTO memories (id, user_id, type, content, created_at, drawer_kind, drawer_key, memory_layer, importance_score) VALUES (?, ?, 'fact', ?, ?, 'project', 'big', 'factual', 0.5)`);
