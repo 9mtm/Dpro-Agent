@@ -46,6 +46,8 @@ export interface OwnRules {
   reviewerAgentId: string | null;
   weeklyDay: number | null;
   weeklyHour: number | null;
+  /** Company row: days in the Trash before forgetting (0 = never; null = default). */
+  trashDays: number | null;
   updatedBy: string | null;
   updatedAt: string | null;
 }
@@ -59,11 +61,13 @@ export interface EffectiveRules {
   /** The department's reviewer (department and project scopes), else null. */
   reviewerAgentId: string | null;
   weekly: { day: number; hour: number };
+  /** Days a deleted memory stays in the Trash (0 = never forgotten by itself). */
+  trashDays: number;
 }
 
 interface Row {
   scope_kind: string; scope_id: string; routine: RoutineRule | null; important: ImportantRule | null; contradiction: ContradictionRule | null;
-  reviewer_agent_id: string | null; weekly_day: number | null; weekly_hour: number | null; updated_by: string | null; updated_at: string | null;
+  reviewer_agent_id: string | null; weekly_day: number | null; weekly_hour: number | null; trash_days?: number | null; updated_by: string | null; updated_at: string | null;
 }
 
 const AGENT_ID = /^[A-Za-z0-9_.:-]{1,128}$/;
@@ -71,11 +75,15 @@ const scopeId = (s: AccessScope) => (s.kind === 'company' ? 'company' : `${s.kin
 const own = (r: Row | undefined): OwnRules => ({
   routine: r?.routine ?? null, important: r?.important ?? null, contradiction: r?.contradiction ?? null,
   reviewerAgentId: r?.reviewer_agent_id ?? null, weeklyDay: r?.weekly_day ?? null, weeklyHour: r?.weekly_hour ?? null,
+  trashDays: r?.trash_days ?? null,
   updatedBy: r?.updated_by ?? null, updatedAt: r?.updated_at ?? null,
 });
 
 /** The default weekly time: jobs.ts WEEKLY_SUMMARY_CRON (Monday 08:00). */
 const DEFAULT_WEEKLY = { day: 1, hour: 8 };
+/** MEM-TRASH-01: allowed Trash keep-days (0 = never) and the default. */
+export const TRASH_DAYS = [0, 7, 30, 90] as const;
+export const DEFAULT_TRASH_DAYS = 30;
 
 /** The chain of a scope: company; company -> department; company -> department of the project -> project. */
 function* chainStep(ownerId: string, scope: AccessScope): Step<AccessScope[]> {
@@ -94,7 +102,7 @@ function* rowsStep(ownerId: string, chain: AccessScope[]): Step<Map<string, Row>
 function resolve(chain: AccessScope[], rows: Map<string, Row>): EffectiveRules {
   const out: EffectiveRules = {
     ...DEFAULT_RULES, from: { routine: 'default', important: 'default', contradiction: 'default' },
-    reviewerAgentId: null, weekly: { ...DEFAULT_WEEKLY },
+    reviewerAgentId: null, weekly: { ...DEFAULT_WEEKLY }, trashDays: DEFAULT_TRASH_DAYS,
   };
   for (const s of chain) {
     const r = rows.get(scopeId(s));
@@ -104,6 +112,7 @@ function resolve(chain: AccessScope[], rows: Map<string, Row>): EffectiveRules {
     if (r.contradiction) { out.contradiction = r.contradiction; out.from.contradiction = scopeId(s); }
     if (s.kind === 'department') out.reviewerAgentId = r.reviewer_agent_id ?? null;
     if (s.kind === 'company' && r.weekly_day !== null && r.weekly_hour !== null) out.weekly = { day: Number(r.weekly_day), hour: Number(r.weekly_hour) };
+    if (s.kind === 'company' && r.trash_days !== null && r.trash_days !== undefined) out.trashDays = Number(r.trash_days);
   }
   return out;
 }
@@ -143,8 +152,8 @@ export async function rulesForDrawer(ownerId: string, drawer: DrawerRef): Promis
   }
 }
 
-export interface RulesInput { routine?: unknown; important?: unknown; contradiction?: unknown; reviewerAgentId?: unknown; weeklyDay?: unknown; weeklyHour?: unknown }
-const FIELDS = ['routine', 'important', 'contradiction', 'reviewerAgentId', 'weeklyDay', 'weeklyHour'] as const;
+export interface RulesInput { routine?: unknown; important?: unknown; contradiction?: unknown; reviewerAgentId?: unknown; weeklyDay?: unknown; weeklyHour?: unknown; trashDays?: unknown }
+const FIELDS = ['routine', 'important', 'contradiction', 'reviewerAgentId', 'weeklyDay', 'weeklyHour', 'trashDays'] as const;
 
 /** Validated changes: a field left out keeps its value, null clears it (inherit). */
 export function parseRulesInput(scope: AccessScope, input: Record<string, unknown>): Partial<Record<(typeof FIELDS)[number], string | number | null>> {
@@ -170,6 +179,11 @@ export function parseRulesInput(scope: AccessScope, input: Record<string, unknow
     if (input[k] !== null && (!Number.isInteger(input[k]) || (input[k] as number) < 0 || (input[k] as number) > max)) throw new ScopeInputError(`${k} must be 0-${max} or null`);
     out[k] = input[k] as number | null;
   }
+  if (input.trashDays !== undefined) {
+    if (scope.kind !== 'company') throw new ScopeInputError('The Trash keep-days are set for the company');
+    if (input.trashDays !== null && !(TRASH_DAYS as readonly unknown[]).includes(input.trashDays)) throw new ScopeInputError(`trashDays must be ${TRASH_DAYS.join(', ')} (0 = never) or null`);
+    out.trashDays = input.trashDays as number | null;
+  }
   if ((out.weeklyDay === undefined) !== (out.weeklyHour === undefined) || (out.weeklyDay === null) !== (out.weeklyHour === null)) {
     throw new ScopeInputError('Give weeklyDay and weeklyHour together');
   }
@@ -178,7 +192,7 @@ export function parseRulesInput(scope: AccessScope, input: Record<string, unknow
 }
 
 const COLUMN: Record<(typeof FIELDS)[number], string> = {
-  routine: 'routine', important: 'important', contradiction: 'contradiction', reviewerAgentId: 'reviewer_agent_id', weeklyDay: 'weekly_day', weeklyHour: 'weekly_hour',
+  routine: 'routine', important: 'important', contradiction: 'contradiction', reviewerAgentId: 'reviewer_agent_id', weeklyDay: 'weekly_day', weeklyHour: 'weekly_hour', trashDays: 'trash_days',
 };
 
 /** Save a scope's rules (owner only; callers audit). Reschedules the weekly summary when its time changes. */

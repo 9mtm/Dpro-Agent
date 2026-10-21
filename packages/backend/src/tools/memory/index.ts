@@ -16,3 +16,4 @@ export { memoryMoveTool } from './move.js';
 export { memoryBridgeTool, memoryBridgeApplyTool } from './bridge.js';
 export { memoryReviewTool, memoryReviewDecideTool, memoryReviewRoutineTool, memoryGraphReviewTool } from './review.js';
 export { memoryRecallTool } from './recall.js';
+export { memoryTrashTool, memoryRestoreTool, memoryTrashEmptyTool, memoryProjectTrashTool, memoryGroupsTool, memoryGroupApplyTool } from './desktop.js';

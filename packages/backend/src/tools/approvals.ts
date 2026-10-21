@@ -40,6 +40,9 @@ export const APPROVAL_REQUIRED_TOOLS: Readonly<Record<string, ApprovalCategory>>
   memory_forget: 'delete', // CORE-07: complete, irreversible removal
   memory_doctor_fix: 'delete', // CORE-MEM-DOCTOR: deletes duplicate/expired copies (versioned); the approval is the confirm
   memory_scope_forget: 'delete', // MEM-SCALE-01: forget a whole project (CORE-07); the approval is the confirm
+  memory_trash_empty: 'delete', // MEM-TRASH-01: forgets what is in the Trash (CORE-07); the approval is the confirm
+  memory_project_trash: 'delete', // MEM-TRASH-01: deletes every memory of a project (restorable); the approval is the confirm
+  memory_group_apply: 'settings', // MEM-UX-02: share-within changes which projects an agent reads; the approval is the confirm
   // changing how memory is organised and who may read it
   memory_scope_apply: 'settings', // MEM-SCALE-01: project lifecycle, departments, pinned facts; the approval is the confirm
   memory_access_apply: 'settings', // MEM-SCALE-01: inherited access policies; the approval is the confirm

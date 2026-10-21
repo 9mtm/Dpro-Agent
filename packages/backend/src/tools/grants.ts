@@ -64,6 +64,12 @@ export const DEFAULT_AGENT_TOOLS: readonly string[] = [
   'memory_scope_apply', // MEM-SCALE-01: project lifecycle, departments, pinned facts; every call needs owner approval
   'memory_access_apply', // MEM-SCALE-01: inherited access policies; every call needs owner approval
   'memory_scope_forget', // MEM-SCALE-01: forget a whole project; every call needs owner approval
+  'memory_trash', // MEM-TRASH-01: read-only Trash list; owner's own turns only
+  'memory_restore', // MEM-TRASH-01: undo a delete (memory or project); owner's own turns only
+  'memory_trash_empty', // MEM-TRASH-01: forget what is in the Trash; every call needs owner approval
+  'memory_project_trash', // MEM-TRASH-01: move a project to the Trash; every call needs owner approval
+  'memory_groups', // MEM-UX-02: read-only groups of projects; owner's own turns only
+  'memory_group_apply', // MEM-UX-02: groups of projects + share within; every call needs owner approval
   'memory_move',   // MEM-CACHE-01: owner's runs, both drawers open; every call needs one-time owner approval
   'memory_review', // CORE-MEM-CONFLICT: read-only list of conflicts, owner's own turns, open drawers only
   'memory_review_decide', // CORE-MEM-CONFLICT: keep new / old / both; every call needs one-time owner approval

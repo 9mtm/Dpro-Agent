@@ -38,6 +38,10 @@ export interface ProjectScope {
   mergedInto: string | null;
   /** chat_projects.id of the owner's chat project with this slug, else null. */
   chatProjectId: string | null;
+  /** MEM-TRASH-01: when the project was moved to the Trash, else null. */
+  trashedAt: string | null;
+  /** MEM-UX-02: the group of projects it belongs to, else null. */
+  groupId: string | null;
 }
 
 /**
@@ -114,7 +118,7 @@ export async function renameDepartment(ownerId: string, id: string, nameInput: u
 // Projects
 // ---------------------------------------------------------------------------
 
-interface ScopeRow { slug: string; name: string | null; department_id: string | null; pinned: number; archived_at: string | null; merged_into: string | null }
+interface ScopeRow { slug: string; name: string | null; department_id: string | null; pinned: number; archived_at: string | null; merged_into: string | null; trashed_at: string | null }
 
 /**
  * Every project of the owner: chat projects, project drawers that hold
@@ -124,9 +128,10 @@ interface ScopeRow { slug: string; name: string | null; department_id: string | 
 export function* listProjectsStep(ownerId: string): Step<ProjectScope[]> {
   const chats = yield* all<{ id: string; slug: string; name: string }>('SELECT id, slug, name FROM chat_projects WHERE user_id = ?', ownerId);
   const drawers = yield* all<{ key: string }>("SELECT DISTINCT drawer_key AS key FROM memories WHERE user_id = ? AND drawer_kind = 'project'", ownerId);
-  const rows = yield* all<ScopeRow>('SELECT slug, name, department_id, pinned, archived_at, merged_into FROM memory_project_scopes WHERE owner_id = ?', ownerId);
+  const rows = yield* all<ScopeRow>('SELECT slug, name, department_id, pinned, archived_at, merged_into, trashed_at FROM memory_project_scopes WHERE owner_id = ?', ownerId);
+  const groups = new Map((yield* all<{ slug: string; group_id: string }>('SELECT slug, group_id FROM memory_project_group_members WHERE owner_id = ?', ownerId)).map((g) => [g.slug, g.group_id]));
   const bySlug = new Map<string, ProjectScope>();
-  const base = (slug: string): ProjectScope => ({ slug, name: slug, departmentId: GENERAL_DEPARTMENT, pinned: false, archived: false, archivedAt: null, mergedInto: null, chatProjectId: null });
+  const base = (slug: string): ProjectScope => ({ slug, name: slug, departmentId: GENERAL_DEPARTMENT, pinned: false, archived: false, archivedAt: null, mergedInto: null, chatProjectId: null, trashedAt: null, groupId: groups.get(slug) ?? null });
   for (const d of drawers) if (d.key && isValidDrawerKey('project', d.key)) bySlug.set(d.key, base(d.key));
   for (const r of rows) {
     const p = bySlug.get(r.slug) ?? base(r.slug);
@@ -136,6 +141,7 @@ export function* listProjectsStep(ownerId: string): Step<ProjectScope[]> {
     p.archivedAt = r.archived_at;
     p.archived = !!r.archived_at;
     p.mergedInto = r.merged_into;
+    p.trashedAt = r.trashed_at ?? null;
     bySlug.set(r.slug, p);
   }
   for (const c of chats) {
@@ -155,7 +161,8 @@ export function listProjects(ownerId: string): Promise<ProjectScope[]> {
 export function* projectStep(ownerId: string, slug: string): Step<ProjectScope | null> {
   if (!isValidDrawerKey('project', slug)) return null;
   const chat = yield* one<{ id: string; name: string }>('SELECT id, name FROM chat_projects WHERE user_id = ? AND slug = ?', ownerId, slug);
-  const row = yield* one<ScopeRow>('SELECT slug, name, department_id, pinned, archived_at, merged_into FROM memory_project_scopes WHERE owner_id = ? AND slug = ?', ownerId, slug);
+  const row = yield* one<ScopeRow>('SELECT slug, name, department_id, pinned, archived_at, merged_into, trashed_at FROM memory_project_scopes WHERE owner_id = ? AND slug = ?', ownerId, slug);
+  const group = yield* one<{ group_id: string }>('SELECT group_id FROM memory_project_group_members WHERE owner_id = ? AND slug = ?', ownerId, slug);
   const has = yield* one("SELECT 1 AS x FROM memories WHERE user_id = ? AND drawer_kind = 'project' AND drawer_key = ? LIMIT 1", ownerId, slug);
   if (!chat && !row && !has) return null;
   return {
@@ -167,6 +174,8 @@ export function* projectStep(ownerId: string, slug: string): Step<ProjectScope |
     archivedAt: row?.archived_at ?? null,
     mergedInto: row?.merged_into ?? null,
     chatProjectId: chat?.id ?? null,
+    trashedAt: row?.trashed_at ?? null,
+    groupId: group?.group_id ?? null,
   };
 }
 
@@ -175,7 +184,7 @@ export function getProject(ownerId: string, slug: string): Promise<ProjectScope 
 }
 
 /** Insert the scope row when missing, then apply `set` (column -> value). */
-export function* upsertProjectRowStep(ownerId: string, slug: string, set: Partial<Record<'name' | 'department_id' | 'pinned' | 'archived_at' | 'merged_into', string | number | null>>, by: string): Step<void> {
+export function* upsertProjectRowStep(ownerId: string, slug: string, set: Partial<Record<'name' | 'department_id' | 'pinned' | 'archived_at' | 'merged_into' | 'trashed_at', string | number | null>>, by: string): Step<void> {
   yield* run(`INSERT INTO memory_project_scopes (owner_id, slug, updated_by) VALUES (?, ?, ?) ON CONFLICT (owner_id, slug) DO NOTHING`, ownerId, slug, by);
   const cols = Object.keys(set) as Array<keyof typeof set>;
   if (!cols.length) return;

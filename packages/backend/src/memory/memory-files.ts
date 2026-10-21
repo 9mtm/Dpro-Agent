@@ -41,7 +41,7 @@ import { v4 as uuidv4 } from 'uuid';
 import { all, dialect, lockName, one, run, sql, type Step } from '../repositories/sql-steps.js';
 import { forUpdate, nowIsoText } from '../db/pg/dialect.js';
 import { getMemoryStorage } from './storage.js';
-import { drawerRevisionStep, lastVersionStep, lockMemoryHistory } from './versions.js';
+import { drawerRevisionStep, lastVersionStep, lockMemoryHistory, trashSnapshot } from './versions.js';
 import { isMemoryType, type Memory, type MemoryType, type ImportanceLevel, type MultiTierLayer } from './types.js';
 import { drawerId, normalizeDrawer, parseDrawerId, type DrawerRef } from './drawers.js';
 
@@ -680,14 +680,14 @@ export async function approveProposal(
   let stale = false;
 
   const reason = `proposal:${proposal.source}`;
-  function* record(memoryId: string, change: string, e: Entry | null, rev: number): Step<void> {
+  function* record(memoryId: string, change: string, e: Entry | null, rev: number, snapshot: string | null = null): Step<void> {
     yield* lockMemoryHistory(memoryId);
     const v = ((yield* lastVersionStep(memoryId)) ?? 0) + 1;
     yield* run(`
-      INSERT INTO memory_versions (id, memory_id, user_id, drawer_kind, drawer_key, drawer_revision, version, change, type, content, importance_score, proposal_id, created_by, reason)
-      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+      INSERT INTO memory_versions (id, memory_id, user_id, drawer_kind, drawer_key, drawer_revision, version, change, type, content, importance_score, proposal_id, created_by, reason, snapshot)
+      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
     `, uuidv4(), memoryId, userId, drawer.kind, drawer.key || '', rev, v, change,
-      e?.type ?? null, e?.content ?? null, e ? e.importance / 10 : null, proposal.id, decidedBy, change === 'baseline' ? 'before first change' : reason);
+      e?.type ?? null, e?.content ?? null, e ? e.importance / 10 : null, proposal.id, decidedBy, change === 'baseline' ? 'before first change' : reason, snapshot);
   }
   function* recordBaseline(m: Memory, rev: number): Step<void> {
     yield* lockMemoryHistory(m.id);
@@ -758,7 +758,7 @@ export async function approveProposal(
         if (!old) throw new MemoryFileError('Proposal does not match the drawer', 409, 'stale');
         yield* recordBaseline(old, prev);
         yield* run('DELETE FROM memories WHERE id = ? AND user_id = ?', old.id, userId);
-        yield* record(old.id, 'delete', null, revision);
+        yield* record(old.id, 'delete', null, revision, trashSnapshot(old));
         applied.deleted.push(old.id);
         removed.push(old);
       }

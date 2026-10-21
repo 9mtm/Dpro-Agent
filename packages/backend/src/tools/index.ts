@@ -56,6 +56,7 @@ import {
   memoryScopeApplyTool,
   memoryAccessApplyTool,
   memoryScopeForgetTool,
+  memoryTrashTool, memoryRestoreTool, memoryTrashEmptyTool, memoryProjectTrashTool, memoryGroupsTool, memoryGroupApplyTool,
   memoryMoveTool,
   memoryBridgeTool,
   memoryBridgeApplyTool,
@@ -116,6 +117,7 @@ const CORE_TOOLS: Tool[] = [
   memorySaveTool, memorySearchTool, memoryReflectTool, memoryStatsTool, memoryEditTool, memoryDeleteTool, memoryForgetTool, memoryGraphTool,
   memoryDoctorTool, memoryDoctorFixTool, memoryMoveTool,
   memoryScopesTool, memoryScopeApplyTool, memoryAccessApplyTool, memoryScopeForgetTool,
+  memoryTrashTool, memoryRestoreTool, memoryTrashEmptyTool, memoryProjectTrashTool, memoryGroupsTool, memoryGroupApplyTool, // MEM-UX-02: owner-only Trash + groups; empty / project trash / group changes need owner approval
   memoryBridgeTool, memoryBridgeApplyTool, // MEM-BRIDGE-01: owner-only; apply needs owner approval
   discoveryTool, discoveryApplyTool, // DISCOVER-01: what coding agents left on this computer; owner-only; apply needs owner approval
   memoryReviewTool, memoryReviewDecideTool, memoryReviewRoutineTool, memoryGraphReviewTool, memoryGraphTopicTool, memoryGraphSyncTool, memoryRecallTool, // owner's review inbox, topics + reply trace; decisions need owner approval
