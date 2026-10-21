@@ -1924,11 +1924,11 @@ button.status-item:hover { background:var(--row-hover); color:var(--text); }
 .mem-handoff-history .mem-dot[data-health="link"] { background:var(--mem-link); }
 
 /* MEM-FINISH-01 · M11 Coding apps */
-.mem-bridge { display:grid; grid-template-columns:minmax(0,1fr) 470px; min-block-size:0; border-block-start:1px solid var(--border); }
-.mem-bridge-main { display:grid; gap:16px; align-content:start; padding:20px; border-inline-end:1px solid var(--border); min-inline-size:0; }
+.mem-bridge { display:grid; grid-template-columns:minmax(0,1fr) minmax(300px,420px); min-block-size:0; border-block-start:1px solid var(--border); }
+.mem-bridge-main { display:grid; gap:16px; align-content:start; padding:20px; border-inline-end:1px solid var(--border); min-inline-size:0; container-type:inline-size; }
 .mem-bridge-head { display:grid; gap:4px; }
 .mem-bridge-head h3 { margin:0; font-size:18px; font-weight:600; }
-.mem-bridge-apps { display:grid; grid-template-columns:repeat(2,minmax(0,1fr)); gap:12px; }
+.mem-bridge-apps { display:grid; grid-template-columns:repeat(auto-fit,minmax(260px,1fr)); gap:12px; }
 .mem-bridge-app { display:grid; gap:10px; padding:14px; border-radius:10px; background:var(--surface); box-shadow:inset 0 0 0 1px var(--border); }
 .mem-bridge-app[data-selected] { box-shadow:inset 0 0 0 1px var(--accent); }
 .mem-bridge-app-head { display:flex; align-items:center; gap:10px; }
@@ -1963,7 +1963,7 @@ button.status-item:hover { background:var(--row-hover); color:var(--text); }
 .mem-modal-quote { display:grid; gap:6px; padding:12px 14px; border-radius:10px; background:var(--canvas); box-shadow:inset 0 0 0 1px var(--border); font-size:13px; }
 .mem-modal-field { display:grid; gap:6px; font-size:12.5px; color:var(--text-2); }
 .mem-modal-list, .mem-modal-kinds { display:grid; border-radius:10px; box-shadow:inset 0 0 0 1px var(--border); overflow:hidden; }
-.app-shell .page-ui .mem-modal-list button { display:flex; justify-content:space-between; align-items:center; border-radius:0; box-shadow:none; border-block-start:1px solid var(--border); background:transparent; padding:9px 12px; font-size:13px; text-align:start; min-block-size:0; }
+.app-shell .page-ui .mem-modal-list button { inline-size:100%; justify-self:stretch; display:flex; justify-content:space-between; align-items:center; border-radius:0; box-shadow:none; border-block-start:1px solid var(--border); background:transparent; padding:9px 12px; font-size:13px; text-align:start; min-block-size:0; }
 .app-shell .page-ui .mem-modal-list button[aria-selected="true"] { background:var(--mem-link-bg); }
 .mem-modal-kinds label { display:grid; grid-template-columns:20px minmax(0,1fr) 54px; gap:10px; align-items:start; padding:10px 12px; border-block-start:1px solid var(--border); font-size:12.5px; }
 .mem-modal-kinds label > span:nth-child(2) { display:grid; gap:2px; }
@@ -1986,7 +1986,7 @@ button.status-item:hover { background:var(--row-hover); color:var(--text); }
 .app-shell .page-ui .mem-map-views > button[aria-pressed] { background:transparent; box-shadow:none; color:var(--text-2); }
 .app-shell .page-ui .mem-map-views > button[aria-pressed="true"] { background:var(--mem-link-bg); color:var(--text); }
 .mem-map-as { margin:0 0 6px; }
-.mem-map-review { display:grid; grid-template-columns:430px minmax(0,1fr) 400px; min-block-size:0; border-block-start:1px solid var(--border); }
+.mem-map-review { display:grid; grid-template-columns:minmax(280px,1fr) minmax(260px,1.1fr) minmax(280px,0.9fr); min-block-size:0; border-block-start:1px solid var(--border); }
 .mem-links-waiting { display:grid; align-content:start; border-inline-end:1px solid var(--border); min-inline-size:0; }
 .mem-links-head { display:flex; align-items:center; gap:10px; padding:12px 14px; border-block-end:1px solid var(--border); }
 .mem-links-head b { margin-inline-end:auto; font-size:13.5px; }
@@ -2033,3 +2033,15 @@ button.status-item:hover { background:var(--row-hover); color:var(--text); }
 .mem-who { margin:0; padding-inline-start:18px; display:grid; gap:2px; font-size:12.5px; }
 .app-shell .page-ui .mem-templates button.mem-template { text-align:start; justify-content:normal; display:grid; gap:2px; min-block-size:0; }
 .mem-template-agents { padding-block-start:6px; }
+
+/* MEM-FINISH-01: the memory views sit beside the chat list and the scope rail, so they adapt to their own width. */
+.mem-map { container-type:inline-size; }
+@container (max-width: 1000px) {
+  .mem-map-review { grid-template-columns:minmax(0,1fr) minmax(0,1fr); }
+  .mem-cluster-canvas { grid-column:1 / -1; order:3; }
+}
+@container (max-width: 640px) { .mem-map-review { grid-template-columns:minmax(0,1fr); } }
+@container (max-width: 860px) {
+  .mem-bridge-row { grid-template-columns:minmax(0,1fr) minmax(0,1fr); row-gap:6px; }
+  .mem-bridge-row-head { display:none; }
+}
