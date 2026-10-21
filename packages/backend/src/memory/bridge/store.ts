@@ -150,9 +150,23 @@ export async function saveBridgeHandoff(ownerId: string, projectId: string, clie
   return (await latestBridgeHandoff(ownerId, projectId))!;
 }
 
+const toBridgeHandoff = (r: HandoffRow): BridgeHandoff => ({
+  id: r.id, projectId: r.project_id, client: r.client, done: list(r.done), left: list(r.remaining), next: list(r.next_steps), questions: list(r.open_questions), createdAt: r.created_at,
+});
+
 export async function latestBridgeHandoff(ownerId: string, projectId: string): Promise<BridgeHandoff | undefined> {
   const r = await q.one<HandoffRow>('SELECT * FROM memory_bridge_handoffs WHERE owner_id = ? AND project_id = ? ORDER BY created_at DESC, id DESC LIMIT 1', ownerId, projectId);
-  return r ? { id: r.id, projectId: r.project_id, client: r.client, done: list(r.done), left: list(r.remaining), next: list(r.next_steps), questions: list(r.open_questions), createdAt: r.created_at } : undefined;
+  return r ? toBridgeHandoff(r) : undefined;
+}
+
+/** Handoff notes coding apps wrote (read only in Dpro, MEM-GAPS-02 / board M12), newest first; optionally one project or one app. */
+export async function listBridgeHandoffs(ownerId: string, filter: { projectId?: string; client?: BridgeClient; limit?: number } = {}): Promise<BridgeHandoff[]> {
+  const where = ['owner_id = ?'];
+  const params: string[] = [ownerId];
+  if (filter.projectId) { where.push('project_id = ?'); params.push(filter.projectId); }
+  if (filter.client) { where.push('client = ?'); params.push(filter.client); }
+  const rows = await q.all<HandoffRow>(`SELECT * FROM memory_bridge_handoffs WHERE ${where.join(' AND ')} ORDER BY created_at DESC, id DESC LIMIT ${Math.min(Math.max(1, filter.limit ?? 50), 200)}`, ...params);
+  return rows.map(toBridgeHandoff);
 }
 
 // --- audit -----------------------------------------------------------------

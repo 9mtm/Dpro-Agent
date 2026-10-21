@@ -17,4 +17,4 @@ export {
   syncMemoryGraph,
 } from './store.js';
 export { graphRecall, mergeRecall, withGraphRecall, entitiesNamedIn, expandEntities, type GraphScope } from './recall.js';
-export { entityDetail, entityTimeline, findEntity, listEntities, listLinks, type GraphEntity, type GraphLink, type TimelineEntry } from './read.js';
+export { entityDetail, entityTimeline, findEntity, listEntities, listLinks, memoryEntities, type GraphEntity, type GraphLink, type MemoryEntities, type TimelineEntry } from './read.js';

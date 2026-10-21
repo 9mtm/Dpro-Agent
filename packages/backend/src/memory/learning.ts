@@ -43,6 +43,7 @@ import { getMemoryStorage } from './storage.js';
 import { defaultDrawerForType, drawerId, normalizeDrawer, sameDrawer, type DrawerRef } from './drawers.js';
 import {
   createChangeProposal,
+  decideConflict,
   exportDrawerFileIfPresent,
   MemoryFileError,
   resolveFileAgent,
@@ -55,6 +56,7 @@ import { textSimilarity } from './embedding.js';
 import { detectContradiction } from './contradiction.js';
 import { TopicKeyError, normalizeTopicKey } from './topic-key.js';
 import { TopicKeyTakenError } from './storage.js';
+import { ALWAYS_ASK, rulesForDrawer, type EffectiveRules } from './scopes/rules.js';
 
 export const MAX_LEARNED_CONTENT = 50_000;
 /** Confidence below this needs review. */
@@ -69,7 +71,9 @@ export type LearningOrigin = 'owner' | 'agent' | 'extraction' | 'outsider';
 export type LearningReason =
   | 'owner-identity' | 'owner-preference' | 'people'
   | 'money' | 'credentials' | 'health' | 'legal' | 'permissions' | 'decision'
-  | 'conflict' | 'overwrite' | 'low-confidence' | 'outsider' | 'chat';
+  | 'conflict' | 'overwrite' | 'low-confidence' | 'outsider' | 'chat'
+  /** MEM-GAPS-02: the scope's review rules ask for routine facts too. */
+  | 'scope-rule';
 
 export interface LearningCandidate {
   content: string;
@@ -358,6 +362,10 @@ export async function learn(input: LearnInput): Promise<LearnOutcome> {
       .map((r) => ({ id: r.memory.id, content: r.memory.content, similarity: textSimilarity(content, r.memory.content) }));
     const cls = classifyLearning({ ...c, content, type, drawer }, { similar });
     if (input.review && cls.kind === 'routine') { cls.kind = 'important'; cls.reasons.push('chat'); }
+    // MEM-GAPS-02: the scope's review rules (owner accounts; a chat the owner reviews always asks).
+    const rules = ownerReview && !input.review ? await rulesForDrawer(input.userId, drawer) : null;
+    if (rules && cls.kind === 'routine' && rules.routine === 'ask') { cls.kind = 'important'; cls.reasons.push('scope-rule'); }
+    else if (rules && cls.kind === 'important' && !cls.conflictsWith.length && rules.important === 'save' && cls.reasons.every((r) => !ALWAYS_ASK.has(r))) cls.kind = 'routine';
 
     if (cls.kind === 'duplicate') {
       out.skipped.push({ content: preview(content), reason: 'already known' });
@@ -366,6 +374,8 @@ export async function learn(input: LearnInput): Promise<LearnOutcome> {
     }
     if (cls.kind === 'routine') {
       const mem = newMemory(input.userId, drawer, entry, { ...(input.metadata || {}), source: c.origin, learned: 'routine' }, topicKey);
+      // MEM-GAPS-02: who saved it (an agent run; never an outsider-facing turn's claim).
+      if (c.origin === 'agent' && input.agentId) mem.sourceAgentId = input.agentId;
       try {
         await saveVersioned(mem, input.actor, 'learning:routine');
       } catch (err) {
@@ -397,6 +407,7 @@ export async function learn(input: LearnInput): Promise<LearnOutcome> {
         userId: input.userId, agentId: await proposalAgent(input.agentId), drawer, changes: [change],
         source: c.origin === 'agent' ? 'agent' : 'learning', reasons, createdBy: input.actor, conflictWith: old?.id ?? null,
       });
+      if (rules && await ruleDecides(input.userId, out, proposal, cls.reasons, rules)) continue;
       out.proposed.push(proposal);
       out.classified.push({ kind: cls.kind, reasons: cls.reasons, proposalId: proposal.id });
     } catch (err) {
@@ -405,6 +416,36 @@ export async function learn(input: LearnInput): Promise<LearnOutcome> {
     }
   }
   return out;
+}
+
+/**
+ * MEM-GAPS-02: a conflict proposal the scope's contradiction rule answers
+ * (keep_new / keep_both) is decided at once, through the same decision path
+ * as the owner's (versioned; the old text stays in history). Only when its
+ * other reasons would not wait on their own. True when it was decided.
+ */
+async function ruleDecides(userId: string, out: LearnOutcome, proposal: MemoryProposal, reasons: readonly string[], rules: EffectiveRules): Promise<boolean> {
+  if (!proposal.conflictWith || rules.contradiction === 'ask') return false;
+  const others = reasons.filter((r) => r !== 'conflict');
+  if (others.some((r) => ALWAYS_ASK.has(r)) || (others.length && rules.important !== 'save')) return false;
+  try {
+    const r = await decideConflict(userId, proposal.id, rules.contradiction, `rule:${rules.from.contradiction}`, proposal.reviewHash, 'decided by the scope rule');
+    const storage = getMemoryStorage();
+    if (r.decision === 'keep_new') {
+      const m = await storage.getOwned(userId, proposal.conflictWith);
+      if (m) out.updated.push(m);
+      out.classified.push({ kind: 'important', reasons: [...reasons] as LearningReason[], memoryId: proposal.conflictWith });
+    } else {
+      const id = r.applied?.added[0];
+      const m = id ? await storage.getOwned(userId, id) : null;
+      if (m) out.saved.push(m);
+      out.classified.push({ kind: 'important', reasons: [...reasons] as LearningReason[], ...(id ? { memoryId: id } : {}) });
+    }
+    return true;
+  } catch (err) {
+    if (err instanceof MemoryFileError) return false; // changed meanwhile: it waits for the owner
+    throw err;
+  }
 }
 
 /**
@@ -451,6 +492,8 @@ async function learnTopicUpdate(input: LearnInput, out: LearnOutcome, existing: 
       reasons: contradiction ? [...reasons, `conflicts-with:${existing.id}`] : reasons,
       createdBy: input.actor, conflictWith: contradiction ? existing.id : null,
     });
+    const rules = contradiction && !input.review ? await rulesForDrawer(input.userId, drawer) : null;
+    if (rules && await ruleDecides(input.userId, out, proposal, reasons, rules)) return;
     out.proposed.push(proposal);
     out.classified.push({ kind: 'important', reasons, proposalId: proposal.id });
   } catch (err) {

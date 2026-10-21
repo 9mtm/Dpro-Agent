@@ -110,6 +110,8 @@ export interface Memory {
   drawer?: import('./drawers.js').DrawerRef;
   /** Stable topic key (CORE-MEM-TOPIC): unique per user + drawer; null/absent = none. */
   topicKey?: string | null;
+  /** agents_config.id of the agent whose run saved it (set on insert only, MEM-GAPS-02); null = not an agent. */
+  sourceAgentId?: string | null;
 }
 
 /** Memory relationship */

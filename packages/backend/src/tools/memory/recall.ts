@@ -42,7 +42,13 @@ async function openItemsOnly(t: TraceView, ownerId: string, context?: ToolExecut
     if (i.kind === 'fact') return i.drawer === 'company' ? open.has('owner') : i.drawer?.startsWith('department:') ? departments.has(i.drawer) : !!i.drawer && open.has(i.drawer);
     return !!i.drawer && open.has(i.drawer) && (!i.nowIn || open.has(i.nowIn));
   };
-  return { ...t, items: t.items.map((i) => (visible(i) ? i : { ...i, preview: undefined, hidden: true } as typeof i)) };
+  // MEM-GAPS-02: drawers of the trace are named only when open in this run; the rest is a count.
+  const named = (list: string[]) => list.filter((d) => open.has(d));
+  const notLoaded = t.notLoaded
+    ? { drawers: t.notLoaded.drawers.filter((d) => open.has(d.drawer)), more: t.notLoaded.more + t.notLoaded.drawers.filter((d) => !open.has(d.drawer)).length }
+    : null;
+  const traceContext = t.context.drawers ? { ...t.context, drawers: { loaded: named(t.context.drawers.loaded), noAccess: named(t.context.drawers.noAccess) } } : t.context;
+  return { ...t, context: traceContext, notLoaded, items: t.items.map((i) => (visible(i) ? i : { ...i, preview: undefined, hidden: true } as typeof i)) };
 }
 
 const fail = (msg: string): ToolResult => ({ content: [{ type: 'text', text: `memory_recall refused: ${msg}` }], error: msg });
@@ -60,6 +66,9 @@ function traceText(t: TraceView): string {
   return [
     `Reply ${t.messageId ?? t.runId} (${t.createdAt}) used ${t.items.length} item(s):`,
     ...(lines.length ? lines : ['- nothing from memory']),
+    ...(t.notLoaded && (t.notLoaded.drawers.length || t.notLoaded.more)
+      ? [`Not loaded: ${[...t.notLoaded.drawers.map((d) => `${d.drawer} (${d.why.replace('_', ' ')})`), ...(t.notLoaded.more ? [`${t.notLoaded.more} other drawer(s)`] : [])].join(', ')}.`]
+      : []),
     `Context: ${c.keptTurns} turn(s) in full, ${c.summarisedTurns} as summaries, ${c.droppedTurns} left out; pack ${c.fromCache?.pack ? 'from cache' : 'built'}, ${c.packChars} memory characters, ~${c.promptTokens} prompt tokens${c.ttftMs !== null ? `, first word after ${c.ttftMs} ms` : ''}.`,
   ].join('\n');
 }

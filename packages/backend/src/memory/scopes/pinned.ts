@@ -124,8 +124,20 @@ export async function pinnedFactsBlock(ownerId: string | null | undefined, proje
   return (await pinnedFactsForReply(ownerId, projectSlug, allow)).text;
 }
 
+/**
+ * Which pinned facts a run may load, from its narrowed permissions: company
+ * facts follow the owner drawer (open and readable) and the 'company' access
+ * column, department facts the project drawer and the 'department' column,
+ * project facts the project drawer (MEM-SCALE-01, MEM-GAPS-02).
+ */
+export function scopeFactAccess(p: { memoryRead: readonly string[]; scopeRead?: readonly string[] }, ownerOpen: boolean): { company: boolean; department: boolean; project: boolean } {
+  const scope = (k: 'company' | 'department') => !p.scopeRead || p.scopeRead.includes(k);
+  const project = p.memoryRead.includes('project');
+  return { company: ownerOpen && p.memoryRead.includes('owner') && scope('company'), department: project && scope('department'), project };
+}
+
 /** pinnedFactsBlock with the facts it holds (MEM-CACHE-01 context pack and reply trace). */
-export async function pinnedFactsForReply(ownerId: string | null | undefined, projectSlug?: string | null, allow: { company: boolean; project: boolean } = { company: true, project: true }): Promise<ReplyPinnedFacts> {
+export async function pinnedFactsForReply(ownerId: string | null | undefined, projectSlug?: string | null, allow: { company: boolean; project: boolean; department?: boolean } = { company: true, project: true }): Promise<ReplyPinnedFacts> {
   if (!ownerId) return { text: '', facts: [] };
   return sql().read((function* () {
     const sections: Array<{ title: string; facts: string[] }> = [];
@@ -137,7 +149,8 @@ export async function pinnedFactsForReply(ownerId: string | null | undefined, pr
     const p = projectSlug && allow.project ? yield* projectStep(ownerId, projectSlug) : null;
     if (p && !p.archived) {
       const d = yield* departmentStep(ownerId, p.departmentId);
-      dept = { title: `Department "${d?.name ?? GENERAL_NAME}"`, facts: yield* listStep(ownerId, { kind: 'department', id: d?.id ?? GENERAL_DEPARTMENT }) };
+      // MEM-GAPS-02: the 'department' access column may close the department's facts alone.
+      if (allow.department !== false) dept = { title: `Department "${d?.name ?? GENERAL_NAME}"`, facts: yield* listStep(ownerId, { kind: 'department', id: d?.id ?? GENERAL_DEPARTMENT }) };
       project = { title: `Project "${p.name}"`, facts: yield* listStep(ownerId, { kind: 'project', id: p.slug }) };
     }
     let budget = MAX_PINNED_BLOCK_CHARS;

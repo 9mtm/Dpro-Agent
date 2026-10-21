@@ -16,6 +16,12 @@
  *                       ('settings' approval + previewHash).
  * memory_scope_forget   forget all of a project (CORE-07, 'delete' approval + previewHash).
  *
+ * MEM-GAPS-02 adds to memory_scopes: one memory (open drawer only: used in N
+ * replies, linked entities, readers), who has access to a scope, access
+ * counts per scope, one role template with its agents, review rules; and to
+ * memory_scope_apply: review rules. Changing company / department pinned
+ * facts also needs the run's write on that access column.
+ *
  * Gates (all four): the run's user must be the owner account, never a turn
  * that answers an outsider. Memory text is shown only for drawers open for
  * the run; tree and search carry names and counts only.
@@ -30,6 +36,7 @@ import { drawerId } from '../../memory/drawers.js';
 import { resolveFileAgent } from '../../memory/memory-files.js';
 import {
   PROJECT_ACTIONS, ScopeInputError, accessOverview, addPinnedFact, applyAccessChanges, applyProjectAction, createDepartment, deleteDepartment,
+  accessCounts, agentsWithAccess, memoryDetail, scopeRules, setScopeRules, templateDetail,
   effectiveAccess, exploreScope, exportProject, getProject, invalidateScopeTree, listAgentScopes, listPinnedFacts, parseActionInput, parsePinnedScope,
   previewAccessChanges, previewDeleteDepartment, previewProjectAction, removePinnedFact, renameDepartment, scopeTree, searchScopes, updatePinnedFact,
 } from '../../memory/scopes/index.js';
@@ -57,7 +64,7 @@ function auditTool(context: ToolExecutionContext | undefined, action: string, re
 const str = (v: unknown) => (typeof v === 'string' ? v : undefined);
 const json = (v: unknown) => JSON.stringify(v);
 
-const READ_ACTIONS = ['tree', 'search', 'agents', 'pinned', 'access', 'effective', 'memories', 'preview_project', 'preview_department_delete', 'preview_access'] as const;
+const READ_ACTIONS = ['tree', 'search', 'agents', 'pinned', 'access', 'effective', 'memories', 'memory', 'who', 'access_counts', 'template', 'rules', 'preview_project', 'preview_department_delete', 'preview_access'] as const;
 
 export const memoryScopesTool: Tool = {
   name: 'memory_scopes',
@@ -70,7 +77,12 @@ Actions:
 - pinned: pinned facts of a scope (scope = company | department:<id> | project:<slug>)
 - access: inherited access rules and role templates
 - effective: an agent's effective memory access and why (agent_id, optional project)
-- memories: memories of one scope (scope = a drawer open in this conversation), newest first (q, type, cursor)
+- memories: memories of one scope (scope = a drawer open in this conversation), newest first (q, type, source, agent_id, importance "n" or "a-b", from / to YYYY-MM-DD, cursor); each says in how many replies it was used
+- memory: one memory of an open drawer (memory_id): text, used in N replies, the map entities it names, how many agents may read it
+- who: agents that may read or write one column of a scope (scope, column = owner | project | experience | task | people | company | department, mode = read | write, q, cursor)
+- access_counts: how many agents may read (or write) a column per company / department / project (column, mode)
+- template: one role template with the agents that use it (template_id)
+- rules: review rules of a scope and what is in effect there (scope)
 - preview_project: what a project action would change (project, project_action = ${PROJECT_ACTIONS.join(' | ')}, target for merge, department_id for move) -> previewHash
 - preview_department_delete: what deleting a department changes (department_id) -> previewHash
 - preview_access: how many agents and projects an access change affects (changes) -> previewHash
@@ -91,6 +103,14 @@ To change anything, call memory_scope_apply / memory_access_apply / memory_scope
       target: { type: 'string', description: 'merge: target project slug' },
       department_id: { type: 'string' },
       changes: { type: 'array', items: { type: 'object' }, description: 'preview_access: set_rule | clear_rule | save_template | delete_template | assign_template changes' },
+      source: { type: 'string', description: 'memories: who or what saved it (owner, agent, import, chat, ...)' },
+      importance: { type: 'string', description: 'memories: "n" or "a-b" (1-10)' },
+      from: { type: 'string', description: 'memories: from this date (YYYY-MM-DD)' },
+      to: { type: 'string', description: 'memories: up to this date (YYYY-MM-DD)' },
+      memory_id: { type: 'string' },
+      column: { type: 'string', description: 'who / access_counts: a drawer kind, company or department' },
+      mode: { type: 'string', enum: ['read', 'write'] },
+      template_id: { type: 'string' },
     },
     required: ['action'],
   },
@@ -140,8 +160,36 @@ To change anything, call memory_scope_apply / memory_access_apply / memory_scope
           const scope = str(params.scope);
           const open = toolMemoryDrawers(context).map(drawerId);
           if (!scope || !open.includes(scope)) return fail('memory_scopes', `scope must be a drawer open in this conversation (${open.join(', ') || 'none'})`);
-          const page = await exploreScope(ownerId, { scope, q: params.q, type: params.type, cursor: params.cursor });
+          const page = await exploreScope(ownerId, {
+            scope, q: params.q, type: params.type, cursor: params.cursor,
+            source: params.source, agent: params.agent_id, importance: params.importance, from: params.from, to: params.to,
+          });
           return ok(`${page.total} memories in ${scope}${page.nextCursor ? ' (more: pass cursor)' : ''}.`, page as unknown as Record<string, unknown>);
+        }
+        case 'memory': {
+          const open = new Set(toolMemoryDrawers(context).map(drawerId));
+          const id = str(params.memory_id) ?? '';
+          // A memory of a drawer not open here reads exactly like a missing one.
+          const m = await memoryDetail(ownerId, id).catch((err) => { if (err instanceof ScopeInputError) return null; throw err; });
+          if (!m || !open.has(m.drawerId)) return fail('memory_scopes', 'no memory with that id in the drawers open in this conversation');
+          return ok(`[${m.drawerId}] ${m.content}\nUsed in ${m.usage.usedIn} replies; names ${m.graph.entities.map((e) => e.name).join(', ') || 'nothing in the map'}; ${m.readers.all ? 'read by all agents' : `read by ${m.readers.count} of ${m.readers.total} agents`}.`, { memory: m });
+        }
+        case 'who': {
+          const w = await agentsWithAccess(ownerId, { scope: params.scope ?? 'company', column: params.column, mode: params.mode, q: params.q, cursor: params.cursor });
+          return ok(`${w.count} of ${w.total} agents may ${w.mode} ${w.column} in ${w.scope}${w.nextCursor ? ' (more: pass cursor)' : ''}: ${w.agents.map((a) => a.name).join(', ')}`, w as unknown as Record<string, unknown>);
+        }
+        case 'access_counts': {
+          const c = await accessCounts(ownerId, { column: params.column, mode: params.mode });
+          return ok(`${c.company} of ${c.total} agents may ${c.mode} ${c.column} company-wide; per department and project in data.`, c as unknown as Record<string, unknown>);
+        }
+        case 'template': {
+          const t = await templateDetail(ownerId, String(params.template_id ?? ''), { cursor: params.cursor });
+          return ok(`Role template ${t.template.name}: reads ${t.template.memoryRead.join(', ') || 'nothing'}, writes ${t.template.memoryWrite.join(', ') || 'nothing'}; used by ${t.template.agents} agents.`, t as unknown as Record<string, unknown>);
+        }
+        case 'rules': {
+          const r = await scopeRules(ownerId, params.scope ?? 'company');
+          const e = r.effective;
+          return ok(`Rules in ${r.scope}: routine ${e.routine}, important ${e.important}, contradiction ${e.contradiction}${e.reviewerAgentId ? `, reviewer ${e.reviewerAgentId}` : ''}; weekly summary day ${e.weekly.day} at ${e.weekly.hour}:00.`, r as unknown as Record<string, unknown>);
         }
         case 'preview_project': {
           const p = await previewProjectAction(ownerId, String(params.project ?? ''), parseActionInput({ action: params.project_action, target: params.target, departmentId: params.department_id }));
@@ -165,7 +213,20 @@ To change anything, call memory_scope_apply / memory_access_apply / memory_scope
   },
 };
 
-const APPLY_ACTIONS = ['project', 'export', 'department_create', 'department_rename', 'department_delete', 'pinned_add', 'pinned_update', 'pinned_remove'] as const;
+const APPLY_ACTIONS = ['project', 'export', 'department_create', 'department_rename', 'department_delete', 'pinned_add', 'pinned_update', 'pinned_remove', 'rules_set'] as const;
+
+/** Company / department pinned facts need the run's write on that access column (MEM-GAPS-02); null = allowed. */
+function pinnedWriteRefusal(context: ToolExecutionContext | undefined, scope: string): string | null {
+  const write = context?.permissions?.scopeWrite;
+  const column = scope === 'company' ? 'company' : scope.startsWith('department:') ? 'department' : null;
+  if (!column || !write || write.includes(column)) return null;
+  return `this agent may not change ${column} pinned facts`;
+}
+
+async function pinnedFactScope(ownerId: string, id: string): Promise<string | null> {
+  const r = await sql().read(one<{ scope_kind: string; scope_id: string }>('SELECT scope_kind, scope_id FROM memory_pinned_facts WHERE owner_id = ? AND id = ?', ownerId, id));
+  return r ? (r.scope_kind === 'company' ? 'company' : `${r.scope_kind}:${r.scope_id}`) : null;
+}
 
 export const memoryScopeApplyTool: Tool = {
   name: 'memory_scope_apply',
@@ -175,7 +236,9 @@ Actions:
 - project: pin / unpin / archive / unarchive / move / merge a project (project, project_action, target, department_id, preview_hash from memory_scopes preview_project). Archived = kept but never loaded into a reply. Forgetting a project is memory_scope_forget.
 - export: the project's memory, pinned facts and handoff notes as Markdown files (project)
 - department_create (name), department_rename (department_id, name), department_delete (department_id, preview_hash from preview_department_delete; its projects go to General)
-- pinned_add (scope = company | department:<id> | project:<slug>, text), pinned_update (fact_id, text?, position?), pinned_remove (fact_id)`,
+- pinned_add (scope = company | department:<id> | project:<slug>, text), pinned_update (fact_id, text?, position?), pinned_remove (fact_id)
+- rules_set: review rules of a scope (scope; routine = save | ask, important = ask | save, contradiction = ask | keep_new | keep_both,
+  "inherit" = from the level above; reviewer_agent_id ("none" clears) for a department; weekly_day 0-6 + weekly_hour 0-23 for the company's weekly summary)`,
   input_schema: {
     type: 'object',
     properties: {
@@ -190,6 +253,12 @@ Actions:
       fact_id: { type: 'string' },
       position: { type: 'number' },
       preview_hash: { type: 'string' },
+      routine: { type: 'string', enum: ['save', 'ask', 'inherit'] },
+      important: { type: 'string', enum: ['ask', 'save', 'inherit'] },
+      contradiction: { type: 'string', enum: ['ask', 'keep_new', 'keep_both', 'inherit'] },
+      reviewer_agent_id: { type: 'string', description: 'rules_set: the department reviewer agent ("none" clears it)' },
+      weekly_day: { type: 'number', minimum: 0, maximum: 6 },
+      weekly_hour: { type: 'number', minimum: 0, maximum: 23 },
     },
     required: ['action'],
   },
@@ -232,22 +301,37 @@ Actions:
           return ok(`Department ${out.department.name} deleted; its projects are in General.`, { department: out.department, effects: out.effects });
         }
         case 'pinned_add': {
+          const refused = pinnedWriteRefusal(context, typeof params.scope === 'string' ? params.scope : '');
+          if (refused) return fail('memory_scope_apply', refused);
           const fact = await addPinnedFact(ownerId, parsePinnedScope(params.scope), params.text, by);
           invalidateScopeTree(ownerId);
           auditTool(context, 'memory_scope.pinned_add', 'memory_pinned_fact', fact.id, { scope: fact.scope });
           return ok(`Pinned to ${fact.scope}.`, { fact });
         }
         case 'pinned_update': {
+          const refused = pinnedWriteRefusal(context, (await pinnedFactScope(ownerId, String(params.fact_id ?? ''))) ?? '');
+          if (refused) return fail('memory_scope_apply', refused);
           const fact = await updatePinnedFact(ownerId, String(params.fact_id ?? ''), { text: params.text, position: params.position });
           auditTool(context, 'memory_scope.pinned_update', 'memory_pinned_fact', fact.id, { scope: fact.scope });
           return ok('Pinned fact updated.', { fact });
         }
         case 'pinned_remove': {
+          const refused = pinnedWriteRefusal(context, (await pinnedFactScope(ownerId, String(params.fact_id ?? ''))) ?? '');
+          if (refused) return fail('memory_scope_apply', refused);
           const fact = await removePinnedFact(ownerId, String(params.fact_id ?? ''));
           if (!fact) return fail('memory_scope_apply', 'pinned fact not found');
           invalidateScopeTree(ownerId);
           auditTool(context, 'memory_scope.pinned_remove', 'memory_pinned_fact', fact.id, { scope: fact.scope });
           return ok('Pinned fact removed.', { fact });
+        }
+        case 'rules_set': {
+          const changes: Record<string, unknown> = {};
+          for (const [k, f] of [['routine', 'routine'], ['important', 'important'], ['contradiction', 'contradiction'], ['reviewer_agent_id', 'reviewerAgentId'], ['weekly_day', 'weeklyDay'], ['weekly_hour', 'weeklyHour']] as const) {
+            if (params[k] !== undefined) changes[f] = params[k] === 'inherit' || params[k] === 'none' ? null : params[k];
+          }
+          const out = await setScopeRules(ownerId, params.scope ?? 'company', changes, by);
+          auditTool(context, 'memory_scope.rules_set', 'memory_scope_rules', out.scope, { changes });
+          return ok(`Rules of ${out.scope} saved: routine ${out.effective.routine}, important ${out.effective.important}, contradiction ${out.effective.contradiction}.`, out as unknown as Record<string, unknown>);
         }
         default:
           return fail('memory_scope_apply', `action must be one of ${APPLY_ACTIONS.join(', ')}`);
@@ -264,8 +348,11 @@ export const memoryAccessApplyTool: Tool = {
   description: `Change who may read and write which memory drawers, after the owner approves this call.
 Give the same changes you previewed with memory_scopes preview_access and its previewHash. Changes:
 - { op: "set_rule", scope: "company" | "department:<id>" | "project:<slug>", agentId?, drawerKind, read: allow|deny|inherit, write: allow|deny|inherit, endsAt? (agent exceptions only), reason? }
+  drawerKind is a drawer kind (owner, project, experience, task, people) or a scope column: "company" (company pinned facts)
+  or "department" (the project's department pinned facts)
 - { op: "clear_rule", scope, agentId?, drawerKind }
-- { op: "save_template", id?, name, memoryRead: [kinds], memoryWrite: [kinds] }, { op: "delete_template", id }
+- { op: "save_template", id?, name, memoryRead: [kinds], memoryWrite: [kinds], scopeRead?: ["company"|"department"] | null, scopeWrite?: [...] }, { op: "delete_template", id }
+  (scopeRead left out = keep the template's scope columns; null = no limit on them)
 - { op: "assign_template", template: id | name | null, agentIds: [...] }
 Rules only narrow what an agent's own permissions allow.`,
   input_schema: {

@@ -578,6 +578,12 @@ export function* getProposalStep(userId: string, id: string, lock = false): Step
   return row ? rowToProposal(row) : null;
 }
 
+/** Every pending proposal of a user, oldest first (at most `limit`; review groups, MEM-GAPS-02). */
+export async function listPendingProposals(userId: string, limit = 2000): Promise<MemoryProposal[]> {
+  const rows = await sql().read(all("SELECT * FROM memory_file_proposals WHERE user_id = ? AND status = 'pending' ORDER BY created_at, id LIMIT ?", userId, Math.max(1, Math.min(5000, limit))));
+  return rows.map(rowToProposal);
+}
+
 export async function listProposals(userId: string, status?: string): Promise<MemoryProposal[]> {
   const rows = status
     ? await sql().read(all('SELECT * FROM memory_file_proposals WHERE user_id = ? AND status = ? ORDER BY created_at DESC, id LIMIT 200', userId, status))
@@ -726,6 +732,8 @@ export async function approveProposal(
           ...layerFor(c.after.importance), consolidationStatus: 'pending', status: 'active',
           metadata: { source: isFileProposal(proposal) ? 'memory_file' : proposal.source, proposalId: proposal.id }, createdAt: new Date(now), lastAccessedAt: now,
           accessCount: 0, embedding: embeddings.get(i), drawer, topicKey: c.topicKey ?? null,
+          // MEM-GAPS-02: an agent's proposal keeps the agent that proposed it (server-written created_by).
+          sourceAgentId: proposalSourceAgent(proposal.createdBy),
         };
         yield* storage.writeRowStep(mem);
         yield* record(mem.id, 'create', c.after, revision);
@@ -796,6 +804,12 @@ export async function decideConflict(
   if (decision === 'keep_old') return { decision, proposal: await rejectProposal(userId, id, decidedBy, expectedReviewHash, note), applied: null };
   const result = await approveProposal(userId, id, decidedBy, expectedReviewHash, { keepBoth: decision === 'keep_both' });
   return { decision, proposal: result.proposal, applied: result.applied };
+}
+
+/** The agents_config id of a proposal written by an agent run (`agent:<id>`), else null. */
+export function proposalSourceAgent(createdBy: string | null | undefined): string | null {
+  const m = /^agent:([A-Za-z0-9_.:-]{1,128})$/.exec(createdBy ?? '');
+  return m ? m[1] : null;
 }
 
 /** Version history of a drawer, newest first. */

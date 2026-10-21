@@ -85,6 +85,8 @@ const SQLITE_MEMORIES_COLUMNS: Array<[string, string]> = [
   ['embedding_dims', 'INTEGER'],
   // CORE-MEM-TOPIC (normally added by migration 096)
   ['topic_key', 'TEXT'],
+  // Saving agent (normally added by migration 047)
+  ['source_agent_id', 'TEXT'],
 ];
 
 const SQLITE_MEMORIES_INDEXES = [
@@ -106,11 +108,12 @@ const UPSERT_COLUMNS = [
  * upsert on the id keeps the columns it does not list (sharing, quality)
  * and the rows that reference the memory, and never moves a memory id to
  * another user (`changes` is 0 then). The topic key (CORE-MEM-TOPIC) is set
- * on insert only; an update keeps it (setTopicKeyStep changes it).
+ * on insert only; an update keeps it (setTopicKeyStep changes it). So is the
+ * saving agent (source_agent_id, MEM-GAPS-02): an edit never changes who saved it.
  */
 const UPSERT_SQL = `
-  INSERT INTO memories (${UPSERT_COLUMNS.join(', ')}, topic_key)
-  VALUES (${UPSERT_COLUMNS.map(() => '?').join(', ')}, ?)
+  INSERT INTO memories (${UPSERT_COLUMNS.join(', ')}, topic_key, source_agent_id)
+  VALUES (${UPSERT_COLUMNS.map(() => '?').join(', ')}, ?, ?)
   ON CONFLICT (id) DO UPDATE SET ${UPSERT_COLUMNS.filter((c) => c !== 'id').map((c) => `${c} = excluded.${c}`).join(', ')}
   WHERE memories.user_id = excluded.user_id`;
 
@@ -241,6 +244,7 @@ export class MemoryStorage implements IMemoryStorage {
       embeddingModel,
       memory.embedding.length,
       topicKey,
+      memory.sourceAgentId || null,
     );
     if (res.changes !== 1) throw new Error('Memory id belongs to another user');
   }
@@ -609,6 +613,7 @@ ${JSON.stringify(memory.metadata, null, 2)}
       consolidationStatus: row.consolidation_status || 'pending',
       drawer: rowDrawer(row),
       topicKey: row.topic_key ?? null,
+      sourceAgentId: row.source_agent_id ?? null,
     };
   }
 }

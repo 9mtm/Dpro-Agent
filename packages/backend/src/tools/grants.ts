@@ -67,6 +67,7 @@ export const DEFAULT_AGENT_TOOLS: readonly string[] = [
   'memory_move',   // MEM-CACHE-01: owner's runs, both drawers open; every call needs one-time owner approval
   'memory_review', // CORE-MEM-CONFLICT: read-only list of conflicts, owner's own turns, open drawers only
   'memory_review_decide', // CORE-MEM-CONFLICT: keep new / old / both; every call needs one-time owner approval
+  'memory_review_routine', // MEM-GAPS-02: accept all routine reviews of a preview; every call needs one-time owner approval
   'memory_graph_review', // CORE-MEM-GRAPH: approve / reject a pending link; every call needs one-time owner approval
   'memory_graph_topic', // MEM-GRAPH-CLUSTER: cluster -> topic or dismiss; every call needs one-time owner approval
   'memory_recall', // MEM-CACHE-01: read-only trace of the agent's own replies, summaries, cache metrics

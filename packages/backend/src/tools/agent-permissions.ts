@@ -41,6 +41,14 @@ export interface AgentPermissions {
   modes: Record<PermissionCategory, PermissionMode>;
   /** 0 = no stored row (defaults); stored rows start at 1. */
   version: number;
+  /**
+   * MEM-GAPS-02: the scope columns of the owner's access grid this run may
+   * read / write ('company' = company pinned facts, 'department' = the
+   * project's department facts). Set once the owner's policies narrowed the
+   * run (narrowPermissions); absent = not narrowed (no cap).
+   */
+  scopeRead?: Array<'company' | 'department'>;
+  scopeWrite?: Array<'company' | 'department'>;
 }
 
 const ALL_KINDS = [...DRAWER_KINDS] as DrawerKind[];
@@ -128,10 +136,13 @@ const MODE_RANK: Record<PermissionMode, number> = { off: 0, ask: 1, allow: 2 };
  */
 export function strictest(agentId: string, list: readonly AgentPermissions[]): AgentPermissions {
   const [first, ...rest] = list;
+  const both = <T>(a: T[] | undefined, b: T[] | undefined): T[] | undefined => (a && b ? a.filter((k) => b.includes(k)) : a ?? b);
   return rest.reduce<AgentPermissions>((acc, p) => ({
     agentId,
     memoryRead: acc.memoryRead.filter((k) => p.memoryRead.includes(k)),
     memoryWrite: acc.memoryWrite.filter((k) => p.memoryWrite.includes(k)),
+    ...(acc.scopeRead || p.scopeRead ? { scopeRead: both(acc.scopeRead, p.scopeRead) } : {}),
+    ...(acc.scopeWrite || p.scopeWrite ? { scopeWrite: both(acc.scopeWrite, p.scopeWrite) } : {}),
     sharedMemory: acc.sharedMemory && p.sharedMemory,
     modes: Object.fromEntries(PERMISSION_CATEGORIES.map((c) => [c, MODE_RANK[p.modes[c]] < MODE_RANK[acc.modes[c]] ? p.modes[c] : acc.modes[c]])) as Record<PermissionCategory, PermissionMode>,
     version: acc.version,
@@ -153,7 +164,7 @@ function narrowed(list: AgentPermissions[], scope: RunScope | undefined, snap: (
     return list.map((p) => narrowPermissions(p, s, scope.project ?? null));
   } catch {
     // Policies unreadable: no drawers (fail closed), modes unchanged.
-    return list.map((p) => ({ ...p, memoryRead: [], memoryWrite: [] }));
+    return list.map((p) => ({ ...p, memoryRead: [], memoryWrite: [], scopeRead: [], scopeWrite: [] }));
   }
 }
 

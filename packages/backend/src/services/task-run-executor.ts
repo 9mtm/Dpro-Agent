@@ -319,8 +319,12 @@ export async function executeTaskRun(runId: string, owner: string = WORKER_ID): 
     const contract: TaskContract | null = await runContract(run);
     // SECURITY (S1.2): the agent's current grants, intersected with every
     // agent this task was delegated from; re-checked on every attempt.
+    // MEM-GAPS-02: the owner's inherited memory access narrows the run (not
+    // policies of a "user" named like the agent, which never exist).
+    const accessOwner = await taskRunOwner(run.user_id).catch(() => undefined);
     const registry = await createAgentToolsRegistry({
       userId: agent.id,
+      ...(accessOwner ? { accessOwnerId: accessOwner } : {}),
       sessionId: `cron-${taskId}`,
       workspaceDir: process.cwd(),
       agentId: agent.id,

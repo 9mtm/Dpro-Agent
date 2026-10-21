@@ -89,7 +89,7 @@ async function linkCount(scope: GraphScope, entityId: string): Promise<number> {
 }
 
 /** Links in scope (all statuses unless `status`), optionally of one entity. */
-export async function listLinks(scope: GraphScope, opts: { status?: unknown; entityId?: string; limit?: unknown } = {}): Promise<GraphLink[]> {
+export async function listLinks(scope: GraphScope, opts: { status?: unknown; entityId?: string; ids?: readonly string[]; limit?: unknown } = {}): Promise<GraphLink[]> {
   if (!(await graphTablesExist())) return [];
   if (scope.drawers && scope.drawers.length === 0) return [];
   const inScope = scopedMemoryIds(scope);
@@ -97,6 +97,10 @@ export async function listLinks(scope: GraphScope, opts: { status?: unknown; ent
   const params: Array<string | number> = [scope.userId];
   if (opts.status === 'active' || opts.status === 'pending' || opts.status === 'rejected') { where += ' AND l.status = ?'; params.push(opts.status); }
   if (opts.entityId) { where += ' AND (l.src_id = ? OR l.dst_id = ?)'; params.push(opts.entityId, opts.entityId); }
+  if (opts.ids) {
+    if (!opts.ids.length) return [];
+    where += ` AND l.id IN (${opts.ids.map(() => '?').join(', ')})`; params.push(...opts.ids);
+  }
   const rows = await sql().read(all<any>(`
     SELECT l.id, l.type, l.status, l.created_at, l.src_id, a.name AS src_name, a.kind AS src_kind, l.dst_id, b.name AS dst_name, b.kind AS dst_kind
       FROM memory_graph_links l
@@ -154,4 +158,31 @@ export async function findEntity(scope: GraphScope, name: string): Promise<Graph
   const all = await listEntities(scope, { limit: 500 });
   return all.find((e) => normalizeName(e.name) === norm || e.aliases.includes(norm))
     ?? all.find((e) => normalizeName(e.name).includes(norm)) ?? null;
+}
+
+export interface MemoryEntities {
+  memoryId: string;
+  /** Entities the memory names (its mentions). */
+  entities: Array<{ id: string; kind: string; name: string }>;
+  /** Links this memory taught (it is one of their sources). */
+  links: GraphLink[];
+}
+
+/**
+ * The graph entities and links one memory holds (MEM-GAPS-02: memory ->
+ * linked entities). Null when the memory is not in scope (another user's,
+ * a drawer outside the scope, an archived project).
+ */
+export async function memoryEntities(scope: GraphScope, memoryId: string): Promise<MemoryEntities | null> {
+  if (typeof memoryId !== 'string' || !/^[A-Za-z0-9_.:@-]{1,128}$/.test(memoryId)) return null;
+  const inScope = scopedMemoryIds(scope);
+  const visible = await sql().read(one<{ id: string }>(`SELECT id FROM memories WHERE id = ? AND id IN (${inScope.sql})`, memoryId, ...inScope.params));
+  if (!visible) return null;
+  if (!(await graphTablesExist())) return { memoryId, entities: [], links: [] };
+  const entities = await sql().read(all<{ id: string; kind: string; name: string }>(`
+    SELECT e.id, e.kind, e.name FROM memory_graph_mentions m JOIN memory_graph_entities e ON e.id = m.entity_id AND e.user_id = m.user_id
+     WHERE m.memory_id = ? AND m.user_id = ? ORDER BY e.name, e.id LIMIT 50`, memoryId, scope.userId));
+  const linkIds = await sql().read(all<{ link_id: string }>('SELECT link_id FROM memory_graph_link_sources WHERE memory_id = ? AND user_id = ? LIMIT 50', memoryId, scope.userId));
+  const links = await listLinks(scope, { ids: linkIds.map((r) => r.link_id), limit: 50 });
+  return { memoryId, entities, links };
 }

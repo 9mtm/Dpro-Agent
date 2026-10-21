@@ -57,6 +57,22 @@ export function parseActionInput(body: Record<string, unknown>): ActionInput {
 const projectDrawer = (slug: string): DrawerRef => ({ kind: 'project', key: slug });
 
 interface DrawerState { memories: number; last: string | null; topicKeys: Map<string, string> }
+
+/** Access rules of one scope in both rule tables (drawer kinds, scope columns: migration 121). */
+function* countAccessRulesStep(ownerId: string, kind: 'project' | 'department', id: string): Step<number> {
+  let n = 0;
+  for (const t of ['memory_access_rules', 'memory_access_scope_rules']) n += yield* countOf(`SELECT COUNT(*) AS n FROM ${t} WHERE owner_id = ? AND scope_kind = ? AND scope_id = ?`, ownerId, kind, id);
+  return n;
+}
+
+/** Remove a scope's access rules (both tables) and its review rules; the number of access rules removed. */
+function* deleteScopeRulesStep(ownerId: string, kind: 'project' | 'department', id: string): Step<number> {
+  let n = 0;
+  for (const t of ['memory_access_rules', 'memory_access_scope_rules']) n += (yield* run(`DELETE FROM ${t} WHERE owner_id = ? AND scope_kind = ? AND scope_id = ?`, ownerId, kind, id)).changes;
+  yield* run('DELETE FROM memory_scope_rules WHERE owner_id = ? AND scope_kind = ? AND scope_id = ?', ownerId, kind, id);
+  return n;
+}
+
 function* drawerStateStep(ownerId: string, slug: string): Step<DrawerState> {
   const s = yield* one<{ n: number; last: string | null }>("SELECT COUNT(*) AS n, MAX(created_at) AS last FROM memories WHERE user_id = ? AND drawer_kind = 'project' AND drawer_key = ?", ownerId, slug);
   const keys = yield* all<{ id: string; topic_key: string }>("SELECT id, topic_key FROM memories WHERE user_id = ? AND drawer_kind = 'project' AND drawer_key = ? AND topic_key IS NOT NULL", ownerId, slug);
@@ -81,7 +97,7 @@ function* previewStep(ownerId: string, slug: string, input: ActionInput): Step<A
   const src = yield* drawerStateStep(ownerId, slug);
   const scopeRow = yield* one<{ updated_at: string }>('SELECT updated_at FROM memory_project_scopes WHERE owner_id = ? AND slug = ?', ownerId, slug);
   const pinnedFacts = yield* countOf("SELECT COUNT(*) AS n FROM memory_pinned_facts WHERE owner_id = ? AND scope_kind = 'project' AND scope_id = ?", ownerId, slug);
-  const accessRules = yield* countOf("SELECT COUNT(*) AS n FROM memory_access_rules WHERE owner_id = ? AND scope_kind = 'project' AND scope_id = ?", ownerId, slug);
+  const accessRules = yield* countAccessRulesStep(ownerId, 'project', slug);
   const pendingReviews = yield* countOf("SELECT COUNT(*) AS n FROM memory_file_proposals WHERE user_id = ? AND status = 'pending' AND drawer_kind = 'project' AND drawer_key = ?", ownerId, slug);
   const conversations = project.chatProjectId ? yield* countOf('SELECT COUNT(*) AS n FROM chat_sessions WHERE user_id = ? AND project_id = ?', ownerId, project.chatProjectId) : 0;
   const handoffs = project.chatProjectId ? yield* countOf('SELECT COUNT(*) AS n FROM agent_handoffs WHERE owner_id = ? AND project_id = ?', ownerId, project.chatProjectId) : 0;
@@ -221,7 +237,7 @@ function* mergeStep(ownerId: string, from: string, to: ProjectScope, fromChat: s
     (conflicts.length ? conflicts.map(() => '?').join(', ') : "''") + ')', to.slug, ownerId, from, ...conflicts)).changes;
   const graph = yield* mergeGraphEntityStep(ownerId, from, to.slug);
   const facts = (yield* run("UPDATE memory_pinned_facts SET scope_id = ?, position = position + 1000 WHERE owner_id = ? AND scope_kind = 'project' AND scope_id = ?", to.slug, ownerId, from)).changes;
-  const rules = (yield* run("DELETE FROM memory_access_rules WHERE owner_id = ? AND scope_kind = 'project' AND scope_id = ?", ownerId, from)).changes;
+  const rules = yield* deleteScopeRulesStep(ownerId, 'project', from);
   if (rules) yield* bumpAccessVersionStep(ownerId);
   let conversations = 0, handoffs = 0;
   if (fromChat && to.chatProjectId) {
@@ -248,7 +264,7 @@ export async function applyProjectAction(ownerId: string, slug: string, input: A
       const cancelled = (yield* run(`UPDATE memory_file_proposals SET status = 'cancelled', changes = '[]', decided_by = ?, decided_at = ?, note = 'cancelled: the project was forgotten'
         WHERE user_id = ? AND status = 'pending' AND drawer_kind = 'project' AND drawer_key = ?`, by, new Date().toISOString(), ownerId, slug)).changes;
       const facts = (yield* run("DELETE FROM memory_pinned_facts WHERE owner_id = ? AND scope_kind = 'project' AND scope_id = ?", ownerId, slug)).changes;
-      const rules = (yield* run("DELETE FROM memory_access_rules WHERE owner_id = ? AND scope_kind = 'project' AND scope_id = ?", ownerId, slug)).changes;
+      const rules = yield* deleteScopeRulesStep(ownerId, 'project', slug);
       if (rules) yield* bumpAccessVersionStep(ownerId);
       const handoffs = project.chatProjectId ? (yield* run('DELETE FROM agent_handoffs WHERE owner_id = ? AND project_id = ?', ownerId, project.chatProjectId)).changes : 0;
       const dept = yield* one<{ department_id: string | null }>('SELECT department_id FROM memory_project_scopes WHERE owner_id = ? AND slug = ?', ownerId, slug);
@@ -308,7 +324,7 @@ function* departmentPreviewStep(ownerId: string, id: string) {
   if (!d) throw new ScopeInputError('Department not found', 404, 'not_found');
   const projects = (yield* listProjectsStep(ownerId)).filter((p) => p.departmentId === id).map((p) => p.slug);
   const pinnedFacts = yield* countOf("SELECT COUNT(*) AS n FROM memory_pinned_facts WHERE owner_id = ? AND scope_kind = 'department' AND scope_id = ?", ownerId, id);
-  const accessRules = yield* countOf("SELECT COUNT(*) AS n FROM memory_access_rules WHERE owner_id = ? AND scope_kind = 'department' AND scope_id = ?", ownerId, id);
+  const accessRules = yield* countAccessRulesStep(ownerId, 'department', id);
   const access = yield* previewSnapshotEditStep(ownerId, (s) => {
     for (const p of projects) s.projectDept.delete(p);
     s.rules = s.rules.filter((r) => !(r.scope_kind === 'department' && r.scope_id === id));
@@ -330,7 +346,7 @@ export async function deleteDepartment(ownerId: string, id: string, expectedPrev
     if (preview.previewHash !== expectedPreviewHash) throw new ScopeInputError('The department changed since the preview. Preview again.', 409, 'preview_changed');
     yield* run('UPDATE memory_project_scopes SET department_id = NULL WHERE owner_id = ? AND department_id = ?', ownerId, id);
     yield* run("DELETE FROM memory_pinned_facts WHERE owner_id = ? AND scope_kind = 'department' AND scope_id = ?", ownerId, id);
-    yield* run("DELETE FROM memory_access_rules WHERE owner_id = ? AND scope_kind = 'department' AND scope_id = ?", ownerId, id);
+    yield* deleteScopeRulesStep(ownerId, 'department', id);
     yield* run('DELETE FROM memory_departments WHERE owner_id = ? AND id = ?', ownerId, id);
     yield* bumpAccessVersionStep(ownerId);
     return preview;

@@ -7,8 +7,14 @@
  *   GET  /api/memory/scopes/tree?fresh=1           company / departments / projects / people / agents, counts + health
  *   GET  /api/memory/scopes/search?q=&kinds=&limit= scopes by name (department, project, people, agent)
  *   GET  /api/memory/scopes/agents?q=&cursor=&limit= agents as scopes, paged
- *   GET  /api/memory/scopes/memories?scope=&q=&type=&layer=&topic=&cursor=&limit=
- *                                                   memories of one scope, newest first, cursor paging + facets
+ *   GET  /api/memory/scopes/memories?scope=&q=&type=&layer=&topic=&source=&agent=&importance=&from=&to=&cursor=&limit=
+ *                                                   memories of one scope, newest first, cursor paging + facets;
+ *                                                   scope also kind:<drawer kind>; items carry usedIn (MEM-GAPS-02)
+ *   GET  /api/memory/scopes/memories/:id           one memory: text, used in N replies, linked entities, readers
+ * Review rules per scope (MEM-GAPS-02)
+ *   GET  /api/memory/scopes/rules?scope=           { scope, own, effective }
+ *   GET  /api/memory/scopes/rules/all              { rules: [{ scope, own }] }
+ *   PUT  /api/memory/scopes/rules                  { scope, routine?, important?, contradiction?, reviewerAgentId?, weeklyDay?, weeklyHour? }
  * Departments
  *   POST /api/memory/scopes/departments            { name } -> 201 { department }
  *   PATCH /api/memory/scopes/departments/:id       { name } -> { department }
@@ -28,6 +34,9 @@
  *   POST /api/memory/access/preview                { changes } -> { previewHash, version, agentsAffected, projectsAffected, ... }
  *   POST /api/memory/access/apply                  { changes, expectedPreviewHash, confirm: true } -> { version, preview }
  *   GET  /api/memory/access/effective/:agentId?project= -> effective access per drawer kind + why
+ *   GET  /api/memory/access/agents?scope=&column=&mode=&q=&cursor=&limit= -> agents with that access (MEM-GAPS-02)
+ *   GET  /api/memory/access/counts?column=&mode=   -> agents with access per company / department / project
+ *   GET  /api/memory/access/templates/:id?cursor=&limit= -> one role template + the agents that use it
  *
  * Errors: 400 { error, code } (invalid_scope, preview_hash_required, confirm_required),
  * 404 not_found, 409 (preview_changed, name_taken, no_change, too_many, target_archived).
@@ -44,6 +53,7 @@ import {
   ScopeInputError, accessOverview, addPinnedFact, applyAccessChanges, applyProjectAction, createDepartment, deleteDepartment, effectiveAccess,
   exploreScope, exportProject, invalidateScopeTree, listAgentScopes, listPinnedFacts, parseActionInput, parsePinnedScope, pinnedScopeId,
   previewAccessChanges, previewDeleteDepartment, previewProjectAction, removePinnedFact, renameDepartment, scopeTree, searchScopes, updatePinnedFact,
+  accessCounts, agentsWithAccess, listScopeRules, memoryDetail, scopeRules, setScopeRules, templateDetail,
 } from '../../memory/scopes/index.js';
 
 function ownerOf(request: FastifyRequest, reply: FastifyReply): Actor | null {
@@ -81,7 +91,7 @@ function requireConfirm(b: Record<string, unknown>): void {
 export async function memoryScopeRoutes(fastify: FastifyInstance) {
   const config = { access: 'owner' as const };
   type Handler = (owner: Actor, request: FastifyRequest, reply: FastifyReply) => Promise<unknown>;
-  const route = (method: 'GET' | 'POST' | 'PATCH' | 'DELETE', url: string, handler: Handler) => fastify.route({
+  const route = (method: 'GET' | 'POST' | 'PATCH' | 'PUT' | 'DELETE', url: string, handler: Handler) => fastify.route({
     method, url, config,
     handler: async (request, reply) => {
       const owner = ownerOf(request, reply);
@@ -101,6 +111,17 @@ export async function memoryScopeRoutes(fastify: FastifyInstance) {
   });
   route('GET', '/api/memory/scopes/agents', async (owner, request) => listAgentScopes(owner.userId!, q(request)));
   route('GET', '/api/memory/scopes/memories', async (owner, request) => exploreScope(owner.userId!, q(request)));
+  route('GET', '/api/memory/scopes/memories/:id', async (owner, request) => ({ memory: await memoryDetail(owner.userId!, (request.params as { id: string }).id) }));
+
+  // ---- review rules per scope ----
+  route('GET', '/api/memory/scopes/rules', async (owner, request) => scopeRules(owner.userId!, q(request).scope ?? 'company'));
+  route('GET', '/api/memory/scopes/rules/all', async (owner) => ({ rules: await listScopeRules(owner.userId!) }));
+  route('PUT', '/api/memory/scopes/rules', async (owner, request) => {
+    const { scope, ...changes } = body(request);
+    const out = await setScopeRules(owner.userId!, scope ?? 'company', changes, owner.userId!);
+    audit(request, owner, 'memory_scope.rules_set', 'memory_scope_rules', out.scope, { changes });
+    return out;
+  });
 
   // ---- departments ----
   route('POST', '/api/memory/scopes/departments', async (owner, request, reply) => {
@@ -196,6 +217,9 @@ export async function memoryScopeRoutes(fastify: FastifyInstance) {
       throw err;
     }
   });
+  route('GET', '/api/memory/access/agents', async (owner, request) => agentsWithAccess(owner.userId!, q(request)));
+  route('GET', '/api/memory/access/counts', async (owner, request) => accessCounts(owner.userId!, q(request)));
+  route('GET', '/api/memory/access/templates/:id', async (owner, request) => templateDetail(owner.userId!, (request.params as { id: string }).id, q(request)));
   route('GET', '/api/memory/access/effective/:agentId', async (owner, request, reply) => {
     const project = q(request).project;
     const out = await effectiveAccess(owner.userId!, (request.params as { agentId: string }).agentId, typeof project === 'string' && project ? project : null);

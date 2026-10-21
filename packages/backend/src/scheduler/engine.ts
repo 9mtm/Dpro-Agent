@@ -51,6 +51,11 @@ export class CronEngine extends EventEmitter implements ICronEngine {
     console.log(`[CronEngine] ✅ Started with ${this.jobs.size} jobs`);
   }
 
+  /** True between start() and stop(). */
+  isStarted(): boolean {
+    return this.isRunning;
+  }
+
   /**
    * Stop cron engine
    */

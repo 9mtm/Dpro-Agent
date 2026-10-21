@@ -10,6 +10,9 @@
  *                  memory_graph_review, which needs the owner's approval)
  *   op 'clusters'  groups of entities seen together: topic suggestions
  *   op 'topic_preview'  what making one cluster a topic would do (changes nothing)
+ *   op 'memory'    the entities and links one memory holds (MEM-GAPS-02)
+ *   op 'agent_view'  the map as another agent's runs would see it, within
+ *                  the drawers open here (MEM-GAPS-02)
  *
  * memory_graph_topic (approval-gated): make a previewed cluster a topic, or
  * dismiss it ("not a topic").
@@ -23,11 +26,12 @@
 import type { Tool, ToolResult, ToolExecutionContext } from '../types.js';
 import { toolMemoryDrawers, toolMemoryUser } from './scope.js';
 import { one, sql } from '../../repositories/sql-steps.js';
-import { entityDetail, findEntity, graphRecall, listEntities, listLinks, type GraphScope } from '../../memory/graph/index.js';
+import { entityDetail, findEntity, graphRecall, listEntities, listLinks, memoryEntities, type GraphScope } from '../../memory/graph/index.js';
+import { ScopeInputError, agentViewMap } from '../../memory/scopes/index.js';
 import { applyTopic, ClusterError, dismissCluster, graphClusters, topicPreview, type TopicPreview } from '../../memory/graph/clusters.js';
 
 const fail = (msg: string): ToolResult => ({ content: [{ type: 'text', text: `Memory graph: ${msg}` }], error: msg });
-const OPS = ['entities', 'entity', 'links', 'related', 'pending', 'clusters', 'topic_preview'] as const;
+const OPS = ['entities', 'entity', 'links', 'related', 'pending', 'clusters', 'topic_preview', 'memory', 'agent_view'] as const;
 
 function previewText(p: TopicPreview): string {
   const head = `Cluster "${p.cluster.name}" in ${p.cluster.drawer} (${p.cluster.entities.map((e) => e.name).join(', ')}; ${p.cluster.memoryIds.length} memories) as topic "${p.topicKey}":`;
@@ -59,6 +63,8 @@ Ops:
 - pending: links waiting for the owner's review (approve or reject one with memory_graph_review)
 - clusters: groups of entities the memory keeps mentioning together (topic suggestions)
 - topic_preview: what making one cluster a topic would do (cluster_id, optional topic_key); changes nothing
+- memory: the entities and links one memory holds (memory_id)
+- agent_view: what another agent's runs could see of the map (agent_id, optional project slug), within the drawers open here
 
 Only the memory drawers open for this conversation are read. Read-only.`,
   input_schema: {
@@ -72,6 +78,9 @@ Only the memory drawers open for this conversation are read. Read-only.`,
       query: { type: 'string', description: 'related: the question or names' },
       cluster_id: { type: 'string', description: 'topic_preview: cluster id from op clusters' },
       topic_key: { type: 'string', description: 'topic_preview: the topic key (default: suggested from the cluster name)' },
+      memory_id: { type: 'string', description: 'memory: the memory id' },
+      agent_id: { type: 'string', description: 'agent_view: the agent' },
+      project: { type: 'string', description: 'agent_view: project slug (default: no project)' },
       limit: { type: 'number', minimum: 1, maximum: 50, description: 'Maximum items (default 20)' },
     },
     required: ['op'],
@@ -115,6 +124,33 @@ Only the memory drawers open for this conversation are read. Read-only.`,
         ? clusters.map((c, i) => `${i + 1}. "${c.name}" in ${c.drawer}: ${c.entities.map((e) => e.name).join(', ')} — ${c.memoryIds.length} memories, suggested topic "${c.suggestedTopicKey ?? '?'}" [cluster ${c.id}]`).join('\n')
         : 'No topic suggestions in the open memory drawers.';
       return { content: [{ type: 'text', text }], data: { success: true, clusters } } as ToolResult;
+    }
+
+    if (op === 'memory') {
+      const out = typeof params.memory_id === 'string' ? await memoryEntities(scope, params.memory_id) : null;
+      if (!out) return fail('memory not found in the open memory drawers');
+      const text = [
+        `Memory ${out.memoryId} names: ${out.entities.map((e) => `${e.name} (${e.kind})`).join(', ') || 'nothing in the map'}.`,
+        ...out.links.map((l) => `- ${l.from.name} ${l.type} ${l.to.name}${l.status === 'active' ? '' : ` (${l.status})`}`),
+      ].join('\n');
+      return { content: [{ type: 'text', text }], data: { success: true, ...out } } as ToolResult;
+    }
+
+    if (op === 'agent_view') {
+      if (typeof params.agent_id !== 'string' || !params.agent_id) return fail('agent_id is required');
+      try {
+        // Only what is open here too: the other agent's view never shows more than this run may read.
+        const view = await agentViewMap(userId, params.agent_id, { project: params.project, q: params.q, kind: params.kind, limit }, scope.drawers);
+        if (!view) return fail('agent not found');
+        const text = [
+          `${view.agentName} reads ${view.readable.join(', ') || 'nothing'}${view.project ? ` in ${view.project}` : ''}; within this conversation's drawers it sees ${view.entities.length} entities and ${view.links.length} links.`,
+          ...view.entities.map((e) => `- ${e.name} (${e.kind}), ${e.memories} memories`),
+        ].join('\n');
+        return { content: [{ type: 'text', text }], data: { success: true, view } } as ToolResult;
+      } catch (err) {
+        if (err instanceof ScopeInputError) return fail(err.message);
+        throw err;
+      }
     }
 
     if (op === 'topic_preview') {

@@ -61,6 +61,7 @@ import {
   memoryBridgeApplyTool,
   memoryReviewTool,
   memoryReviewDecideTool,
+  memoryReviewRoutineTool,
   memoryGraphReviewTool,
   memoryGraphTopicTool,
   memoryRecallTool,
@@ -114,7 +115,7 @@ const CORE_TOOLS: Tool[] = [
   memoryDoctorTool, memoryDoctorFixTool, memoryMoveTool,
   memoryScopesTool, memoryScopeApplyTool, memoryAccessApplyTool, memoryScopeForgetTool,
   memoryBridgeTool, memoryBridgeApplyTool, // MEM-BRIDGE-01: owner-only; apply needs owner approval
-  memoryReviewTool, memoryReviewDecideTool, memoryGraphReviewTool, memoryGraphTopicTool, memoryRecallTool, // owner's review inbox, topics + reply trace; decisions need owner approval
+  memoryReviewTool, memoryReviewDecideTool, memoryReviewRoutineTool, memoryGraphReviewTool, memoryGraphTopicTool, memoryRecallTool, // owner's review inbox, topics + reply trace; decisions need owner approval
   desktopControlTool,
   storageSaveTool, storageSearchTool, storageDeleteTool,
   createReminderTool,
@@ -175,7 +176,7 @@ export function getExtensionTools(extensionId?: string): Tool[] {
 
 /** MEM-SCALE-01: the run's user and project (its open project drawer) for the owner's access policies. */
 function runScope(context: ToolExecutionContext): RunScope {
-  return { userId: context.userId ?? null, project: context.memoryDrawers?.find((d) => d.kind === 'project')?.key ?? null };
+  return { userId: context.accessOwnerId ?? context.userId ?? null, project: context.memoryDrawers?.find((d) => d.kind === 'project')?.key ?? null };
 }
 
 /**

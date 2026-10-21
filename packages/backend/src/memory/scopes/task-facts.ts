@@ -7,7 +7,8 @@
  * chat turn: company facts only when the owner drawer is open for the run
  * and the agent may read it, department and project facts only when the
  * agent may read project drawers in that project (inherited access,
- * CORE-PERMS-01 cap, every delegating agent). A contract that narrows the
+ * CORE-PERMS-01 cap, every delegating agent), each also only when its
+ * scope column (company / department, MEM-GAPS-02) is readable. A contract that narrows the
  * run's drawers to no project drawer leaves the project facts out. An
  * archived project adds nothing (pinnedFactsForReply).
  */
@@ -15,7 +16,7 @@
 import { one, sql } from '../../repositories/sql-steps.js';
 import type { DrawerRef } from '../drawers.js';
 import { loadRunPermissions } from '../../tools/agent-permissions.js';
-import { pinnedFactsForReply } from './pinned.js';
+import { pinnedFactsForReply, scopeFactAccess } from './pinned.js';
 
 /** Project slug of the board card's conversation for this task, or null. */
 async function cardProject(ownerId: string, taskId: string): Promise<string | null> {
@@ -46,8 +47,8 @@ export async function taskRunPinnedFacts(input: TaskFactsInput): Promise<string>
   try {
     const open = input.drawers.find((d) => d.kind === 'project')?.key ?? null;
     const project = open ?? (input.drawersNarrowed ? null : await cardProject(input.ownerId, input.taskId));
-    const read = (await loadRunPermissions(input.agentId, input.delegatedFrom ?? [], { userId: input.ownerId, project })).memoryRead;
-    const allow = { company: read.includes('owner') && input.drawers.some((d) => d.kind === 'owner'), project: read.includes('project') };
+    const perms = await loadRunPermissions(input.agentId, input.delegatedFrom ?? [], { userId: input.ownerId, project });
+    const allow = scopeFactAccess(perms, input.drawers.some((d) => d.kind === 'owner'));
     if (!allow.company && !allow.project) return '';
     return (await pinnedFactsForReply(input.ownerId, project, allow)).text;
   } catch {
