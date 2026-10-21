@@ -8,6 +8,11 @@
  *                  (named entities -> up to two links -> attached memories)
  *   op 'pending'   links waiting for the owner's review (decide them with
  *                  memory_graph_review, which needs the owner's approval)
+ *   op 'clusters'  groups of entities seen together: topic suggestions
+ *   op 'topic_preview'  what making one cluster a topic would do (changes nothing)
+ *
+ * memory_graph_topic (approval-gated): make a previewed cluster a topic, or
+ * dismiss it ("not a topic").
  *
  * Same gates as the owner-only graph API: read-only, the run user must be the
  * owner account, never in a turn that answers an outsider, and only what the
@@ -19,9 +24,23 @@ import type { Tool, ToolResult, ToolExecutionContext } from '../types.js';
 import { toolMemoryDrawers, toolMemoryUser } from './scope.js';
 import { one, sql } from '../../repositories/sql-steps.js';
 import { entityDetail, findEntity, graphRecall, listEntities, listLinks, type GraphScope } from '../../memory/graph/index.js';
+import { applyTopic, ClusterError, dismissCluster, graphClusters, topicPreview, type TopicPreview } from '../../memory/graph/clusters.js';
 
 const fail = (msg: string): ToolResult => ({ content: [{ type: 'text', text: `Memory graph: ${msg}` }], error: msg });
-const OPS = ['entities', 'entity', 'links', 'related', 'pending'] as const;
+const OPS = ['entities', 'entity', 'links', 'related', 'pending', 'clusters', 'topic_preview'] as const;
+
+function previewText(p: TopicPreview): string {
+  const head = `Cluster "${p.cluster.name}" in ${p.cluster.drawer} (${p.cluster.entities.map((e) => e.name).join(', ')}; ${p.cluster.memoryIds.length} memories) as topic "${p.topicKey}":`;
+  if (p.blocked) {
+    const why = p.blocked.code === 'key_taken' ? `another memory (${p.blocked.memoryId}) of this drawer already has that key; pick another topic_key`
+      : p.blocked.code === 'already_topic' ? `memory ${p.blocked.memoryId} already holds this topic` : 'every memory of the cluster already has its own key';
+    return `${head} nothing can change: ${why}.`;
+  }
+  return [head, `- memory ${p.target!.memoryId} gets the key (the current answer): ${p.target!.preview}`,
+    ...(p.keepKey.length ? [`- keep their own key (never renamed): ${p.keepKey.map((k) => `${k.memoryId} (${k.topicKey})`).join(', ')}`] : []),
+    ...(p.related.length ? [`- unchanged, related: ${p.related.length} memories`] : []),
+    `previewHash ${p.previewHash}. To apply, call memory_graph_topic with action "apply" (the owner approves the call).`].join('\n');
+}
 
 async function isOwnerAccount(userId: string): Promise<boolean> {
   const row = await sql().read(one<{ role: string }>('SELECT role FROM users WHERE id = ?', userId));
@@ -38,6 +57,8 @@ Ops:
 - links: list links
 - related: memories reached from the names in "query" through their links (use when a question names a person or project but shares no words with the facts)
 - pending: links waiting for the owner's review (approve or reject one with memory_graph_review)
+- clusters: groups of entities the memory keeps mentioning together (topic suggestions)
+- topic_preview: what making one cluster a topic would do (cluster_id, optional topic_key); changes nothing
 
 Only the memory drawers open for this conversation are read. Read-only.`,
   input_schema: {
@@ -49,6 +70,8 @@ Only the memory drawers open for this conversation are read. Read-only.`,
       name: { type: 'string', description: 'entity: entity name' },
       id: { type: 'string', description: 'entity: entity id' },
       query: { type: 'string', description: 'related: the question or names' },
+      cluster_id: { type: 'string', description: 'topic_preview: cluster id from op clusters' },
+      topic_key: { type: 'string', description: 'topic_preview: the topic key (default: suggested from the cluster name)' },
       limit: { type: 'number', minimum: 1, maximum: 50, description: 'Maximum items (default 20)' },
     },
     required: ['op'],
@@ -86,6 +109,24 @@ Only the memory drawers open for this conversation are read. Read-only.`,
       return { content: [{ type: 'text', text }], data: { success: true, links } } as ToolResult;
     }
 
+    if (op === 'clusters') {
+      const clusters = await graphClusters(scope, { limit });
+      const text = clusters.length
+        ? clusters.map((c, i) => `${i + 1}. "${c.name}" in ${c.drawer}: ${c.entities.map((e) => e.name).join(', ')} — ${c.memoryIds.length} memories, suggested topic "${c.suggestedTopicKey ?? '?'}" [cluster ${c.id}]`).join('\n')
+        : 'No topic suggestions in the open memory drawers.';
+      return { content: [{ type: 'text', text }], data: { success: true, clusters } } as ToolResult;
+    }
+
+    if (op === 'topic_preview') {
+      try {
+        const preview = await topicPreview(scope, params.cluster_id, params.topic_key);
+        return { content: [{ type: 'text', text: previewText(preview) }], data: { success: true, preview } } as ToolResult;
+      } catch (err) {
+        if (err instanceof ClusterError) return fail(err.message);
+        throw err;
+      }
+    }
+
     if (op === 'entity') {
       const id = typeof params.id === 'string' && params.id ? params.id
         : typeof params.name === 'string' ? (await findEntity(scope, params.name))?.id : undefined;
@@ -107,5 +148,45 @@ Only the memory drawers open for this conversation are read. Read-only.`,
     const memories = hits.slice(0, limit).map((h) => ({ id: h.memory.id, content: h.memory.content, type: h.memory.type, score: Math.round(h.similarity * 100) / 100 }));
     const text = memories.length ? memories.map((m, i) => `${i + 1}. ${m.content} (memory ${m.id})`).join('\n') : `No linked memories for: "${query}"`;
     return { content: [{ type: 'text', text }], data: { success: true, count: memories.length, memories } } as ToolResult;
+  },
+};
+
+export const memoryGraphTopicTool: Tool = {
+  name: 'memory_graph_topic',
+  description: `Act on a topic suggestion of the memory graph, after the owner approves this call.
+action "apply" (cluster_id, preview_hash, optional topic_key): the memory named in memory_graph op "topic_preview" gets the topic key, so later saves of that topic update it (with history). Nothing is renamed; if anything changed since the preview, nothing happens.
+action "dismiss" (cluster_id): "not a topic"; it is not suggested again until its members change.`,
+  input_schema: {
+    type: 'object',
+    properties: {
+      action: { type: 'string', enum: ['apply', 'dismiss'] },
+      cluster_id: { type: 'string' },
+      preview_hash: { type: 'string', description: 'apply: previewHash from topic_preview' },
+      topic_key: { type: 'string', description: 'apply: the same topic_key the preview used (default: suggested)' },
+    },
+    required: ['action', 'cluster_id'],
+  },
+  async execute(params: Record<string, unknown>, context?: ToolExecutionContext): Promise<ToolResult> {
+    const userId = toolMemoryUser(context);
+    if (!userId) return fail('no user for this memory');
+    if (context?.toolPolicy) return fail('not available when answering someone else');
+    if (!(await isOwnerAccount(userId))) return fail('the memory graph is for the owner only');
+    const scope: GraphScope = { userId, drawers: toolMemoryDrawers(context) };
+    const actor = `agent:${context?.agentId ?? 'unknown'}`;
+    try {
+      // The owner's approval of this call is the explicit confirm.
+      if (params.action === 'apply') {
+        const r = await applyTopic(scope, params.cluster_id, { topicKey: params.topic_key, expectedPreviewHash: params.preview_hash, confirm: true }, actor);
+        return { content: [{ type: 'text', text: `Memory ${r.memoryId} now holds the topic "${r.topicKey}" in ${r.drawer} (new version saved).` }], data: { success: true, ...r } } as ToolResult;
+      }
+      if (params.action === 'dismiss') {
+        const r = await dismissCluster(scope, params.cluster_id, actor);
+        return { content: [{ type: 'text', text: 'Not a topic: this group is not suggested again until it changes.' }], data: { success: true, ...r } } as ToolResult;
+      }
+      return fail('action must be apply or dismiss');
+    } catch (err) {
+      if (err instanceof ClusterError) return fail(err.message);
+      throw err;
+    }
   },
 };

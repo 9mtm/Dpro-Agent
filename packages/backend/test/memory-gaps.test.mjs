@@ -340,3 +340,82 @@ test('6. bridge: activity log and "hide managed files from Git" through the API 
   assert.equal((await call('mg-user', 'GET', '/api/memory-bridge/audit')).statusCode, 403);
   assert.ok((await T.memoryBridgeTool.execute({ action: 'activity' }, { ...ctx, userId: 'mg-user' })).error);
 });
+
+test('7. graph clusters -> topic suggestions: preview changes nothing, apply after confirm, never renames, dismiss', async () => {
+  const T = await import(join(backendDir, 'src/tools/memory/index.ts'));
+  const { approvalCategory } = await import(join(backendDir, 'src/tools/approvals.ts'));
+  const C = await import(join(backendDir, 'src/memory/graph/clusters.ts'));
+  const orion = { kind: 'project', key: 'orion' };
+  const m1 = await remember({ content: 'Lina Saleh works with Omar Haddad on Project Orion.', drawer: orion });
+  const m2 = await remember({ content: 'Omar Haddad ships the beta in May.', drawer: orion });
+  const keyed = await remember({ content: 'Lina Saleh leads the launch.', drawer: orion, topicKey: 'orion-lead' });
+  const lunch = await remember({ content: 'Unrelated note about lunch for Project Orion.', drawer: orion });
+  const list = (await ok('GET', '/api/memory/graph/clusters?drawers=project:orion')).clusters;
+  const c = list.find((x) => x.memoryIds.includes(m1.id));
+  assert.ok(c, JSON.stringify(list));
+  assert.equal(c.drawer, 'project:orion');
+  assert.ok(c.entities.length >= 2 && c.memoryIds.includes(m2.id) && c.memoryIds.includes(keyed.id));
+  assert.ok(!c.entities.some((e) => e.name === 'Owner' || e.name === 'Project Orion'), 'hub entities left out');
+  assert.ok(!c.memoryIds.includes(lunch.id), 'the drawer project does not join everything');
+  assert.ok(c.suggestedTopicKey);
+  assert.equal((await call('mg-user', 'GET', '/api/memory/graph/clusters')).statusCode, 403);
+
+  // Preview: read only.
+  const snapshot = () => JSON.stringify(db.prepare('SELECT id, topic_key, content FROM memories ORDER BY id').all());
+  const before = snapshot();
+  const { preview } = await ok('POST', `/api/memory/graph/clusters/${c.id}/topic-preview`, { topicKey: 'Orion Status' });
+  assert.equal(preview.topicKey, 'orion-status');
+  assert.equal(preview.blocked, null);
+  assert.equal(preview.target.memoryId, m2.id, 'the newest memory without a key');
+  assert.deepEqual(preview.keepKey, [{ memoryId: keyed.id, topicKey: 'orion-lead' }]);
+  assert.equal(snapshot(), before, 'preview changes nothing');
+  // Taken key in the drawer -> blocked; bad key / unknown cluster -> 400 / 404.
+  await remember({ content: 'Orion budget is fixed.', drawer: orion, topicKey: 'orion-budget' });
+  const taken = (await ok('POST', `/api/memory/graph/clusters/${c.id}/topic-preview`, { topicKey: 'orion-budget' })).preview;
+  assert.equal(taken.blocked.code, 'key_taken');
+  assert.equal((await call(OWNER, 'POST', `/api/memory/graph/clusters/${c.id}/topic`, { topicKey: 'orion-budget', expectedPreviewHash: taken.previewHash, confirm: true })).statusCode, 409);
+  assert.equal((await call(OWNER, 'POST', `/api/memory/graph/clusters/${c.id}/topic-preview`, { topicKey: '---' })).statusCode, 400);
+  assert.equal((await call(OWNER, 'POST', `/api/memory/graph/clusters/${'0'.repeat(32)}/topic-preview`, {})).statusCode, 404);
+  // Apply: confirm + the preview's hash; a stale hash changes nothing.
+  assert.equal((await call(OWNER, 'POST', `/api/memory/graph/clusters/${c.id}/topic`, { topicKey: 'orion-status', expectedPreviewHash: preview.previewHash })).statusCode, 400, 'confirm required');
+  assert.equal((await call(OWNER, 'POST', `/api/memory/graph/clusters/${c.id}/topic`, { topicKey: 'orion-status', expectedPreviewHash: 'x'.repeat(64), confirm: true })).statusCode, 409);
+  assert.equal((await call('mg-user', 'POST', `/api/memory/graph/clusters/${c.id}/topic`, { topicKey: 'orion-status', expectedPreviewHash: preview.previewHash, confirm: true })).statusCode, 403);
+  const { result } = await ok('POST', `/api/memory/graph/clusters/${c.id}/topic`, { topicKey: 'orion-status', expectedPreviewHash: preview.previewHash, confirm: true });
+  assert.equal(result.memoryId, preview.target.memoryId);
+  assert.equal(db.prepare('SELECT topic_key FROM memories WHERE id = ?').get(result.memoryId).topic_key, 'orion-status');
+  assert.equal(db.prepare('SELECT topic_key FROM memories WHERE id = ?').get(keyed.id).topic_key, 'orion-lead', 'never renamed');
+  assert.ok(db.prepare("SELECT 1 FROM memory_versions WHERE memory_id = ? AND reason = 'topic-key:orion-status'").get(result.memoryId), 'versioned');
+  assert.equal((await ok('POST', `/api/memory/graph/clusters/${c.id}/topic-preview`, { topicKey: 'orion-status' })).preview.blocked.code, 'already_topic');
+
+  // Agent tools: read ops are free, apply / dismiss need the owner's approval; owner's own turns only.
+  assert.ok(approvalCategory({ name: 'memory_graph_topic' }));
+  const ctx = { workspaceDir: dir, userId: OWNER, agentId: 'mg-main', memoryDrawers: [orion] };
+  const tl = await T.memoryGraphTool.execute({ op: 'clusters' }, ctx);
+  assert.ok(tl.data.clusters.some((x) => x.id === c.id), tl.content[0].text);
+  const tp = await T.memoryGraphTool.execute({ op: 'topic_preview', cluster_id: c.id, topic_key: 'orion-history' }, ctx);
+  assert.ok(tp.data.preview, tp.error);
+  assert.ok((await T.memoryGraphTool.execute({ op: 'clusters' }, { ...ctx, memoryDrawers: [{ kind: 'owner' }] })).data.clusters.every((x) => x.id !== c.id), 'closed drawer');
+  assert.ok((await T.memoryGraphTopicTool.execute({ action: 'dismiss', cluster_id: c.id }, { ...ctx, userId: 'mg-user' })).error);
+  assert.ok((await T.memoryGraphTopicTool.execute({ action: 'dismiss', cluster_id: c.id }, { ...ctx, toolPolicy: { channel: 'telegram', allowedTools: [] } })).error);
+  const dismissed = await T.memoryGraphTopicTool.execute({ action: 'dismiss', cluster_id: c.id }, ctx);
+  assert.ok(dismissed.data?.success, dismissed.error);
+  assert.ok(!(await ok('GET', '/api/memory/graph/clusters?drawers=project:orion')).clusters.some((x) => x.id === c.id), 'not suggested again');
+
+  // Scale: the map never gets more than 150 entities.
+  const insEnt = db.prepare('INSERT INTO memory_graph_entities (id, user_id, kind, name, norm_name) VALUES (?, ?, ?, ?, ?)');
+  const insMem = db.prepare(`INSERT INTO memories (id, user_id, type, content, created_at, drawer_kind, drawer_key, memory_layer, importance_score) VALUES (?, ?, 'fact', ?, ?, 'project', 'big', 'factual', 0.5)`);
+  const insMention = db.prepare('INSERT INTO memory_graph_mentions (memory_id, entity_id, user_id) VALUES (?, ?, ?)');
+  db.exec('BEGIN');
+  for (let i = 0; i < 120; i++) {
+    insEnt.run(`e-a-${i}`, OWNER, 'topic', `Alpha ${i}`, `alpha ${i}`);
+    insEnt.run(`e-b-${i}`, OWNER, 'topic', `Beta ${i}`, `beta ${i}`);
+    for (const j of [0, 1]) {
+      insMem.run(`big-${i}-${j}`, OWNER, `Alpha ${i} and Beta ${i}, note ${j}`, new Date().toISOString());
+      insMention.run(`big-${i}-${j}`, `e-a-${i}`, OWNER);
+      insMention.run(`big-${i}-${j}`, `e-b-${i}`, OWNER);
+    }
+  }
+  db.exec('COMMIT');
+  const big = await C.graphClusters({ userId: OWNER, drawers: [{ kind: 'project', key: 'big' }] }, { limit: 200 });
+  assert.equal(big.reduce((n, x) => n + x.entities.length, 0), C.MAX_CLUSTER_NODES);
+});
