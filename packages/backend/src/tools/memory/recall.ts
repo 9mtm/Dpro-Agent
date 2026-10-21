@@ -24,15 +24,22 @@ import { cacheMetrics } from '../../memory/context/metrics.js';
 import { reviewOwner } from './review.js';
 import { toolMemoryDrawers } from './scope.js';
 import { drawerId } from '../../memory/drawers.js';
+import { getProject } from '../../memory/scopes/store.js';
 
 /** The trace with text only for items of drawers open for this run. */
-function openItemsOnly(t: TraceView, context?: ToolExecutionContext): TraceView {
+async function openItemsOnly(t: TraceView, ownerId: string, context?: ToolExecutionContext): Promise<TraceView> {
   const drawers = toolMemoryDrawers(context);
   const open = new Set(drawers.map(drawerId));
-  const projectOpen = drawers.some((d) => d.kind === 'project');
+  // A department fact only for the department of a project open in this run (unknown -> hidden).
+  const departments = new Set<string>();
+  for (const d of drawers) {
+    if (d.kind !== 'project' || !d.key) continue;
+    const p = await getProject(ownerId, d.key).catch(() => null);
+    if (p && !p.archived) departments.add(`department:${p.departmentId}`);
+  }
   const visible = (i: TraceView['items'][number]): boolean => {
     if (i.kind === 'handoff') return true; // a note of this agent's own conversation or task
-    if (i.kind === 'fact') return i.drawer === 'company' ? open.has('owner') : i.drawer?.startsWith('department:') ? projectOpen : !!i.drawer && open.has(i.drawer);
+    if (i.kind === 'fact') return i.drawer === 'company' ? open.has('owner') : i.drawer?.startsWith('department:') ? departments.has(i.drawer) : !!i.drawer && open.has(i.drawer);
     return !!i.drawer && open.has(i.drawer) && (!i.nowIn || open.has(i.nowIn));
   };
   return { ...t, items: t.items.map((i) => (visible(i) ? i : { ...i, preview: undefined, hidden: true } as typeof i)) };
@@ -105,7 +112,7 @@ op "metrics": memory cache hit rates, context size and time to the first word.`,
     }
     // Only this agent's own replies.
     if (!trace || (trace.agentId ?? null) !== (context?.agentId ?? null)) return fail('no reply of yours with that id');
-    const shown = openItemsOnly(trace, context);
+    const shown = await openItemsOnly(trace, owner, context);
     return ok(traceText(shown), { trace: shown });
   },
 };

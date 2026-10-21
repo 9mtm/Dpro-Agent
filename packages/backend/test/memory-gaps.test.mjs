@@ -285,6 +285,14 @@ test('4. agent tools: decide a conflict, review a pending link, read its own rep
   assert.ok(narrow.data.trace.items.length > 0);
   assert.ok(narrow.data.trace.items.filter((i) => i.kind !== 'handoff').every((i) => i.preview === undefined && i.hidden === true));
   assert.doesNotMatch(narrow.content[0].text, /We are Dpro|PostgreSQL|short answers/);
+  // Another project open: its own department's facts only, never this one's.
+  const otherDept = (await ok('POST', '/api/memory/scopes/departments', { name: 'Sales' }, 201)).department;
+  await remember({ content: 'Beta is the sales project.', drawer: { kind: 'project', key: 'beta-sales' } });
+  const pb = await ok('POST', '/api/memory/scopes/projects/beta-sales/preview', { action: 'move', departmentId: otherDept.id });
+  await ok('POST', '/api/memory/scopes/projects/beta-sales/apply', { action: 'move', departmentId: otherDept.id, expectedPreviewHash: pb.previewHash, confirm: true });
+  const viaBeta = await T.memoryRecallTool.execute({ op: 'trace', message_id: msg.id }, { ...ctx, memoryDrawers: [{ kind: 'project', key: 'beta-sales' }] });
+  const deptItem = viaBeta.data.trace.items.find((i) => i.kind === 'fact' && i.drawer === `department:${dept.id}`);
+  assert.ok(deptItem && deptItem.hidden === true && deptItem.preview === undefined, JSON.stringify(deptItem));
   assert.ok((await T.memoryRecallTool.execute({ op: 'trace' }, member)).error);
   assert.ok((await T.memoryRecallTool.execute({ op: 'trace' }, outsider)).error);
   assert.ok((await T.memoryRecallTool.execute({ op: 'summaries' }, ctx)).data?.success);
