@@ -14,6 +14,8 @@ import { MemoryReviewController } from './memory-review';
 import { ReviewInbox } from './MemoryReviewInbox';
 import { MemoryExplorerController } from './memory-explorer';
 import { Explorer } from './MemoryExplorer';
+import { MemoryMapController } from './memory-map';
+import { KnowledgeMap } from './MemoryMap';
 
 const KIND_LABEL: Record<string, string> = { owner: 'About you', experience: 'Lessons', project: 'Project', task: 'Task', people: 'Person' };
 const KIND_PLURAL: Record<string, string> = { project: 'Projects', task: 'Tasks', people: 'People' };
@@ -55,7 +57,7 @@ export function MemoryCard({ item, actions, children, focused }: { item: MemoryI
  * archived) and the open scope on the right with its views: Overview (the
  * memory home for Everything), Review, Explorer and Import.
  */
-export type MemoryTab = 'home' | 'review' | 'explorer' | 'import';
+export type MemoryTab = 'home' | 'review' | 'explorer' | 'map' | 'import';
 export function MemoryPage({ client, active = false, focus }: { client: SessionClient; active?: boolean; focus?: MemoryFocus | null }) {
   const [tab, setTab] = useState<MemoryTab>('home');
   const owner = useSyncExternalStore(client.subscribe, client.getSnapshot, client.getSnapshot).user?.role === 'owner';
@@ -64,6 +66,9 @@ export function MemoryPage({ client, active = false, focus }: { client: SessionC
   useEffect(() => { const x = new MemoryExplorerController(client); setC(x); return () => x.dispose(); }, [client]);
   useEffect(() => { const x = new MemoryScopesController(client); setScopes(x); return () => x.dispose(); }, [client]);
   const [review, setReview] = useState<MemoryReviewController>();
+  const [map, setMap] = useState<MemoryMapController>();
+  useEffect(() => { const x = new MemoryMapController(client); setMap(x); return () => x.dispose(); }, [client]);
+  useEffect(() => { if (active && map && owner && tab === 'map') void map.load(); }, [active, map, owner, tab]);
   const [explorerView, setExplorerView] = useState<'table' | 'files'>('table');
   useEffect(() => { if (!scopes) return; const x = new MemoryReviewController(client, () => void scopes.load(true)); setReview(x); return () => x.dispose(); }, [client, scopes]);
   useEffect(() => { if (active && scopes && owner) void scopes.load(); }, [active, scopes, owner]);
@@ -85,12 +90,12 @@ export function MemoryPage({ client, active = false, focus }: { client: SessionC
     if (tab === 'explorer') c?.setScope(scope); else if (tab !== 'review' && tab !== 'import') setTab('home');
   }
   function go(next: 'review' | 'explorer' | 'health' | 'import' | 'map' | 'access', drawer?: string) {
-    if (next === 'review' || next === 'explorer' || next === 'import') setTab(next);
+    if (next === 'review' || next === 'explorer' || next === 'import' || next === 'map') setTab(next);
     if (next === 'explorer' && c) { setExplorerView('table'); c.setQuery(''); c.setScope(drawer === 'owner' || drawer === 'experience' ? drawer : s?.scope ?? 'company'); }
   }
   const waiting = s?.tree?.company.pendingReviews;
   const tabs: { value: MemoryTab; label: string }[] = [
-    { value: 'home', label: s && s.scope !== 'company' ? 'Overview' : 'Home' }, { value: 'review', label: waiting ? `Review · ${waiting}` : 'Review' }, { value: 'explorer', label: 'Explorer' },
+    { value: 'home', label: s && s.scope !== 'company' ? 'Overview' : 'Home' }, { value: 'review', label: waiting ? `Review · ${waiting}` : 'Review' }, { value: 'explorer', label: 'Explorer' }, { value: 'map', label: 'Map' },
     ...(owner ? [{ value: 'import' as const, label: 'Import' }] : []),
   ];
   return <section className="mem" aria-label="Memory">
@@ -118,6 +123,7 @@ export function MemoryPage({ client, active = false, focus }: { client: SessionC
           {explorerView === 'files' ? <><p className="fine-print">Agent files and reviews: each agent's readable memory files (MEMORY.md). Edits you make there come back as reviews.</p><MemoryPanel client={client} active={active && tab === 'explorer'}/></>
             : c ? <Explorer c={c} agents={s?.agents ?? {}}/> : null}
         </>}
+        {tab === 'map' && map && <KnowledgeMap c={map} onOpenMemories={name => { if (!c) return; setTab('explorer'); setExplorerView('table'); c.setQuery(name); c.setScope('company'); }}/>}
         {tab === 'import' && <LocalImport client={client} active={active} onReview={() => setTab('review')}/>}
         {tab === 'review' && review && <ReviewInbox c={review}/>}
       </div>
