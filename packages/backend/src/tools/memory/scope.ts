@@ -1,9 +1,10 @@
 /**
  * Memory scope of a tool run (CORE-03).
  *
- * The user is always the run's user (context.userId), never a model-supplied
- * `userId` parameter. The drawers are the ones selected for the turn
- * (context.memoryDrawers, see memory/drawers.ts selectDrawers). Without a run
+ * The user is always the run's user (context.userId; in a board task run its
+ * owner, context.accessOwnerId), never a model-supplied `userId` parameter.
+ * The drawers are the ones selected for the turn (context.memoryDrawers, see
+ * memory/drawers.ts selectDrawers). Without a run
  * user nothing is read or written. Without a
  * selection, the user's own owner + experience drawers are used. A channel
  * turn (an outsider is answered) reads no drawers unless the server opted in
@@ -14,9 +15,23 @@ import type { ToolExecutionContext } from '../types.js';
 import { MAX_PEOPLE_DRAWERS, normalizeDrawer, sameDrawer, selectDrawers, type DrawerRef } from '../../memory/drawers.js';
 import { outsiderAgentMemoryEnabled } from '../../services/outsider-memory.js';
 
-/** The run's user, or null (fail closed). A `userId` in tool params is never used. */
+/**
+ * The run's memory owner, or null (fail closed). A `userId` in tool params is
+ * never used. MEM-OWNER-01: a board task run's memory belongs to the run's
+ * owner (`accessOwnerId`; its tool user is the agent), else the run's user.
+ */
 export function toolMemoryUser(context?: ToolExecutionContext): string | null {
-  return typeof context?.userId === 'string' && context.userId ? context.userId : null;
+  if (typeof context?.userId !== 'string' || !context.userId) return null; // no run user: nothing (also with an owner)
+  return typeof context.accessOwnerId === 'string' && context.accessOwnerId ? context.accessOwnerId : context.userId;
+}
+
+/**
+ * MEM-OWNER-01: false in a run for the owner without the owner's own turn (a
+ * board task run). Owner-only memory tools (review, graph, scopes, doctor,
+ * move, recall trace) stay refused there, as before.
+ */
+export function toolOwnerTurn(context?: ToolExecutionContext): boolean {
+  return !context?.accessOwnerId || context.accessOwnerId === context.userId;
 }
 
 /** Narrowness order used to pick the drawer a derived memory is saved into. */

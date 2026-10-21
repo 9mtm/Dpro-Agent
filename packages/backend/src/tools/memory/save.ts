@@ -10,7 +10,7 @@ import type { MemoryType } from '../../memory/types.js';
 import type { ToolExecutionContext } from '../types.js';
 import { toolMemoryUser } from './scope.js';
 import { repositories } from '../../repositories/index.js';
-import { toolActor } from '../../repositories/actor.js';
+import { toolMemoryActor } from '../../repositories/actor.js';
 import { isUserConversation, linkAgentProposal } from '../../services/chat-memory.js';
 import { DrawerInputError, defaultDrawerForType, parseDrawerId, sameDrawer, type DrawerRef } from '../../memory/drawers.js';
 
@@ -141,7 +141,7 @@ Examples:
     try {
       // CORE-03: the run's own user; a drawer only from those open for this turn.
       if (!toolMemoryUser(context)) throw new Error('No user for this memory');
-      const actor = toolActor(context);
+      const actor = await toolMemoryActor(context);
       const open = actor.drawers ?? [];
       let drawer: DrawerRef = defaultDrawerForType(params.type || 'conversation');
       if (params.drawer !== undefined && params.drawer !== null && params.drawer !== '') {

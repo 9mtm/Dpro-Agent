@@ -12,13 +12,13 @@ import type { Tool, ToolResult, ToolExecutionContext } from '../types.js';
 import { toolMemoryUser } from './scope.js';
 import type { AgentChangeResult } from '../../memory/learning.js';
 import { repositories } from '../../repositories/index.js';
-import { toolActor } from '../../repositories/actor.js';
+import { toolMemoryActor } from '../../repositories/actor.js';
 import { ScopeError } from '../../repositories/scope.js';
 
 /** B1.6: the memory repository reaches only the run user's memories in open drawers. */
 async function change(context: ToolExecutionContext | undefined, input: Parameters<typeof repositories.memory.change>[1]): Promise<AgentChangeResult> {
   try {
-    return await repositories.memory.change(toolActor(context), input);
+    return await repositories.memory.change(await toolMemoryActor(context), input);
   } catch (err) {
     if (err instanceof ScopeError) return { status: 'refused', reason: err.message };
     throw err;

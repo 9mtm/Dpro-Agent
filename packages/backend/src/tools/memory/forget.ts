@@ -15,7 +15,7 @@
 import type { Tool, ToolResult, ToolExecutionContext } from '../types.js';
 import { toolMemoryUser } from './scope.js';
 import { repositories } from '../../repositories/index.js';
-import { toolActor } from '../../repositories/actor.js';
+import { toolMemoryActor } from '../../repositories/actor.js';
 import { ScopeError } from '../../repositories/scope.js';
 
 const fail = (msg: string): ToolResult => ({ content: [{ type: 'text', text: `Forget refused: ${msg}` }], error: msg });
@@ -41,7 +41,7 @@ each call first. For an ordinary correction use memory_edit / memory_delete.`,
     // B1-core: the memory repository allows only the run user's memories in
     // drawers open for this run (same rule as memory_edit / memory_delete);
     // for an already deleted memory, its last drawer.
-    const actor = toolActor(context);
+    const actor = await toolMemoryActor(context);
     let result;
     try {
       result = await repositories.memory.forget(actor, params.id);

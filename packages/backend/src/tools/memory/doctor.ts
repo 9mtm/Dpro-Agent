@@ -16,7 +16,7 @@
  */
 
 import type { Tool, ToolResult, ToolExecutionContext } from '../types.js';
-import { toolMemoryUser } from './scope.js';
+import { toolMemoryUser, toolOwnerTurn } from './scope.js';
 import { repositories } from '../../repositories/index.js';
 import { toolActor } from '../../repositories/actor.js';
 import { ScopeError } from '../../repositories/scope.js';
@@ -40,6 +40,7 @@ call memory_doctor_fix with that reportHash (the owner approves the fix).`,
   input_schema: { type: 'object', properties: {} },
   async execute(_params, context?: ToolExecutionContext): Promise<ToolResult> {
     if (!toolMemoryUser(context)) return fail('no user for this memory');
+    if (!toolOwnerTurn(context)) return fail("only in the owner's own turn, not in a board task run");
     if (context?.toolPolicy) return fail('not available when answering someone else');
     try {
       const report = await repositories.memory.doctorCheck(toolActor(context));
@@ -68,6 +69,7 @@ topic keys are repaired. If the memory changed since the check, nothing is chang
   },
   async execute(params: { report_hash?: unknown; kinds?: unknown }, context?: ToolExecutionContext): Promise<ToolResult> {
     if (!toolMemoryUser(context)) return fail('no user for this memory');
+    if (!toolOwnerTurn(context)) return fail("only in the owner's own turn, not in a board task run");
     if (context?.toolPolicy) return fail('not available when answering someone else');
     try {
       // The owner's approval of this call is the explicit confirm.

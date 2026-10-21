@@ -10,7 +10,7 @@
  */
 
 import type { Tool, ToolResult, ToolExecutionContext } from '../types.js';
-import { toolMemoryUser } from './scope.js';
+import { toolMemoryUser, toolOwnerTurn } from './scope.js';
 import { repositories } from '../../repositories/index.js';
 import { toolActor } from '../../repositories/actor.js';
 import { ScopeError } from '../../repositories/scope.js';
@@ -37,6 +37,7 @@ the memory keeps its text, history and topic key.`,
   },
   async execute(params: { id?: unknown; drawer?: unknown; reason?: unknown }, context?: ToolExecutionContext): Promise<ToolResult> {
     if (!toolMemoryUser(context)) return fail('no user for this memory');
+    if (!toolOwnerTurn(context)) return fail("only in the owner's own turn, not in a board task run");
     if (context?.toolPolicy) return fail('not available when answering someone else');
     if (typeof params.id !== 'string' || !params.id) return fail('id is required');
     let to;

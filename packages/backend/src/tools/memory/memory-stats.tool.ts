@@ -11,7 +11,7 @@
 import type { Tool, ToolResult, ToolExecutionContext } from '../types.js';
 import { toolMemoryUser } from './scope.js';
 import { repositories } from '../../repositories/index.js';
-import { toolActor } from '../../repositories/actor.js';
+import { toolMemoryActor } from '../../repositories/actor.js';
 
 export const memoryStatsTool: Tool = {
   name: 'memory_stats',
@@ -46,7 +46,7 @@ Use this before memory_reflect or memory_search to understand what you know.`,
     }
 
     try {
-      const stats = await repositories.memory.stats(toolActor(context));
+      const stats = await repositories.memory.stats(await toolMemoryActor(context));
       if (!stats || stats.total === 0) {
         return {
           content: [{ type: 'text', text: 'No memories stored yet for this user.' }],

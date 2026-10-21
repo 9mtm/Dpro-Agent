@@ -77,7 +77,9 @@ export interface ToolExecutionContext {
   /**
    * MEM-GAPS-02: the owner whose memory access policies narrow this run
    * (MEM-SCALE-01) when it is not `userId` — a board task run's owner (its
-   * tool user is the agent). Absent = `userId`.
+   * tool user is the agent). Absent = `userId`. MEM-OWNER-01: also the owner
+   * of the run's memory (tools/memory/scope.ts toolMemoryUser,
+   * repositories/actor.ts toolMemoryActor); the agent is the source.
    */
   accessOwnerId?: string;
   sessionId?: string;

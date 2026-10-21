@@ -13,7 +13,7 @@ import type { Memory } from '../../memory/types.js';
 import { sameDrawer } from '../../memory/drawers.js';
 import { narrowestDrawer, toolMemoryUser } from './scope.js';
 import { repositories } from '../../repositories/index.js';
-import { toolActor } from '../../repositories/actor.js';
+import { toolMemoryActor } from '../../repositories/actor.js';
 
 interface MemoryReflectParams {
   lookbackCount?: number;
@@ -70,7 +70,7 @@ Parameters:
     // CORE-03: the run's own user (never a model-supplied id) and only the
     // drawers open for this turn. No user or no drawers -> nothing to read.
     // B1.6: read and saved through the memory repository (the tool call's actor).
-    const actor = toolActor(context);
+    const actor = await toolMemoryActor(context);
     const drawers = [...(actor.drawers ?? [])];
     if (!toolMemoryUser(context) || drawers.length === 0) {
       return { content: [{ type: 'text', text: 'No memories found to reflect on.' }] };
