@@ -12,7 +12,9 @@
  * Same gates as the owner-only recall API: the run user is the owner
  * account, never a turn that answers an outsider; a trace only of a reply of
  * this agent in the owner's own conversations; a forgotten memory shows no
- * text (trace.ts).
+ * text (trace.ts), and an item of a drawer that is not open for this run
+ * (another project's memory, a reply in another conversation) is listed
+ * without its text.
  */
 
 import type { Tool, ToolResult, ToolExecutionContext } from '../types.js';
@@ -20,6 +22,21 @@ import { all, one, sql } from '../../repositories/sql-steps.js';
 import { traceForMessage, traceForRun, traceMetrics, type TraceView } from '../../memory/context/trace.js';
 import { cacheMetrics } from '../../memory/context/metrics.js';
 import { reviewOwner } from './review.js';
+import { toolMemoryDrawers } from './scope.js';
+import { drawerId } from '../../memory/drawers.js';
+
+/** The trace with text only for items of drawers open for this run. */
+function openItemsOnly(t: TraceView, context?: ToolExecutionContext): TraceView {
+  const drawers = toolMemoryDrawers(context);
+  const open = new Set(drawers.map(drawerId));
+  const projectOpen = drawers.some((d) => d.kind === 'project');
+  const visible = (i: TraceView['items'][number]): boolean => {
+    if (i.kind === 'handoff') return true; // a note of this agent's own conversation or task
+    if (i.kind === 'fact') return i.drawer === 'company' ? open.has('owner') : i.drawer?.startsWith('department:') ? projectOpen : !!i.drawer && open.has(i.drawer);
+    return !!i.drawer && open.has(i.drawer) && (!i.nowIn || open.has(i.nowIn));
+  };
+  return { ...t, items: t.items.map((i) => (visible(i) ? i : { ...i, preview: undefined, hidden: true } as typeof i)) };
+}
 
 const fail = (msg: string): ToolResult => ({ content: [{ type: 'text', text: `memory_recall refused: ${msg}` }], error: msg });
 const ok = (text: string, data: Record<string, unknown>): ToolResult => ({ content: [{ type: 'text', text }], data: { success: true, ...data } } as ToolResult);
@@ -30,7 +47,8 @@ function traceText(t: TraceView): string {
   const lines = t.items.map((i) => {
     const what = i.kind === 'fact' ? `pinned fact [${i.drawer}]` : i.kind === 'handoff' ? `handoff note [${i.drawer}]` : `memory ${i.id} [${i.drawer}] (${i.why}${typeof i.score === 'number' ? ` ${i.score}` : ''})`;
     const state = i.state === 'active' ? '' : ` — now ${i.state}${i.nowIn ? ` (in ${i.nowIn})` : ''}`;
-    return `- ${what}${i.preview ? `: ${i.preview}` : ''}${state}`;
+    const hidden = (i as { hidden?: boolean }).hidden ? ' (drawer not open in this conversation)' : '';
+    return `- ${what}${i.preview ? `: ${i.preview}` : ''}${hidden}${state}`;
   });
   return [
     `Reply ${t.messageId ?? t.runId} (${t.createdAt}) used ${t.items.length} item(s):`,
@@ -87,6 +105,7 @@ op "metrics": memory cache hit rates, context size and time to the first word.`,
     }
     // Only this agent's own replies.
     if (!trace || (trace.agentId ?? null) !== (context?.agentId ?? null)) return fail('no reply of yours with that id');
-    return ok(traceText(trace), { trace });
+    const shown = openItemsOnly(trace, context);
+    return ok(traceText(shown), { trace: shown });
   },
 };

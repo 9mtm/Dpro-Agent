@@ -280,6 +280,11 @@ test('4. agent tools: decide a conflict, review a pending link, read its own rep
   const msg = db.prepare("SELECT m.id FROM chat_messages m WHERE m.session_id = ? AND m.role = 'assistant' ORDER BY m.created_at ASC LIMIT 1").get(conv.id);
   assert.ok((await T.memoryRecallTool.execute({ op: 'trace', message_id: msg.id }, ctx)).data?.success);
   assert.ok((await T.memoryRecallTool.execute({ op: 'trace', message_id: msg.id }, { ...ctx, agentId: 'other-agent' })).error, 'not its reply');
+  // A run with fewer drawers open sees the items but not their text.
+  const narrow = await T.memoryRecallTool.execute({ op: 'trace', message_id: msg.id }, { ...ctx, memoryDrawers: [{ kind: 'experience' }] });
+  assert.ok(narrow.data.trace.items.length > 0);
+  assert.ok(narrow.data.trace.items.filter((i) => i.kind !== 'handoff').every((i) => i.preview === undefined && i.hidden === true));
+  assert.doesNotMatch(narrow.content[0].text, /We are Dpro|PostgreSQL|short answers/);
   assert.ok((await T.memoryRecallTool.execute({ op: 'trace' }, member)).error);
   assert.ok((await T.memoryRecallTool.execute({ op: 'trace' }, outsider)).error);
   assert.ok((await T.memoryRecallTool.execute({ op: 'summaries' }, ctx)).data?.success);
