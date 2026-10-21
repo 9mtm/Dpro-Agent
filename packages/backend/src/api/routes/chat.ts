@@ -33,6 +33,7 @@ import { outsiderAgentMemoryEnabled } from '../../services/outsider-memory.js';
 import { DrawerInputError, chatTurnDrawers, type DrawerRef } from '../../memory/drawers.js';
 import { pinnedFactsBlock } from '../../memory/scopes/pinned.js';
 import { withoutArchivedDrawers } from '../../memory/scopes/store.js';
+import { loadRunPermissions } from '../../tools/agent-permissions.js';
 import { createModelRouter, ModelRouter } from '../../services/model-router.js';
 import { CostTracker } from '../../services/cost-tracker.js';
 import { ModelUnavailable, runOllamaAgentLoop } from '../../services/ollama-agent-loop.js';
@@ -410,9 +411,18 @@ export async function executeChatTurn(reply: FastifyReply, input: ChatTurnInput)
     // MEM-SCALE-01: an archived project is kept but never loaded into a reply.
     memoryDrawers = await withoutArchivedDrawers(userId, memoryDrawers);
     // MEM-SCALE-01: the owner's pinned facts of this scope load first (company, department, project).
-    const pinnedFacts = includeAgentMemory
-      ? await pinnedFactsBlock(userId, memoryDrawers.find((d) => d.kind === 'project')?.key ?? null).catch(() => '')
-      : '';
+    // Only facts of drawers this agent may read in this project (its inherited access, CORE-PERMS-01 cap).
+    const pinnedProject = memoryDrawers.find((d) => d.kind === 'project')?.key ?? null;
+    let pinnedFacts = '';
+    if (includeAgentMemory) {
+      try {
+        const read = agentConfig?.id
+          ? (await loadRunPermissions(agentConfig.id, [], { userId, project: pinnedProject })).memoryRead
+          : ['owner', 'project'];
+        const allow = { company: read.includes('owner') && memoryDrawers.some((d) => d.kind === 'owner'), project: read.includes('project') };
+        pinnedFacts = allow.company || allow.project ? await pinnedFactsBlock(userId, pinnedProject, allow) : '';
+      } catch { pinnedFacts = ''; }
+    }
 
     // Load PERSONALITY.md and MEMORY.md from agent files if agent has ID
     let personalityContent = '';

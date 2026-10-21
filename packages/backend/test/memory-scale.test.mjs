@@ -175,6 +175,11 @@ test('pinned facts: company, department and project load first, size-limited, re
   assert.ok(iCompany > 0 && iDept > iCompany && iProject > iDept, block);
   assert.equal(await S.pinnedFactsBlock(OWNER, 'beta'), '## Pinned facts\nThe owner pinned these facts. They hold unless the owner changes them.\nCompany:\n- We are Dpro.');
   assert.equal(await S.pinnedFactsBlock('ms-user', 'alpha'), '', 'never across owners');
+  // Only the facts of drawers the reply's agent may read.
+  const noProject = await S.pinnedFactsBlock(OWNER, 'alpha', { company: true, project: false });
+  assert.ok(noProject.includes('We are Dpro.') && !noProject.includes('Engineering ships') && !noProject.includes('PostgreSQL 16'));
+  const noOwner = await S.pinnedFactsBlock(OWNER, 'alpha', { company: false, project: true });
+  assert.ok(!noOwner.includes('We are Dpro.') && noOwner.includes('PostgreSQL 16'));
 
   // Size limit: the most specific facts keep their place.
   for (let i = 0; i < 6; i++) await S.addPinnedFact(OWNER, { kind: 'company', id: '' }, `Company filler ${i} `.padEnd(400, 'x'), OWNER);
@@ -426,6 +431,11 @@ test('agent tools: same actions and owner gates; changes need the preview hash',
   assert.ok((await T.memoryScopesTool.execute({ action: 'memories', scope: 'project:beta' }, ctx)).error);
   assert.ok((await T.memoryScopesTool.execute({ action: 'memories', scope: 'project:alpha' }, ctx)).data.success);
 
+  // Pinned facts only of scopes open for the run.
+  assert.ok((await T.memoryScopesTool.execute({ action: 'pinned', scope: 'project:alpha' }, ctx)).data.success);
+  assert.ok((await T.memoryScopesTool.execute({ action: 'pinned', scope: 'project:beta' }, ctx)).error);
+  assert.ok((await T.memoryScopesTool.execute({ action: 'pinned', scope: 'company' }, { ...ctx, memoryDrawers: [project('alpha')] })).error);
+  assert.ok((await T.memoryScopesTool.execute({ action: 'pinned', scope: 'company' }, { ...ctx, permissions: { ...(await P.loadAgentPermissions('agent-a')), memoryRead: ['project'] } })).error);
   const pv = await T.memoryScopesTool.execute({ action: 'preview_project', project: 'beta', project_action: 'pin' }, ctx);
   assert.ok(pv.data.previewHash);
   assert.ok((await T.memoryScopeApplyTool.execute({ action: 'project', project: 'beta', project_action: 'pin', preview_hash: 'wrong' }, ctx)).error);

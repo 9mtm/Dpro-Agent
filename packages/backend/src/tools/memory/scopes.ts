@@ -30,7 +30,7 @@ import { drawerId } from '../../memory/drawers.js';
 import { resolveFileAgent } from '../../memory/memory-files.js';
 import {
   PROJECT_ACTIONS, ScopeInputError, accessOverview, addPinnedFact, applyAccessChanges, applyProjectAction, createDepartment, deleteDepartment,
-  effectiveAccess, exploreScope, exportProject, invalidateScopeTree, listAgentScopes, listPinnedFacts, parseActionInput, parsePinnedScope,
+  effectiveAccess, exploreScope, exportProject, getProject, invalidateScopeTree, listAgentScopes, listPinnedFacts, parseActionInput, parsePinnedScope,
   previewAccessChanges, previewDeleteDepartment, previewProjectAction, removePinnedFact, renameDepartment, scopeTree, searchScopes, updatePinnedFact,
 } from '../../memory/scopes/index.js';
 
@@ -114,6 +114,15 @@ To change anything, call memory_scope_apply / memory_access_apply / memory_scope
         }
         case 'pinned': {
           const scope = parsePinnedScope(params.scope ?? 'company');
+          // Only facts of drawers open (and readable) for this run: company -> owner, project -> its drawer,
+          // department -> an open project drawer in that department. Archived projects are never open.
+          const open = toolMemoryDrawers(context);
+          const projects = await Promise.all(open.filter((d) => d.kind === 'project').map((d) => getProject(ownerId, d.key || '')));
+          const live = projects.filter((p): p is NonNullable<typeof p> => !!p && !p.archived);
+          const allowed = scope.kind === 'company' ? open.some((d) => d.kind === 'owner')
+            : scope.kind === 'project' ? live.some((p) => p.slug === scope.id)
+              : live.some((p) => p.departmentId === scope.id);
+          if (!allowed) return fail('memory_scopes', 'that scope is not open in this conversation');
           const facts = await listPinnedFacts(ownerId, scope);
           return ok(`${facts.length} pinned facts.`, { facts });
         }

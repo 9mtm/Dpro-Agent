@@ -3,7 +3,9 @@
  * company, a department or a project. The context of every reply in that
  * scope loads them first (`pinnedFactsBlock`, size-limited): company facts,
  * the project's department, then the project. An archived project adds
- * nothing (its department and the company still apply).
+ * nothing (its department and the company still apply). A reply only gets
+ * the facts of drawers its agent may read (company: owner, department and
+ * project: project).
  *
  * SECURITY: the text passes the import redactor before it is stored, so a
  * key or password is never pinned into every prompt.
@@ -112,14 +114,15 @@ export async function removePinnedFact(ownerId: string, id: string): Promise<Pin
  * specific scope first (project, department, company); the block lists them
  * company first.
  */
-export async function pinnedFactsBlock(ownerId: string | null | undefined, projectSlug?: string | null): Promise<string> {
+export async function pinnedFactsBlock(ownerId: string | null | undefined, projectSlug?: string | null, allow: { company: boolean; project: boolean } = { company: true, project: true }): Promise<string> {
   if (!ownerId) return '';
   return sql().read((function* () {
     const sections: Array<{ title: string; facts: string[] }> = [];
-    const company = yield* listStep(ownerId, { kind: 'company', id: '' });
+    // Company facts follow the owner drawer, department and project facts the project drawer.
+    const company = allow.company ? yield* listStep(ownerId, { kind: 'company', id: '' }) : [];
     let dept: { title: string; facts: PinnedFact[] } | null = null;
     let project: { title: string; facts: PinnedFact[] } | null = null;
-    const p = projectSlug ? yield* projectStep(ownerId, projectSlug) : null;
+    const p = projectSlug && allow.project ? yield* projectStep(ownerId, projectSlug) : null;
     if (p && !p.archived) {
       const d = yield* departmentStep(ownerId, p.departmentId);
       dept = { title: `Department "${d?.name ?? GENERAL_NAME}"`, facts: yield* listStep(ownerId, { kind: 'department', id: d?.id ?? GENERAL_DEPARTMENT }) };
