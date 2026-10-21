@@ -19,7 +19,8 @@ import { toolActor } from '../../repositories/actor.js';
 import {
   activity, backflowNow, BridgeError, bridgeStatus, filesApply, filesPreview, registrationApply, registrationPreview, registrationUndo, setClient, setFolder,
 } from '../../memory/bridge/service.js';
-import { BRIDGE_CLIENTS } from '../../memory/bridge/clients.js';
+import { BRIDGE_CLIENTS, type BridgeClient } from '../../memory/bridge/clients.js';
+import { listBridgeHandoffs } from '../../memory/bridge/store.js';
 
 const fail = (msg: string): ToolResult => ({ content: [{ type: 'text', text: `Memory bridge refused: ${msg}` }], error: msg });
 const ok = (text: string, data: unknown): ToolResult => ({ content: [{ type: 'text', text }], data: { success: true, ...(data as object) } } as ToolResult);
@@ -50,11 +51,12 @@ action "status": which CLIs are on, registered, and which project folders have m
 action "preview_files" (project_id): the AGENTS.md / CLAUDE.md / GEMINI.md change for a project folder, as a diff, with a previewHash.
 action "preview_registration" (client): the dpro-memory entry for that CLI's config file, with a previewHash.
 action "activity" (optional client, project_id, limit): what the bridge did, newest first (sessions, tool calls, files written, registrations, settings).
+action "handoffs" (optional client, project_id, limit): the handoff notes coding apps left for each other (done / left / next), newest first.
 To apply a preview, call memory_bridge_apply with its previewHash (the owner approves the call).`,
   input_schema: {
     type: 'object',
     properties: {
-      action: { type: 'string', enum: ['status', 'preview_files', 'preview_registration', 'activity'] },
+      action: { type: 'string', enum: ['status', 'preview_files', 'preview_registration', 'activity', 'handoffs'] },
       project_id: { type: 'string' },
       client: { type: 'string', enum: [...BRIDGE_CLIENTS] },
       limit: { type: 'number', minimum: 1, maximum: 500 },
@@ -81,6 +83,18 @@ To apply a preview, call memory_bridge_apply with its previewHash (the owner app
           ? entries.map((e) => `- ${e.createdAt} ${e.action}${e.client ? ` [${e.client}]` : ''}${e.projectId ? ` project ${e.projectId}` : ''}${e.detail ? `: ${e.detail}` : ''}`).join('\n')
           : 'The bridge has not done anything yet.';
         return ok(text, { entries });
+      }
+      if (params.action === 'handoffs') {
+        // MEM-GAPS-02 (board M12): read only; coding apps write them through the dpro-memory MCP server.
+        if (params.client !== undefined && !(BRIDGE_CLIENTS as readonly unknown[]).includes(params.client)) return fail(`client must be one of ${BRIDGE_CLIENTS.join(', ')}`);
+        if (params.project_id !== undefined && (typeof params.project_id !== 'string' || !/^[A-Za-z0-9][A-Za-z0-9_.:-]{0,127}$/.test(params.project_id))) return fail('invalid project_id');
+        const limit = typeof params.limit === 'number' ? Math.max(1, Math.min(200, Math.floor(params.limit))) : 20;
+        const notes = await listBridgeHandoffs(owner, { projectId: params.project_id as string | undefined, client: params.client as BridgeClient | undefined, limit });
+        const line = (xs: string[]) => xs.join('; ') || '-';
+        const text = notes.length
+          ? notes.map((n) => `- ${n.createdAt} [${n.client}] project ${n.projectId}: done ${line(n.done)} | left ${line(n.left)} | next ${line(n.next)}${n.questions.length ? ` | questions ${line(n.questions)}` : ''}`).join('\n')
+          : 'No handoff notes from coding apps yet.';
+        return ok(text, { handoffs: notes });
       }
       return fail('unknown action');
     });

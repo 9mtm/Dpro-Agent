@@ -8,6 +8,13 @@
  *                        Every call needs one-time owner approval (approvals.ts);
  *                        the approval is the explicit confirm, and the reviewHash
  *                        makes it apply only to what was shown (409 otherwise).
+ * memory_review ops (MEM-GAPS-02): groups (waiting reviews by scope /
+ *                        department / agent, counts only), assigned (the
+ *                        departments this agent reviews), preview_routine
+ *                        (what "accept all routine" would approve: ids only).
+ * memory_review_routine  accept every routine review of a preview (scope /
+ *                        agent filter + previewHash). Every call needs one-time
+ *                        owner approval.
  * memory_graph_review    approve / reject one pending knowledge-graph link
  *                        (CORE-MEM-GRAPH; list them with memory_graph op "pending").
  *                        Every call needs one-time owner approval.
@@ -26,6 +33,7 @@ import { toolActor } from '../../repositories/actor.js';
 import { drawerId } from '../../memory/drawers.js';
 import { CONFLICT_DECISIONS, MemoryFileError, decideConflict, listProposals, type MemoryProposal } from '../../memory/memory-files.js';
 import { decideLink, listLinks } from '../../memory/graph/index.js';
+import { ScopeInputError, acceptRoutine, assignedReviews, previewAcceptRoutine, reviewGroups } from '../../memory/scopes/index.js';
 
 const fail = (tool: string, msg: string): ToolResult => ({ content: [{ type: 'text', text: `${tool} refused: ${msg}` }], error: msg });
 const ok = (text: string, data: Record<string, unknown>): ToolResult => ({ content: [{ type: 'text', text }], data: { success: true, ...data } } as ToolResult);
@@ -71,10 +79,40 @@ export const memoryReviewTool: Tool = {
 Each item shows the saved text, the new text, the proposal id and its reviewHash.
 To decide one, call memory_review_decide (keep_new, keep_old or keep_both) with that id and reviewHash; the owner approves the call.
 Only the memory drawers open for this conversation are read.`,
-  input_schema: { type: 'object', properties: { limit: { type: 'number', minimum: 1, maximum: 50, description: 'Maximum items (default 20)' } } },
-  async execute(params: { limit?: unknown }, context?: ToolExecutionContext): Promise<ToolResult> {
+  input_schema: {
+    type: 'object',
+    properties: {
+      op: { type: 'string', enum: ['conflicts', 'groups', 'assigned', 'preview_routine'], description: 'conflicts (default); groups: waiting reviews by scope / department / agent (counts); assigned: departments you review; preview_routine: what "accept all routine" would approve' },
+      by: { type: 'string', enum: ['scope', 'department', 'agent'], description: 'groups: how to group' },
+      scope: { type: 'string', description: 'preview_routine: a drawer id, company or department:<id>' },
+      agent: { type: 'string', description: 'preview_routine: only reviews this agent made' },
+      limit: { type: 'number', minimum: 1, maximum: 50, description: 'Maximum items (default 20)' },
+    },
+  },
+  async execute(params: { op?: unknown; by?: unknown; scope?: unknown; agent?: unknown; limit?: unknown }, context?: ToolExecutionContext): Promise<ToolResult> {
     const owner = await reviewOwner(context);
     if (typeof owner !== 'string') return fail('memory_review', owner.refused);
+    try {
+      if (params?.op === 'groups') {
+        const g = await reviewGroups(owner, params.by ?? 'scope');
+        const text = g.groups.length
+          ? g.groups.map((x) => `- ${x.key}: ${x.count} waiting (${x.conflicts} conflicts, ${x.routine} routine)${x.reviewerAgentId ? `, reviewer ${x.reviewerAgentId}` : ''}`).join('\n')
+          : 'Nothing waiting for review.';
+        return ok(text, g as unknown as Record<string, unknown>);
+      }
+      if (params?.op === 'assigned') {
+        const groups = context?.agentId ? await assignedReviews(owner, context.agentId) : [];
+        const text = groups.length ? groups.map((x) => `- ${x.key}: ${x.count} waiting (${x.conflicts} conflicts, ${x.routine} routine)`).join('\n') : 'You review no department, or nothing waits there.';
+        return ok(text, { groups });
+      }
+      if (params?.op === 'preview_routine') {
+        const p = await previewAcceptRoutine(owner, { scope: params.scope, agent: params.agent });
+        return ok(`${p.count} routine review(s) would be accepted. To accept them, call memory_review_routine with the same scope/agent and previewHash ${p.previewHash} (the owner approves the call).`, p as unknown as Record<string, unknown>);
+      }
+    } catch (err) {
+      if (err instanceof ScopeInputError) return fail('memory_review', err.message);
+      throw err;
+    }
     const limit = typeof params?.limit === 'number' ? Math.max(1, Math.min(50, Math.floor(params.limit))) : 20;
     const items = (await openConflicts(owner, context)).slice(0, limit);
     const text = items.length
@@ -118,6 +156,36 @@ if the proposal changed since, nothing happens.`,
       return ok(`Conflict decided: ${r.decision}. ${what}`, { proposalId: c.id, decision: r.decision, status: r.proposal.status });
     } catch (err) {
       if (err instanceof MemoryFileError) return fail('memory_review_decide', err.message);
+      throw err;
+    }
+  },
+};
+
+export const memoryReviewRoutineTool: Tool = {
+  name: 'memory_review_routine',
+  description: `Accept every routine review waiting for the owner (facts that only wait because the owner reviews chat memories,
+or because a scope's rules ask for routine facts too), after the owner approves this call. Give the same scope / agent and
+the previewHash from memory_review op "preview_routine"; if the waiting reviews changed since, nothing happens. Conflicts,
+important facts, imports and file edits are never accepted this way.`,
+  input_schema: {
+    type: 'object',
+    properties: {
+      scope: { type: 'string', description: 'A drawer id, company or department:<id> (optional)' },
+      agent: { type: 'string', description: 'Only reviews this agent made (optional)' },
+      preview_hash: { type: 'string', description: 'previewHash from memory_review op "preview_routine"' },
+    },
+    required: ['preview_hash'],
+  },
+  async execute(params: { scope?: unknown; agent?: unknown; preview_hash?: unknown }, context?: ToolExecutionContext): Promise<ToolResult> {
+    const owner = await reviewOwner(context);
+    if (typeof owner !== 'string') return fail('memory_review_routine', owner.refused);
+    try {
+      // The owner's approval of this call is the explicit confirm; the previewHash binds it to the list shown.
+      const out = await acceptRoutine(owner, { scope: params.scope, agent: params.agent, expectedPreviewHash: params.preview_hash }, `agent:${context?.agentId ?? 'unknown'}`);
+      audit(context, 'memory_proposal.accept_routine', 'memory_proposal', owner, { approved: out.approved.length, skipped: out.skipped.length });
+      return ok(`Accepted ${out.approved.length} routine review(s)${out.skipped.length ? `; ${out.skipped.length} changed meanwhile and were left` : ''}.`, out as unknown as Record<string, unknown>);
+    } catch (err) {
+      if (err instanceof ScopeInputError) return fail('memory_review_routine', err.message);
       throw err;
     }
   },

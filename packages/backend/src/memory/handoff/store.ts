@@ -146,10 +146,11 @@ export async function handoffHistory(scope: Omit<HandoffScope, 'projectId'>): Pr
 }
 
 /** The newest version of every scope of the owner (optionally one agent / kind), newest first. */
-export async function listHandoffs(ownerId: string, filter: { agentId?: string; kind?: HandoffKind; limit?: number } = {}): Promise<Handoff[]> {
+export async function listHandoffs(ownerId: string, filter: { agentId?: string; kind?: HandoffKind; projectId?: string; limit?: number } = {}): Promise<Handoff[]> {
   const where = ['h.owner_id = ?'];
   const args: string[] = [ownerId];
   if (filter.agentId) { where.push('h.agent_id = ?'); args.push(filter.agentId); }
+  if (filter.projectId) { where.push('h.project_id = ?'); args.push(filter.projectId); }
   if (filter.kind) { where.push('h.scope_kind = ?'); args.push(filter.kind); }
   const rows = await sql().read(all<Row>(`SELECT h.* FROM agent_handoffs h WHERE ${where.join(' AND ')}
     AND h.version = (SELECT MAX(x.version) FROM agent_handoffs x WHERE x.owner_id = h.owner_id AND x.agent_id = h.agent_id AND x.scope_kind = h.scope_kind AND x.scope_id = h.scope_id)

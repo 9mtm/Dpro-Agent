@@ -20,6 +20,11 @@
  *                     memory moves to the default drawer of its type (versioned)
  *   topic-key-invalid a topic key not in canonical form; fix: normalized, or
  *                     cleared when the canonical key is taken
+ *   graph-orphan      knowledge-map rows left behind (MEM-GAPS-02): mentions,
+ *                     link sources or index state of a memory that is gone, a
+ *                     link with no source memory, an entity with no memory and
+ *                     no link; fix: removed (the graph prune). Whole-memory
+ *                     checks only (an agent run's drawer scope skips it).
  *
  * The report carries `reportHash` (sha256 of its issues). A fix must send
  * `confirm: true` and the hash of the report the owner saw; when the memory
@@ -42,10 +47,11 @@ import {
 import { deleteVersioned } from './learning.js';
 import { recordBaselineIfMissingStep, recordVersionStep, versionEntryOf } from './versions.js';
 import { isTopicKey, suggestTopicKey } from './topic-key.js';
+import { graphTablesExist, pruneGraphStep } from './graph/store.js';
 import type { Memory } from './types.js';
 
 export const DOCTOR_KINDS = [
-  'duplicate', 'expired', 'embedding-missing', 'embedding-stale', 'orphan-versions', 'broken-drawer', 'topic-key-invalid',
+  'duplicate', 'expired', 'embedding-missing', 'embedding-stale', 'orphan-versions', 'broken-drawer', 'topic-key-invalid', 'graph-orphan',
 ] as const;
 export type DoctorKind = typeof DOCTOR_KINDS[number];
 
@@ -200,6 +206,11 @@ export async function checkMemory(userId: string, scope: DoctorScope = {}): Prom
     if (r.topic_key !== null && !isTopicKey(r.topic_key)) add({ kind: 'topic-key-invalid', drawerId: '?', memoryIds: [r.id] });
   }
 
+  if (!scope.drawers) {
+    const g = await graphOrphans(userId);
+    if (g.total) add({ kind: 'graph-orphan', drawerId: 'graph', memoryIds: g.memoryIds, detail: `mentions ${g.mentions}, link sources ${g.sources}, state ${g.state}, links ${g.links}, entities ${g.entities}` }, g.total);
+  }
+
   const ordered = DOCTOR_KINDS.flatMap((k) => issues.filter((i) => i.kind === k));
   return {
     checkedAt: new Date(now).toISOString(),
@@ -217,6 +228,32 @@ export function parseDoctorKinds(value: unknown): DoctorKind[] {
     throw new DoctorError(`kinds must be a non-empty list of: ${DOCTOR_KINDS.join(', ')}`, 400, 'invalid_kinds');
   }
   return [...new Set(value as DoctorKind[])];
+}
+
+/** Knowledge-map rows the graph prune would remove (counts; ids of gone memories, at most 50). */
+async function graphOrphans(userId: string): Promise<{ total: number; mentions: number; sources: number; state: number; links: number; entities: number; memoryIds: string[] }> {
+  const none = { total: 0, mentions: 0, sources: 0, state: 0, links: 0, entities: 0, memoryIds: [] };
+  if (!(await graphTablesExist())) return none;
+  return sql().read((function* () {
+    const gone = 'NOT IN (SELECT id FROM memories WHERE user_id = ?)';
+    const n = function* (q: string, ...p: string[]) { return Number((yield* all<{ n: number }>(q, ...p))[0]?.n ?? 0); };
+    const mentions = yield* n(`SELECT COUNT(*) AS n FROM memory_graph_mentions WHERE user_id = ? AND memory_id ${gone}`, userId, userId);
+    const sources = yield* n(`SELECT COUNT(*) AS n FROM memory_graph_link_sources WHERE user_id = ? AND memory_id ${gone}`, userId, userId);
+    const state = yield* n(`SELECT COUNT(*) AS n FROM memory_graph_state WHERE user_id = ? AND memory_id ${gone}`, userId, userId);
+    // After those rows go: links without a live source, then entities without a live mention or a kept link.
+    const links = yield* n(`SELECT COUNT(*) AS n FROM memory_graph_links WHERE user_id = ? AND id NOT IN
+      (SELECT link_id FROM memory_graph_link_sources WHERE user_id = ? AND memory_id IN (SELECT id FROM memories WHERE user_id = ?))`, userId, userId, userId);
+    const entities = yield* n(`SELECT COUNT(*) AS n FROM memory_graph_entities e WHERE e.user_id = ?
+      AND e.id NOT IN (SELECT entity_id FROM memory_graph_mentions WHERE user_id = ? AND memory_id IN (SELECT id FROM memories WHERE user_id = ?))
+      AND e.id NOT IN (SELECT l.src_id FROM memory_graph_links l WHERE l.user_id = ? AND l.id IN (SELECT link_id FROM memory_graph_link_sources WHERE user_id = ? AND memory_id IN (SELECT id FROM memories WHERE user_id = ?)))
+      AND e.id NOT IN (SELECT l.dst_id FROM memory_graph_links l WHERE l.user_id = ? AND l.id IN (SELECT link_id FROM memory_graph_link_sources WHERE user_id = ? AND memory_id IN (SELECT id FROM memories WHERE user_id = ?)))`,
+    userId, userId, userId, userId, userId, userId, userId, userId, userId);
+    const ids = yield* all<{ id: string }>(`SELECT DISTINCT memory_id AS id FROM (
+      SELECT memory_id FROM memory_graph_mentions WHERE user_id = ? AND memory_id ${gone}
+      UNION SELECT memory_id FROM memory_graph_link_sources WHERE user_id = ? AND memory_id ${gone}
+      UNION SELECT memory_id FROM memory_graph_state WHERE user_id = ? AND memory_id ${gone}) x ORDER BY id LIMIT 50`, userId, userId, userId, userId, userId, userId);
+    return { total: mentions + sources + state + links + entities, mentions, sources, state, links, entities, memoryIds: ids.map((r) => r.id) };
+  })());
 }
 
 /**
@@ -284,6 +321,10 @@ export async function fixMemory(userId: string, input: {
       });
       if (done) fixed[issue.kind]++;
       else skipped.push({ kind: issue.kind, memoryId: id, reason: 'changed meanwhile' });
+    } else if (issue.kind === 'graph-orphan') {
+      // The prune removes every orphan row of the user at once; fixed = what was reported minus what is left.
+      await sql().tx(() => pruneGraphStep(userId));
+      fixed['graph-orphan'] += Math.max(0, report.counts['graph-orphan'] - (await graphOrphans(userId)).total);
     }
   }
   return { fixed, skipped, report: await checkMemory(userId, scope) };

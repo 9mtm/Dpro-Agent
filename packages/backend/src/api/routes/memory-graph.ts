@@ -15,6 +15,8 @@
  *   POST /api/memory/graph/clusters/:id/topic-preview  { topicKey? }          read only: what making it a topic would do
  *   POST /api/memory/graph/clusters/:id/topic  { topicKey?, expectedPreviewHash, confirm: true }  one memory gets the key (versioned)
  *   POST /api/memory/graph/clusters/:id/dismiss                               "not a topic"
+ *   GET  /api/memory/graph/memories/:id      ?drawers=                       the entities and links one memory holds (MEM-GAPS-02)
+ *   GET  /api/memory/graph/agent-view/:agentId ?project=&q=&kind=&limit=     the map limited to what that agent may read
  *
  * `drawers` (drawer ids, comma separated) narrows any read to those drawers.
  */
@@ -28,6 +30,8 @@ import { actorOrReply, requireOwner } from '../../repositories/scope.js';
 import { DrawerInputError, parseDrawerId, type DrawerRef } from '../../memory/drawers.js';
 import { decideLink, entityDetail, listEntities, listLinks, syncMemoryGraph, type GraphScope } from '../../memory/graph/index.js';
 import { applyTopic, ClusterError, dismissCluster, graphClusters, topicPreview } from '../../memory/graph/clusters.js';
+import { memoryEntities } from '../../memory/graph/read.js';
+import { ScopeInputError, agentViewMap } from '../../memory/scopes/index.js';
 
 function ownerOf(request: FastifyRequest, reply: FastifyReply): Actor | null {
   return actorOrReply(reply, actorOf(request), requireOwner);
@@ -80,6 +84,27 @@ export async function memoryGraphRoutes(fastify: FastifyInstance) {
     if (!ctx) return reply;
     const q = query(request);
     return { links: await listLinks(ctx.scope, { status: q.status, limit: q.limit }) };
+  });
+
+  fastify.get('/api/memory/graph/memories/:id', { config }, async (request, reply) => {
+    const ctx = withScope(request, reply);
+    if (!ctx) return reply;
+    const out = await memoryEntities(ctx.scope, (request.params as { id: string }).id);
+    if (!out) return reply.code(404).send({ error: 'Memory not found', code: 'not_found' });
+    return out;
+  });
+
+  fastify.get('/api/memory/graph/agent-view/:agentId', { config }, async (request, reply) => {
+    const owner = ownerOf(request, reply);
+    if (owner === null) return reply;
+    try {
+      const out = await agentViewMap(owner.userId!, (request.params as { agentId: string }).agentId, query(request));
+      if (!out) return reply.code(404).send({ error: 'Agent not found', code: 'not_found' });
+      return out;
+    } catch (err) {
+      if (err instanceof ScopeInputError) return reply.code(err.status).send({ error: err.message, code: err.code });
+      throw err;
+    }
   });
 
   for (const decision of ['approve', 'reject'] as const) {

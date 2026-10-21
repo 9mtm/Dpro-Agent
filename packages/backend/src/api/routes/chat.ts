@@ -30,8 +30,8 @@ import { readPersonality, readMemory } from '../../services/agent-files.js';
 import { getCurrentPersonality } from '../../services/personality-store.js';
 import { stripPersonalityExport, traitsToBehavior, type Behavior } from '../../services/personality.js';
 import { outsiderAgentMemoryEnabled } from '../../services/outsider-memory.js';
-import { DrawerInputError, chatTurnDrawers, type DrawerRef } from '../../memory/drawers.js';
-import { pinnedFactsForReply, type ReplyPinnedFacts } from '../../memory/scopes/pinned.js';
+import { DrawerInputError, chatTurnDrawers, drawerId, sameDrawer, type DrawerRef } from '../../memory/drawers.js';
+import { pinnedFactsForReply, scopeFactAccess, type ReplyPinnedFacts } from '../../memory/scopes/pinned.js';
 import { withoutArchivedDrawers } from '../../memory/scopes/store.js';
 import { loadRunPermissions } from '../../tools/agent-permissions.js';
 import { createModelRouter, ModelRouter } from '../../services/model-router.js';
@@ -470,10 +470,10 @@ export async function executeChatTurn(reply: FastifyReply, input: ChatTurnInput)
     let pinnedFacts: ReplyPinnedFacts = { text: '', facts: [] };
     if (includeAgentMemory) {
       try {
-        const read = agentConfig?.id
-          ? (await loadRunPermissions(agentConfig.id, [], { userId, project: pinnedProject })).memoryRead
-          : ['owner', 'project'];
-        const allow = { company: read.includes('owner') && memoryDrawers.some((d) => d.kind === 'owner'), project: read.includes('project') };
+        const perms = agentConfig?.id
+          ? await loadRunPermissions(agentConfig.id, [], { userId, project: pinnedProject })
+          : { memoryRead: ['owner', 'project'] };
+        const allow = scopeFactAccess(perms, memoryDrawers.some((d) => d.kind === 'owner'));
         if (allow.company || allow.project) pinnedFacts = await pinnedFactsForReply(userId, pinnedProject, allow);
       } catch { pinnedFacts = { text: '', facts: [] }; }
     }
@@ -524,8 +524,10 @@ export async function executeChatTurn(reply: FastifyReply, input: ChatTurnInput)
     let pack: ContextPack | null = null;
     let recall: MessageRecall = { text: '', items: [], hit: false };
     const lastUser = messages[messages.length - 1];
+    let loadedDrawers: DrawerRef[] = [];
     try {
       const drawers = await readableDrawers(agentConfig?.id, memoryDrawers, userId);
+      loadedDrawers = drawers;
       pack = await contextPack({ userId, agentId: agentConfig?.id ?? null, drawers, persona: resolvedSystemPrompt, scopeFacts: pinnedFacts, handoff: includeAgentMemory && !channelTurn ? input.handoff ?? null : null });
       resolvedSystemPrompt = pack.text;
       recall = await messageRecall({ userId, drawers, query: messageText(lastUser?.content), pack });
@@ -613,6 +615,11 @@ export async function executeChatTurn(reply: FastifyReply, input: ChatTurnInput)
           droppedTurns: history?.droppedTurns ?? 0,
           fromCache: { pack: !!pack?.hit, recall: recall.hit },
           budgetTokens: budget.promptTokens, numCtx: budget.numCtx,
+          // MEM-GAPS-02: what the reply loaded; open drawers this agent may not read.
+          drawers: {
+            loaded: loadedDrawers.map(drawerId),
+            noAccess: memoryDrawers.filter((d) => !loadedDrawers.some((x) => sameDrawer(x, d))).map(drawerId),
+          },
         },
         packHit: !!pack?.hit, packChars: pack?.memoryChars ?? 0, promptTokens,
       }).catch((err) => safeConsole.log('[Chat] Recall trace not stored', safeErrorFields(err)));

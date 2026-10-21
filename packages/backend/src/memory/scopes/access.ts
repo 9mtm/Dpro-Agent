@@ -16,6 +16,14 @@
  * run still gets the strictest of every agent in the chain
  * (agent-permissions.ts strictest).
  *
+ * Besides the drawer kinds the grid has two scope columns (MEM-GAPS-02):
+ * 'company' = the company's pinned facts, 'department' = the pinned facts of
+ * the project's department. Their rules live in memory_access_scope_rules
+ * (migration 121) and resolve in the same order; an agent's own permissions
+ * do not name them (no cap there), a role template caps them only when it
+ * lists them (scopeRead / scopeWrite; null = no cap). Write on a scope column
+ * = the agent may ask (owner-approved) to change that scope's pinned facts.
+ *
  * Every change goes preview -> apply: the preview counts the agents and
  * projects whose effective access changes, and its previewHash (which
  * includes the owner's access version) must come back with the apply, so a
@@ -32,6 +40,13 @@ import type { AgentPermissions } from '../../tools/agent-permissions.js';
 export const ACCESS_MODES = ['allow', 'deny', 'inherit'] as const;
 export type AccessMode = (typeof ACCESS_MODES)[number];
 export type AccessScopeKind = 'company' | 'department' | 'project';
+/** The two scope columns of the access grid (pinned facts of the company / of the project's department). */
+export const SCOPE_COLUMNS = ['company', 'department'] as const;
+export type ScopeColumn = (typeof SCOPE_COLUMNS)[number];
+/** Every column of the access grid: the drawer kinds, then the scope columns. */
+export const ACCESS_COLUMNS = [...DRAWER_KINDS, ...SCOPE_COLUMNS] as const;
+export type AccessColumn = DrawerKind | ScopeColumn;
+export const isScopeColumn = (k: unknown): k is ScopeColumn => (SCOPE_COLUMNS as readonly unknown[]).includes(k);
 export interface AccessScope { kind: AccessScopeKind; id: string }
 
 export const MAX_CHANGES = 100;
@@ -43,7 +58,7 @@ export interface AccessRule {
   id: string;
   scope: string;
   agentId: string | null;
-  drawerKind: DrawerKind;
+  drawerKind: AccessColumn;
   read: AccessMode;
   write: AccessMode;
   endsAt: string | null;
@@ -53,18 +68,21 @@ export interface AccessRule {
   createdAt: string;
 }
 
-export interface RoleTemplate { id: string; name: string; memoryRead: DrawerKind[]; memoryWrite: DrawerKind[]; agents: number }
+export interface RoleTemplate { id: string; name: string; memoryRead: DrawerKind[]; memoryWrite: DrawerKind[]; scopeRead: ScopeColumn[] | null; scopeWrite: ScopeColumn[] | null; agents: number }
 
 // ---------------------------------------------------------------------------
-// Bit masks: kind i -> read bit 2i, write bit 2i+1
+// Bit masks: column i -> read bit 2i, write bit 2i+1
 // ---------------------------------------------------------------------------
 
 const KINDS = [...DRAWER_KINDS] as DrawerKind[];
-const ALL = (1 << (KINDS.length * 2)) - 1;
-const READ_BIT = (k: DrawerKind) => 1 << (KINDS.indexOf(k) * 2);
-const WRITE_BIT = (k: DrawerKind) => 1 << (KINDS.indexOf(k) * 2 + 1);
+const COLUMNS = [...ACCESS_COLUMNS] as AccessColumn[];
+const ALL = (1 << (COLUMNS.length * 2)) - 1;
+const READ_BIT = (k: AccessColumn) => 1 << (COLUMNS.indexOf(k) * 2);
+const WRITE_BIT = (k: AccessColumn) => 1 << (COLUMNS.indexOf(k) * 2 + 1);
+/** Read + write of both scope columns (no cap from the agent's own permissions). */
+const SCOPE_ALL = SCOPE_COLUMNS.reduce((m, k) => m | READ_BIT(k) | WRITE_BIT(k), 0);
 
-export function maskOf(read: readonly DrawerKind[], write: readonly DrawerKind[]): number {
+export function maskOf(read: readonly AccessColumn[], write: readonly AccessColumn[]): number {
   let m = 0;
   for (const k of read) m |= READ_BIT(k);
   for (const k of write) if (read.includes(k)) m |= WRITE_BIT(k);
@@ -74,7 +92,7 @@ export function maskOf(read: readonly DrawerKind[], write: readonly DrawerKind[]
 /** Write needs read. */
 function normalizeMask(m: number): number {
   let out = m;
-  for (const k of KINDS) if (!(m & READ_BIT(k))) out &= ~WRITE_BIT(k);
+  for (const k of COLUMNS) if (!(m & READ_BIT(k))) out &= ~WRITE_BIT(k);
   return out;
 }
 
@@ -82,18 +100,27 @@ export function kindsOf(m: number): { read: DrawerKind[]; write: DrawerKind[] } 
   return { read: KINDS.filter((k) => m & READ_BIT(k)), write: KINDS.filter((k) => m & WRITE_BIT(k)) };
 }
 
+/** Every column of a mask (drawer kinds, then company / department). */
+export function columnsOf(m: number): { read: AccessColumn[]; write: AccessColumn[] } {
+  return { read: COLUMNS.filter((k) => m & READ_BIT(k)), write: COLUMNS.filter((k) => m & WRITE_BIT(k)) };
+}
+
+/** The mask of an agent's own permissions: its drawer kinds, and both scope columns (not capped there). */
+export const ownMaskOf = (read: readonly DrawerKind[], write: readonly DrawerKind[]): number => maskOf(read, write) | SCOPE_ALL;
+
 // ---------------------------------------------------------------------------
 // Snapshot: everything resolution needs, loaded once per owner and version
 // ---------------------------------------------------------------------------
 
-interface RuleRow { id: string; scope_kind: AccessScopeKind; scope_id: string; agent_id: string; drawer_kind: DrawerKind; read_mode: AccessMode; write_mode: AccessMode; ends_at: string | null; reason: string | null; created_by: string | null; created_at: string }
-interface TemplateRow { id: string; name: string; memory_read: string; memory_write: string }
+interface RuleRow { id: string; scope_kind: AccessScopeKind; scope_id: string; agent_id: string; drawer_kind: AccessColumn; read_mode: AccessMode; write_mode: AccessMode; ends_at: string | null; reason: string | null; created_by: string | null; created_at: string }
+interface TemplateRow { id: string; name: string; memory_read: string; memory_write: string; scope_read: string | null; scope_write: string | null }
+interface TemplateEntry { id: string; name: string; mask: number; read: DrawerKind[]; write: DrawerKind[]; scopeRead: ScopeColumn[] | null; scopeWrite: ScopeColumn[] | null }
 
 export interface AccessSnapshot {
   ownerId: string;
   version: number;
   rules: RuleRow[];
-  templates: Map<string, { id: string; name: string; mask: number; read: DrawerKind[]; write: DrawerKind[] }>;
+  templates: Map<string, TemplateEntry>;
   roles: Map<string, string>;
   /** project slug -> department id (only projects outside General). */
   projectDept: Map<string, string>;
@@ -103,18 +130,34 @@ const scopeKey = (kind: AccessScopeKind, id: string) => (kind === 'company' ? 'c
 const kindsFromJson = (text: string): DrawerKind[] => {
   try { const v = JSON.parse(text); return Array.isArray(v) ? KINDS.filter((k) => v.includes(k)) : []; } catch { return []; }
 };
+const scopesFromJson = (text: string | null): ScopeColumn[] | null => {
+  if (text === null || text === undefined) return null;
+  try { const v = JSON.parse(text); return Array.isArray(v) ? SCOPE_COLUMNS.filter((k) => v.includes(k)) : []; } catch { return []; }
+};
+
+/** A template's mask: its drawer kinds, and its scope columns (all of them when it names none: null). */
+function templateEntry(id: string, name: string, read: DrawerKind[], write: DrawerKind[], scopeRead: ScopeColumn[] | null, scopeWrite: ScopeColumn[] | null): TemplateEntry {
+  const w = write.filter((k) => read.includes(k));
+  const sw = scopeRead === null ? null : (scopeWrite ?? []).filter((k) => scopeRead.includes(k));
+  const mask = maskOf(read, w) | (scopeRead === null ? SCOPE_ALL : maskOf(scopeRead, sw ?? []));
+  return { id, name, mask, read, write: w, scopeRead, scopeWrite: scopeRead === null ? null : sw };
+}
+
+/** Rules of both tables (drawer kinds; scope columns, migration 121), oldest first. */
+const RULES_SQL = `SELECT id, scope_kind, scope_id, agent_id, drawer_kind, read_mode, write_mode, ends_at, reason, created_by, created_at FROM memory_access_rules WHERE owner_id = ?
+  UNION ALL SELECT id, scope_kind, scope_id, agent_id, drawer_kind, read_mode, write_mode, ends_at, reason, created_by, created_at FROM memory_access_scope_rules WHERE owner_id = ?
+  ORDER BY created_at, id`;
+const rulesTable = (column: AccessColumn) => (isScopeColumn(column) ? 'memory_access_scope_rules' : 'memory_access_rules');
 
 function* loadSnapshotStep(ownerId: string): Step<AccessSnapshot> {
   const version = Number((yield* one<{ version: number }>('SELECT version FROM memory_access_versions WHERE owner_id = ?', ownerId))?.version ?? 0);
-  const rules = yield* all<RuleRow>('SELECT * FROM memory_access_rules WHERE owner_id = ? ORDER BY created_at, id', ownerId);
-  const trows = yield* all<TemplateRow>('SELECT id, name, memory_read, memory_write FROM memory_role_templates WHERE owner_id = ? ORDER BY norm_name, id', ownerId);
+  const rules = yield* all<RuleRow>(RULES_SQL, ownerId, ownerId);
+  const trows = yield* all<TemplateRow>('SELECT id, name, memory_read, memory_write, scope_read, scope_write FROM memory_role_templates WHERE owner_id = ? ORDER BY norm_name, id', ownerId);
   const roles = yield* all<{ agent_id: string; template_id: string }>('SELECT agent_id, template_id FROM memory_agent_roles WHERE owner_id = ?', ownerId);
   const depts = yield* all<{ slug: string; department_id: string }>('SELECT slug, department_id FROM memory_project_scopes WHERE owner_id = ? AND department_id IS NOT NULL', ownerId);
-  const templates = new Map<string, { id: string; name: string; mask: number; read: DrawerKind[]; write: DrawerKind[] }>();
+  const templates = new Map<string, TemplateEntry>();
   for (const t of trows) {
-    const read = kindsFromJson(t.memory_read);
-    const write = kindsFromJson(t.memory_write).filter((k) => read.includes(k));
-    templates.set(t.id, { id: t.id, name: t.name, mask: maskOf(read, write), read, write });
+    templates.set(t.id, templateEntry(t.id, t.name, kindsFromJson(t.memory_read), kindsFromJson(t.memory_write), scopesFromJson(t.scope_read), scopesFromJson(t.scope_write)));
   }
   return {
     ownerId, version, rules, templates,
@@ -227,16 +270,22 @@ export function effectiveMask(snap: AccessSnapshot, agentId: string, ownMask: nu
  * (never widens: the result is a subset of `p`).
  */
 export function narrowPermissions(p: AgentPermissions, snap: AccessSnapshot, project: string | null, now = Date.now()): AgentPermissions {
-  const m = effectiveMask(snap, p.agentId, maskOf(p.memoryRead, p.memoryWrite), project, now);
-  const k = kindsOf(m);
-  return { ...p, memoryRead: p.memoryRead.filter((x) => k.read.includes(x)), memoryWrite: p.memoryWrite.filter((x) => k.write.includes(x)) };
+  const m = effectiveMask(snap, p.agentId, ownMaskOf(p.memoryRead, p.memoryWrite), project, now);
+  const k = columnsOf(m);
+  return {
+    ...p,
+    memoryRead: p.memoryRead.filter((x) => k.read.includes(x)),
+    memoryWrite: p.memoryWrite.filter((x) => k.write.includes(x)),
+    scopeRead: SCOPE_COLUMNS.filter((x) => k.read.includes(x) && (!p.scopeRead || p.scopeRead.includes(x))),
+    scopeWrite: SCOPE_COLUMNS.filter((x) => k.write.includes(x) && (!p.scopeWrite || p.scopeWrite.includes(x))),
+  };
 }
 
 export interface WhyStep { layer: 'default' | 'company' | 'department' | 'project' | 'agent-company' | 'agent-department' | 'agent-project' | 'agent-permissions' | 'role-template'; value: 'allow' | 'deny'; ruleId?: string; endsAt?: string | null; name?: string }
 export interface KindAccess { read: boolean; write: boolean; readWhy: WhyStep[]; writeWhy: WhyStep[] }
 
 /** Effective access of one agent in one project, per drawer kind, with every layer that decided it. */
-export function explainAccess(snap: AccessSnapshot, agentId: string, own: { read: DrawerKind[]; write: DrawerKind[] }, project: string | null, now = Date.now()): Record<DrawerKind, KindAccess> {
+export function explainAccess(snap: AccessSnapshot, agentId: string, own: { read: DrawerKind[]; write: DrawerKind[] }, project: string | null, now = Date.now()): Record<AccessColumn, KindAccess> {
   const ix = indexed(snap);
   const keys = chainKeys(snap, project);
   const layerOf = (key: string, agent: boolean): WhyStep['layer'] => {
@@ -245,8 +294,8 @@ export function explainAccess(snap: AccessSnapshot, agentId: string, own: { read
   };
   const tId = snap.roles.get(agentId);
   const template = tId ? snap.templates.get(tId) : undefined;
-  const out = {} as Record<DrawerKind, KindAccess>;
-  for (const k of KINDS) {
+  const out = {} as Record<AccessColumn, KindAccess>;
+  for (const k of COLUMNS) {
     const why = { read: [{ layer: 'default', value: 'allow' }] as WhyStep[], write: [{ layer: 'default', value: 'allow' }] as WhyStep[] };
     const consider = (r: RuleRow, layer: WhyStep['layer']) => {
       if (r.drawer_kind !== k) return;
@@ -256,16 +305,18 @@ export function explainAccess(snap: AccessSnapshot, agentId: string, own: { read
     for (const key of keys) for (const r of ix.base.get(key) ?? []) consider(r, layerOf(key, false));
     const own2 = ix.agent.get(agentId);
     for (const key of keys) for (const r of own2?.get(key) ?? []) if (!ended(r, now)) consider(r, layerOf(key, true));
-    why.read.push({ layer: 'agent-permissions', value: own.read.includes(k) ? 'allow' : 'deny' });
-    why.write.push({ layer: 'agent-permissions', value: own.write.includes(k) ? 'allow' : 'deny' });
-    if (template) {
-      why.read.push({ layer: 'role-template', value: template.read.includes(k) ? 'allow' : 'deny', name: template.name });
-      why.write.push({ layer: 'role-template', value: template.write.includes(k) ? 'allow' : 'deny', name: template.name });
+    if (!isScopeColumn(k)) {
+      why.read.push({ layer: 'agent-permissions', value: own.read.includes(k) ? 'allow' : 'deny' });
+      why.write.push({ layer: 'agent-permissions', value: own.write.includes(k) ? 'allow' : 'deny' });
+    }
+    if (template && (!isScopeColumn(k) || template.scopeRead !== null)) {
+      why.read.push({ layer: 'role-template', value: template.mask & READ_BIT(k) ? 'allow' : 'deny', name: template.name });
+      why.write.push({ layer: 'role-template', value: template.mask & WRITE_BIT(k) ? 'allow' : 'deny', name: template.name });
     }
     out[k] = { read: false, write: false, readWhy: why.read, writeWhy: why.write };
   }
-  const m = effectiveMask(snap, agentId, maskOf(own.read, own.write), project, now);
-  for (const k of KINDS) { out[k].read = !!(m & READ_BIT(k)); out[k].write = !!(m & WRITE_BIT(k)); }
+  const m = effectiveMask(snap, agentId, ownMaskOf(own.read, own.write), project, now);
+  for (const k of COLUMNS) { out[k].read = !!(m & READ_BIT(k)); out[k].write = !!(m & WRITE_BIT(k)); }
   return out;
 }
 
@@ -281,6 +332,10 @@ export function ruleView(r: RuleRow, now = Date.now()): AccessRule {
   };
 }
 
+export const templateView = (t: TemplateEntry, agents: number): RoleTemplate => ({
+  id: t.id, name: t.name, memoryRead: t.read, memoryWrite: t.write, scopeRead: t.scopeRead, scopeWrite: t.scopeWrite, agents,
+});
+
 export async function accessOverview(ownerId: string): Promise<{ version: number; rules: AccessRule[]; templates: RoleTemplate[] }> {
   const snap = await accessSnapshot(ownerId);
   const counts = new Map<string, number>();
@@ -288,7 +343,7 @@ export async function accessOverview(ownerId: string): Promise<{ version: number
   return {
     version: snap.version,
     rules: snap.rules.map((r) => ruleView(r)),
-    templates: [...snap.templates.values()].map((t) => ({ id: t.id, name: t.name, memoryRead: t.read, memoryWrite: t.write, agents: counts.get(t.id) ?? 0 })),
+    templates: [...snap.templates.values()].map((t) => templateView(t, counts.get(t.id) ?? 0)),
   };
 }
 
@@ -297,9 +352,10 @@ export async function accessOverview(ownerId: string): Promise<{ version: number
 // ---------------------------------------------------------------------------
 
 export type AccessChange =
-  | { op: 'set_rule'; scope: AccessScope; agentId: string | null; drawerKind: DrawerKind; read: AccessMode; write: AccessMode; endsAt: string | null; reason: string | null }
-  | { op: 'clear_rule'; scope: AccessScope; agentId: string | null; drawerKind: DrawerKind }
-  | { op: 'save_template'; id: string | null; name: string; memoryRead: DrawerKind[]; memoryWrite: DrawerKind[] }
+  | { op: 'set_rule'; scope: AccessScope; agentId: string | null; drawerKind: AccessColumn; read: AccessMode; write: AccessMode; endsAt: string | null; reason: string | null }
+  | { op: 'clear_rule'; scope: AccessScope; agentId: string | null; drawerKind: AccessColumn }
+  /** scopeRead / scopeWrite: undefined = keep the template's scope columns (null for a new one = no cap). */
+  | { op: 'save_template'; id: string | null; name: string; memoryRead: DrawerKind[]; memoryWrite: DrawerKind[]; scopeRead?: ScopeColumn[] | null; scopeWrite?: ScopeColumn[] }
   | { op: 'delete_template'; id: string }
   | { op: 'assign_template'; template: string | null; agentIds: string[] };
 
@@ -324,6 +380,13 @@ function parseKinds(v: unknown, field: string): DrawerKind[] {
   return KINDS.filter((k) => v.includes(k));
 }
 
+function parseScopeColumns(v: unknown, field: string): ScopeColumn[] {
+  if (!Array.isArray(v) || !v.every((k) => isScopeColumn(k)) || new Set(v).size !== v.length) {
+    throw new ScopeInputError(`${field} must be a list of ${SCOPE_COLUMNS.join(', ')}`);
+  }
+  return SCOPE_COLUMNS.filter((k) => v.includes(k));
+}
+
 const mode = (v: unknown, field: string): AccessMode => {
   if (!(ACCESS_MODES as readonly unknown[]).includes(v)) throw new ScopeInputError(`${field} must be allow, deny or inherit`);
   return v as AccessMode;
@@ -340,8 +403,8 @@ export function parseAccessChanges(input: unknown, now = Date.now()): AccessChan
     switch (o.op) {
       case 'set_rule': case 'clear_rule': {
         const scope = parseAccessScope(o.scope);
-        if (!(KINDS as unknown[]).includes(o.drawerKind)) throw new ScopeInputError(`changes[${i}].drawerKind must be one of ${KINDS.join(', ')}`);
-        const drawerKind = o.drawerKind as DrawerKind;
+        if (!(COLUMNS as unknown[]).includes(o.drawerKind)) throw new ScopeInputError(`changes[${i}].drawerKind must be one of ${COLUMNS.join(', ')}`);
+        const drawerKind = o.drawerKind as AccessColumn;
         if (o.op === 'clear_rule') return { op: 'clear_rule', scope, agentId: agentId as string | null, drawerKind };
         const read = mode(o.read ?? 'inherit', `changes[${i}].read`);
         const write = mode(o.write ?? 'inherit', `changes[${i}].write`);
@@ -361,7 +424,16 @@ export function parseAccessChanges(input: unknown, now = Date.now()): AccessChan
         const memoryRead = parseKinds(o.memoryRead, `changes[${i}].memoryRead`);
         const memoryWrite = parseKinds(o.memoryWrite, `changes[${i}].memoryWrite`);
         if (memoryWrite.some((k) => !memoryRead.includes(k))) throw new ScopeInputError(`changes[${i}].memoryWrite may only name kinds memoryRead names`);
-        return { op: 'save_template', id: id as string | null, name: cleanName(o.name, 'role template'), memoryRead, memoryWrite };
+        const out: AccessChange = { op: 'save_template', id: id as string | null, name: cleanName(o.name, 'role template'), memoryRead, memoryWrite };
+        if (o.scopeRead !== undefined) {
+          const scopeRead = o.scopeRead === null ? null : parseScopeColumns(o.scopeRead, `changes[${i}].scopeRead`);
+          const scopeWrite = o.scopeWrite === undefined || o.scopeWrite === null ? [] : parseScopeColumns(o.scopeWrite, `changes[${i}].scopeWrite`);
+          if (scopeRead === null ? scopeWrite.length > 0 : scopeWrite.some((k) => !scopeRead.includes(k))) throw new ScopeInputError(`changes[${i}].scopeWrite may only name columns scopeRead names`);
+          Object.assign(out, { scopeRead, scopeWrite });
+        } else if (o.scopeWrite !== undefined) {
+          throw new ScopeInputError(`changes[${i}].scopeWrite needs scopeRead`);
+        }
+        return out;
       }
       case 'delete_template':
         if (typeof o.id !== 'string' || !TEMPLATE_ID.test(o.id)) throw new ScopeInputError(`changes[${i}].id is invalid`);
@@ -421,7 +493,10 @@ export function simulate(before: AccessSnapshot, changes: AccessChange[], by: st
       if (c.id && !snap.templates.has(c.id)) throw new ScopeInputError('Role template not found', 404, 'not_found');
       for (const t of snap.templates.values()) if (t.id !== id && normName(t.name) === normName(c.name)) throw new ScopeInputError('Another role template has that name', 409, 'name_taken');
       if (!snap.templates.has(id) && snap.templates.size >= MAX_TEMPLATES) throw new ScopeInputError('Too many role templates', 409, 'too_many');
-      snap.templates.set(id, { id, name: c.name, mask: maskOf(c.memoryRead, c.memoryWrite), read: c.memoryRead, write: c.memoryWrite });
+      const old = snap.templates.get(id);
+      const scopeRead = c.scopeRead !== undefined ? c.scopeRead : (old?.scopeRead ?? null);
+      const scopeWrite = c.scopeRead !== undefined ? (c.scopeWrite ?? []) : (old?.scopeWrite ?? null);
+      snap.templates.set(id, templateEntry(id, c.name, c.memoryRead, c.memoryWrite, scopeRead, scopeWrite));
     } else if (c.op === 'delete_template') {
       if (!snap.templates.delete(c.id)) throw new ScopeInputError('Role template not found', 404, 'not_found');
       for (const [a, t] of [...snap.roles]) if (t === c.id) snap.roles.delete(a);
@@ -440,7 +515,7 @@ interface AgentCap { id: string; name: string; mask: number }
 function* agentCapsStep(): Step<AgentCap[]> {
   const agents = yield* all<{ id: string; name: string }>('SELECT id, name FROM agents_config ORDER BY id');
   const rows = yield* all<{ agent_id: string; memory_read: string; memory_write: string }>('SELECT agent_id, memory_read, memory_write FROM agent_permissions');
-  const own = new Map(rows.map((r) => [r.agent_id, maskOf(kindsFromJson(r.memory_read), kindsFromJson(r.memory_write))]));
+  const own = new Map(rows.map((r) => [r.agent_id, ownMaskOf(kindsFromJson(r.memory_read), kindsFromJson(r.memory_write))]));
   return agents.map((a) => ({ id: a.id, name: a.name, mask: own.get(a.id) ?? ALL }));
 }
 
@@ -460,7 +535,7 @@ export interface AccessDiff {
   narrowed: number;
   agentsTotal: number;
   projectsTotal: number;
-  sample: Array<{ agentId: string; agentName: string; project: string | null; before: { read: DrawerKind[]; write: DrawerKind[] }; after: { read: DrawerKind[]; write: DrawerKind[] } }>;
+  sample: Array<{ agentId: string; agentName: string; project: string | null; before: { read: AccessColumn[]; write: AccessColumn[] }; after: { read: AccessColumn[]; write: AccessColumn[] } }>;
 }
 
 /** Compare two snapshots over every agent x project (bit masks: 3,000 x 100 is a few ms). */
@@ -484,7 +559,7 @@ export function diffAccess(before: AccessSnapshot, after: AccessSnapshot, agents
       if (b & ~x) narrowed++;
       agentsHit.add(a.id);
       projectsHit.add(p);
-      if (sample.length < SAMPLE) sample.push({ agentId: a.id, agentName: a.name, project: p, before: kindsOf(b), after: kindsOf(x) });
+      if (sample.length < SAMPLE) sample.push({ agentId: a.id, agentName: a.name, project: p, before: columnsOf(b), after: columnsOf(x) });
     }
   }
   return {
@@ -552,16 +627,16 @@ export async function applyAccessChanges(ownerId: string, input: unknown, expect
     if (preview.previewHash !== expectedPreviewHash) throw new ScopeInputError('The access policies changed since the preview. Preview again.', 409, 'preview_changed');
     // Rules: delete removed, upsert changed.
     const afterIds = new Map(after.rules.map((r) => [r.id, r]));
-    for (const r of before.rules) if (!afterIds.has(r.id)) yield* run('DELETE FROM memory_access_rules WHERE owner_id = ? AND id = ?', ownerId, r.id);
+    for (const r of before.rules) if (!afterIds.has(r.id)) yield* run(`DELETE FROM ${rulesTable(r.drawer_kind)} WHERE owner_id = ? AND id = ?`, ownerId, r.id);
     const beforeIds = new Map(before.rules.map((r) => [r.id, r]));
     for (const r of after.rules) {
       const old = beforeIds.get(r.id);
       if (old && JSON.stringify(old) === JSON.stringify(r)) continue;
       if (old) {
-        yield* run('UPDATE memory_access_rules SET read_mode = ?, write_mode = ?, ends_at = ?, reason = ?, created_by = ? WHERE owner_id = ? AND id = ?',
+        yield* run(`UPDATE ${rulesTable(r.drawer_kind)} SET read_mode = ?, write_mode = ?, ends_at = ?, reason = ?, created_by = ? WHERE owner_id = ? AND id = ?`,
           r.read_mode, r.write_mode, r.ends_at, r.reason, r.created_by, ownerId, r.id);
       } else {
-        yield* run(`INSERT INTO memory_access_rules (id, owner_id, scope_kind, scope_id, agent_id, drawer_kind, read_mode, write_mode, ends_at, reason, created_by, created_at)
+        yield* run(`INSERT INTO ${rulesTable(r.drawer_kind)} (id, owner_id, scope_kind, scope_id, agent_id, drawer_kind, read_mode, write_mode, ends_at, reason, created_by, created_at)
           VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
         r.id, ownerId, r.scope_kind, r.scope_id, r.agent_id, r.drawer_kind, r.read_mode, r.write_mode, r.ends_at, r.reason, r.created_by, r.created_at);
       }
@@ -570,14 +645,17 @@ export async function applyAccessChanges(ownerId: string, input: unknown, expect
     for (const t of before.templates.values()) if (!after.templates.has(t.id)) yield* run('DELETE FROM memory_role_templates WHERE owner_id = ? AND id = ?', ownerId, t.id);
     for (const t of after.templates.values()) {
       const old = before.templates.get(t.id);
-      if (old && old.name === t.name && old.mask === t.mask) continue;
+      const scopes = (x: TemplateEntry) => JSON.stringify([x.scopeRead, x.scopeWrite]);
+      if (old && old.name === t.name && old.mask === t.mask && scopes(old) === scopes(t)) continue;
       const nowIso = new Date(now).toISOString();
+      const sr = t.scopeRead === null ? null : JSON.stringify(t.scopeRead);
+      const sw = t.scopeWrite === null ? null : JSON.stringify(t.scopeWrite);
       if (old) {
-        yield* run('UPDATE memory_role_templates SET name = ?, norm_name = ?, memory_read = ?, memory_write = ?, updated_at = ? WHERE owner_id = ? AND id = ?',
-          t.name, normName(t.name), JSON.stringify(t.read), JSON.stringify(t.write), nowIso, ownerId, t.id);
+        yield* run('UPDATE memory_role_templates SET name = ?, norm_name = ?, memory_read = ?, memory_write = ?, scope_read = ?, scope_write = ?, updated_at = ? WHERE owner_id = ? AND id = ?',
+          t.name, normName(t.name), JSON.stringify(t.read), JSON.stringify(t.write), sr, sw, nowIso, ownerId, t.id);
       } else {
-        yield* run('INSERT INTO memory_role_templates (id, owner_id, name, norm_name, memory_read, memory_write, created_by, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)',
-          t.id, ownerId, t.name, normName(t.name), JSON.stringify(t.read), JSON.stringify(t.write), by, nowIso, nowIso);
+        yield* run('INSERT INTO memory_role_templates (id, owner_id, name, norm_name, memory_read, memory_write, scope_read, scope_write, created_by, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)',
+          t.id, ownerId, t.name, normName(t.name), JSON.stringify(t.read), JSON.stringify(t.write), sr, sw, by, nowIso, nowIso);
       }
     }
     // Roles.
@@ -615,7 +693,140 @@ export async function effectiveAccess(ownerId: string, agentId: string, project:
     ownPermissions: { memoryRead: own.read, memoryWrite: own.write, stored: !!row },
     template: tId ? { id: tId, name: snap.templates.get(tId)?.name ?? tId } : null,
     exceptions: snap.rules.filter((r) => r.agent_id === agentId).map((r) => ruleView(r, now)),
-    effective: { memoryRead: KINDS.filter((k) => kinds[k].read), memoryWrite: KINDS.filter((k) => kinds[k].write) },
+    effective: {
+      memoryRead: KINDS.filter((k) => kinds[k].read), memoryWrite: KINDS.filter((k) => kinds[k].write),
+      scopeRead: SCOPE_COLUMNS.filter((k) => kinds[k].read), scopeWrite: SCOPE_COLUMNS.filter((k) => kinds[k].write),
+    },
     kinds,
+  };
+}
+
+// ---------------------------------------------------------------------------
+// Who has access to a scope (MEM-GAPS-02)
+// ---------------------------------------------------------------------------
+
+/** Rule keys of a scope: company; company -> department; company -> department of the project -> project. */
+function scopeChainKeys(snap: AccessSnapshot, scope: AccessScope): string[] {
+  if (scope.kind === 'company') return ['company'];
+  if (scope.kind === 'department') return ['company', scopeKey('department', scope.id)];
+  return chainKeys(snap, scope.id);
+}
+
+/** One agent's effective mask in a scope's chain (same layers as effectiveMask). */
+function scopeMask(snap: AccessSnapshot, keys: string[], a: AgentCap, now: number, base: number): number {
+  const own = indexed(snap).agent.get(a.id);
+  let m = base;
+  if (own) for (const key of keys) for (const r of own.get(key) ?? []) if (!ended(r, now)) m = applyRule(m, r);
+  return normalizeMask(m & a.mask & templateMask(snap, a.id));
+}
+
+function baseMaskOf(snap: AccessSnapshot, keys: string[]): number {
+  const ix = indexed(snap);
+  let m = ALL;
+  for (const key of keys) for (const r of ix.base.get(key) ?? []) m = applyRule(m, r);
+  return m;
+}
+
+export interface ScopeAgents {
+  scope: string;
+  column: AccessColumn;
+  mode: 'read' | 'write';
+  /** Agents with that access (after q). */
+  count: number;
+  /** Every agent. */
+  total: number;
+  agents: Array<{ id: string; name: string; read: boolean; write: boolean; template: string | null; exception: boolean }>;
+  nextCursor: string | null;
+}
+
+/**
+ * The agents that may read (or write) one column of a scope: company,
+ * department:<id> (company -> department rules, no project) or
+ * project:<slug>. Paged by name; `q` filters by name or id.
+ */
+export async function agentsWithAccess(ownerId: string, input: { scope?: unknown; column?: unknown; mode?: unknown; q?: unknown; cursor?: unknown; limit?: unknown }, now = Date.now()): Promise<ScopeAgents> {
+  const scope = parseAccessScope(input.scope ?? 'company');
+  const column = (input.column ?? (scope.kind === 'project' ? 'project' : 'owner')) as AccessColumn;
+  if (!COLUMNS.includes(column)) throw new ScopeInputError(`column must be one of ${COLUMNS.join(', ')}`);
+  const mode = input.mode ?? 'read';
+  if (mode !== 'read' && mode !== 'write') throw new ScopeInputError('mode must be read or write');
+  const limit = Math.min(Math.max(Number(input.limit) || 100, 1), 500);
+  const offset = input.cursor === undefined || input.cursor === '' ? 0 : Number.parseInt(String(input.cursor), 36);
+  if (!Number.isSafeInteger(offset) || offset < 0) throw new ScopeInputError('Invalid cursor');
+  const q = typeof input.q === 'string' ? input.q.trim().toLowerCase().slice(0, 80) : '';
+  const { agents, snap } = await sql().read((function* () {
+    if (scope.kind === 'department' && !(yield* departmentStep(ownerId, scope.id))) throw new ScopeInputError('Department not found', 404, 'not_found');
+    if (scope.kind === 'project' && !(yield* listProjectsStep(ownerId)).some((p) => p.slug === scope.id)) throw new ScopeInputError('Project not found', 404, 'not_found');
+    return { agents: yield* agentCapsStep(), snap: yield* loadSnapshotStep(ownerId) };
+  })());
+  const keys = scopeChainKeys(snap, scope);
+  const base = baseMaskOf(snap, keys);
+  const bit = mode === 'read' ? READ_BIT(column) : WRITE_BIT(column);
+  const exceptions = indexed(snap).agent;
+  const hits = agents
+    .filter((a) => !q || a.name.toLowerCase().includes(q) || a.id.toLowerCase().includes(q))
+    .map((a) => ({ a, m: scopeMask(snap, keys, a, now, base) }))
+    .filter((x) => x.m & bit)
+    .sort((x, y) => x.a.name.localeCompare(y.a.name) || x.a.id.localeCompare(y.a.id));
+  const page = hits.slice(offset, offset + limit);
+  return {
+    scope: scopeKey(scope.kind, scope.id), column, mode, count: hits.length, total: agents.length,
+    agents: page.map(({ a, m }) => ({
+      id: a.id, name: a.name, read: !!(m & READ_BIT(column)), write: !!(m & WRITE_BIT(column)),
+      template: snap.roles.get(a.id) ?? null,
+      exception: keys.some((k) => (exceptions.get(a.id)?.get(k) ?? []).some((r) => r.drawer_kind === column && !ended(r, now))),
+    })),
+    nextCursor: offset + limit < hits.length ? (offset + limit).toString(36) : null,
+  };
+}
+
+/** How many agents may read (or write) one column in every scope: company, each department, each active project. */
+export async function accessCounts(ownerId: string, input: { column?: unknown; mode?: unknown } = {}, now = Date.now()) {
+  const column = (input.column ?? 'project') as AccessColumn;
+  if (!COLUMNS.includes(column)) throw new ScopeInputError(`column must be one of ${COLUMNS.join(', ')}`);
+  const mode = input.mode ?? 'read';
+  if (mode !== 'read' && mode !== 'write') throw new ScopeInputError('mode must be read or write');
+  const bit = mode === 'read' ? READ_BIT(column) : WRITE_BIT(column);
+  const { agents, snap, departments, projects } = await sql().read((function* () {
+    const ds = yield* all<{ id: string }>('SELECT id FROM memory_departments WHERE owner_id = ? ORDER BY id', ownerId);
+    return {
+      agents: yield* agentCapsStep(), snap: yield* loadSnapshotStep(ownerId),
+      departments: [GENERAL_DEPARTMENT, ...ds.map((d) => d.id)],
+      projects: (yield* listProjectsStep(ownerId)).filter((p) => !p.archived).map((p) => p.slug),
+    };
+  })());
+  const count = (scope: AccessScope) => {
+    const keys = scopeChainKeys(snap, scope);
+    const base = baseMaskOf(snap, keys);
+    let n = 0;
+    for (const a of agents) if (scopeMask(snap, keys, a, now, base) & bit) n++;
+    return n;
+  };
+  return {
+    column, mode, total: agents.length,
+    company: count({ kind: 'company', id: '' }),
+    departments: Object.fromEntries(departments.map((id) => [id, count({ kind: 'department', id })])),
+    projects: Object.fromEntries(projects.map((slug) => [slug, count({ kind: 'project', id: slug })])),
+  };
+}
+
+/** One role template with the agents that use it (paged by name). */
+export async function templateDetail(ownerId: string, id: string, opts: { cursor?: unknown; limit?: unknown } = {}) {
+  if (!TEMPLATE_ID.test(id)) throw new ScopeInputError('Role template not found', 404, 'not_found');
+  const snap = await accessSnapshot(ownerId);
+  const t = snap.templates.get(id);
+  if (!t) throw new ScopeInputError('Role template not found', 404, 'not_found');
+  const limit = Math.min(Math.max(Number(opts.limit) || 100, 1), 500);
+  const offset = opts.cursor === undefined || opts.cursor === '' ? 0 : Number.parseInt(String(opts.cursor), 36);
+  if (!Number.isSafeInteger(offset) || offset < 0) throw new ScopeInputError('Invalid cursor');
+  const rows = await sql().read(all<{ id: string; name: string }>(`
+    SELECT a.id, a.name FROM memory_agent_roles r JOIN agents_config a ON a.id = r.agent_id
+     WHERE r.owner_id = ? AND r.template_id = ? ORDER BY a.name, a.id LIMIT ? OFFSET ?`, ownerId, id, limit + 1, offset));
+  let agents = 0;
+  for (const x of snap.roles.values()) if (x === id) agents++;
+  return {
+    template: templateView(t, agents),
+    agents: rows.slice(0, limit),
+    nextCursor: rows.length > limit ? (offset + limit).toString(36) : null,
   };
 }

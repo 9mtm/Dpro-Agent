@@ -16,6 +16,12 @@
  *   POST /api/memory/proposals/:id/reject        { expectedReviewHash, note? } nothing changes (audited)
  *   POST /api/memory/proposals/:id/decide        { decision, expectedReviewHash, note? } a conflict proposal
  *                                                (CORE-MEM-CONFLICT): keep_new | keep_old | keep_both (audited)
+ *   GET  /api/memory/proposals/groups?by=scope|department|agent
+ *                                                waiting reviews in groups with conflict / routine counts and
+ *                                                the department reviewer (MEM-GAPS-02)
+ *   POST /api/memory/proposals/accept-routine/preview { scope?, agent? } -> { count, items, previewHash } (changes nothing)
+ *   POST /api/memory/proposals/accept-routine    { scope?, agent?, expectedPreviewHash, confirm: true }
+ *                                                approve every routine proposal of the preview (audited)
  *
  * Decision errors carry a machine `code`: 400 `review_hash_required`,
  * 409 `already_decided` | `stale` | `review_changed`.
@@ -41,6 +47,7 @@ import {
 } from '../../memory/memory-files.js';
 import { repositories } from '../../repositories/index.js';
 import { ScopeError, actorOrReply, requireOwner } from '../../repositories/scope.js';
+import { ScopeInputError, acceptRoutine, previewAcceptRoutine, reviewGroups } from '../../memory/scopes/index.js';
 
 const STATUSES = new Set(['pending', 'approved', 'rejected', 'stale', 'cancelled']);
 
@@ -73,6 +80,10 @@ type IdParams = { Params: { id: string } };
 
 export async function memoryFilesRoutes(fastify: FastifyInstance) {
   const config = { access: 'owner' as const };
+  const scopeFail = (reply: FastifyReply, err: unknown) => {
+    if (err instanceof ScopeInputError) return reply.code(err.status).send({ error: err.message, code: err.code });
+    return fail(reply, err);
+  };
   // Columns/backfill for drawers (idempotent; normally done by the memory routes).
   await getMemoryStorage().initialize();
 
@@ -151,6 +162,32 @@ export async function memoryFilesRoutes(fastify: FastifyInstance) {
     const status = (request.query as any)?.status;
     if (status !== undefined && !STATUSES.has(status)) return reply.code(400).send({ error: 'Invalid status' });
     return { proposals: (await repositories.memory.proposals(actorOf(request), status)).map(summary) };
+  });
+
+  // MEM-GAPS-02: the inbox at scale.
+  fastify.get('/api/memory/proposals/groups', { config }, async (request, reply) => {
+    const ownerId = ownerOf(request, reply);
+    if (ownerId === null) return reply;
+    try { return await reviewGroups(ownerId, (request.query as any)?.by ?? 'scope'); } catch (err) { return scopeFail(reply, err); }
+  });
+
+  fastify.post('/api/memory/proposals/accept-routine/preview', { config }, async (request, reply) => {
+    const ownerId = ownerOf(request, reply);
+    if (ownerId === null) return reply;
+    try { return await previewAcceptRoutine(ownerId, body(request)); } catch (err) { return scopeFail(reply, err); }
+  });
+
+  fastify.post('/api/memory/proposals/accept-routine', { config }, async (request, reply) => {
+    const ownerId = ownerOf(request, reply);
+    if (ownerId === null) return reply;
+    const b = body(request);
+    if (b.confirm !== true) return reply.code(400).send({ error: 'Confirm the change (confirm: true)', code: 'confirm_required' });
+    try {
+      const { confirm: _confirm, ...rest } = b;
+      const out = await acceptRoutine(ownerId, rest, ownerId);
+      audit(request, ownerId, 'memory_proposal.accept_routine', true, ownerId, { approved: out.approved.length, skipped: out.skipped.length, scope: b.scope ?? null, agent: b.agent ?? null });
+      return out;
+    } catch (err) { return scopeFail(reply, err); }
   });
 
   fastify.get<IdParams>('/api/memory/proposals/:id', { config }, async (request, reply) => {

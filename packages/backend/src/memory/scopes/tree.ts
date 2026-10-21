@@ -11,12 +11,18 @@
  * large drawer or no new memory for STALE_DAYS; else ok.
  *
  * The explorer pages the memories of one scope on the server (cursor on
- * created_at, id; newest first) with filter counts (facets).
+ * created_at, id; newest first) with filter counts (facets). Scopes:
+ * company, department:<id>, agent:<id> (saved by that agent), a drawer id,
+ * or kind:<drawer kind> (every drawer of that kind). Filters (MEM-GAPS-02):
+ * text, type, layer, topic, source (who/what saved it), agent, importance
+ * (n or a-b, 1-10) and date (from / to, YYYY-MM-DD). Each item says in how
+ * many replies it was used.
  */
 
 import { all, dialect, one, sql, type Step } from '../../repositories/sql-steps.js';
 import { likeCi } from '../../db/pg/dialect.js';
-import { drawerId, isValidDrawerKey, parseDrawerId, DrawerInputError, type DrawerKind } from '../drawers.js';
+import { DRAWER_KINDS, drawerId, isValidDrawerKey, parseDrawerId, DrawerInputError, type DrawerKind } from '../drawers.js';
+import { memoryUseCounts } from '../context/trace.js';
 import { GENERAL_DEPARTMENT, ScopeInputError, departmentStep, listDepartmentsStep, listProjectsStep, type ProjectScope } from './store.js';
 
 export const SCOPE_TREE_TTL_MS = 15_000;
@@ -213,8 +219,22 @@ export async function listAgentScopes(ownerId: string, opts: { q?: unknown; curs
 // Explorer: memories of one scope, filtered and paged on the server
 // ---------------------------------------------------------------------------
 
-export interface ExplorerItem { id: string; type: string; preview: string; drawerId: string; topicKey: string | null; importance: number; layer: string; createdAt: string; sourceAgentId: string | null }
-export interface ExplorerPage { scope: string; items: ExplorerItem[]; nextCursor: string | null; total: number; facets: { type: Record<string, number>; layer: Record<string, number>; drawer: Record<string, number> } }
+export interface ExplorerItem {
+  id: string; type: string; preview: string; drawerId: string; topicKey: string | null; importance: number; layer: string; createdAt: string; sourceAgentId: string | null;
+  /** Who or what saved it (metadata.source: owner, agent, import, chat, ...), else null. */
+  source: string | null;
+  /** Replies that used it (reply trace, MEM-GAPS-02). */
+  usedIn: number;
+}
+export interface ExplorerPage { scope: string; items: ExplorerItem[]; nextCursor: string | null; total: number; facets: { type: Record<string, number>; layer: Record<string, number>; drawer: Record<string, number>; source: Record<string, number> } }
+
+/** Values of memories.metadata.source the explorer filters on (MEM-GAPS-02). */
+export const MEMORY_SOURCES = ['owner', 'agent', 'outsider', 'chat', 'conversation', 'learning', 'import', 'memory_file', 'retention'] as const;
+/** SQL condition: memories.metadata names this source (metadata is written by JSON.stringify: no spaces). */
+const SOURCE_SQL = "metadata LIKE ? ESCAPE '\\'";
+const sourceParam = (source: string) => `%"source":"${escLike(source)}"%`;
+const DAY = /^\d{4}-\d{2}-\d{2}$/;
+const IMPORTANCE = /^(10|[1-9])(?:-(10|[1-9]))?$/;
 
 export const PREVIEW_CHARS = 280;
 const TYPE = /^[a-z][a-z_-]{0,31}$/;
@@ -235,6 +255,11 @@ function* scopeCondition(ownerId: string, scope: string): Step<{ sql: string; pa
     if (!/^[A-Za-z0-9_.:-]{1,128}$/.test(id)) throw new ScopeInputError('Invalid agent');
     return { sql: 'source_agent_id = ?', params: [id] };
   }
+  if (kind === 'kind') {
+    // Every drawer of one kind (rows saved before drawers count as owner).
+    if (!(DRAWER_KINDS as readonly string[]).includes(id)) throw new ScopeInputError('Invalid scope');
+    return { sql: "COALESCE(drawer_kind, 'owner') = ?", params: [id] };
+  }
   try {
     const d = parseDrawerId(scope);
     return { sql: 'drawer_kind = ? AND drawer_key = ?', params: [d.kind, d.key || ''] };
@@ -244,7 +269,12 @@ function* scopeCondition(ownerId: string, scope: string): Step<{ sql: string; pa
   }
 }
 
-export async function exploreScope(ownerId: string, input: { scope?: unknown; q?: unknown; type?: unknown; layer?: unknown; topic?: unknown; cursor?: unknown; limit?: unknown }): Promise<ExplorerPage> {
+export interface ExplorerInput {
+  scope?: unknown; q?: unknown; type?: unknown; layer?: unknown; topic?: unknown; cursor?: unknown; limit?: unknown;
+  source?: unknown; agent?: unknown; importance?: unknown; from?: unknown; to?: unknown;
+}
+
+export async function exploreScope(ownerId: string, input: ExplorerInput): Promise<ExplorerPage> {
   const scope = typeof input.scope === 'string' && input.scope ? input.scope : 'company';
   if (scope.length > 200) throw new ScopeInputError('Invalid scope');
   const limit = Math.min(Math.max(Number(input.limit) || 50, 1), 200);
@@ -255,6 +285,20 @@ export async function exploreScope(ownerId: string, input: { scope?: unknown; q?
   if (layer !== null && (typeof layer !== 'string' || !TYPE.test(layer))) throw new ScopeInputError('Invalid layer');
   const topic = input.topic === undefined || input.topic === '' ? null : input.topic;
   if (topic !== null && topic !== 'has' && topic !== 'none') throw new ScopeInputError('topic must be has or none');
+  const source = input.source === undefined || input.source === '' ? null : input.source;
+  if (source !== null && !(MEMORY_SOURCES as readonly unknown[]).includes(source)) throw new ScopeInputError(`source must be one of ${MEMORY_SOURCES.join(', ')}`);
+  const agent = input.agent === undefined || input.agent === '' ? null : input.agent;
+  if (agent !== null && (typeof agent !== 'string' || !/^[A-Za-z0-9_.:-]{1,128}$/.test(agent))) throw new ScopeInputError('Invalid agent');
+  const imp = input.importance === undefined || input.importance === '' ? null : IMPORTANCE.exec(String(input.importance));
+  if (input.importance !== undefined && input.importance !== '' && (!imp || typeof input.importance !== 'string')) throw new ScopeInputError('importance must be n or a-b (1-10)');
+  const range = imp ? [Number(imp[1]), Number(imp[2] ?? imp[1])].sort((a, b) => a - b) : null;
+  const day = (v: unknown, name: string): string | null => {
+    if (v === undefined || v === '') return null;
+    if (typeof v !== 'string' || !DAY.test(v) || Number.isNaN(Date.parse(`${v}T00:00:00Z`))) throw new ScopeInputError(`${name} must be a date (YYYY-MM-DD)`);
+    return v;
+  };
+  const from = day(input.from, 'from');
+  const to = day(input.to, 'to');
   const after = decodeCursor(input.cursor, 2);
   return sql().read((function* () {
     const d = yield* dialect();
@@ -269,12 +313,18 @@ export async function exploreScope(ownerId: string, input: { scope?: unknown; q?
     if (layer) { filters.push("COALESCE(memory_layer, 'factual') = ?"); filterParams.push(layer); }
     if (topic === 'has') filters.push('topic_key IS NOT NULL');
     if (topic === 'none') filters.push('topic_key IS NULL');
+    if (source) { filters.push(SOURCE_SQL); filterParams.push(sourceParam(source as string)); }
+    if (agent) { filters.push('source_agent_id = ?'); filterParams.push(agent as string); }
+    // Shown importance = round(score * 10): the range is matched on the same rounding.
+    if (range) { filters.push('COALESCE(importance_score, 0.5) >= ? AND COALESCE(importance_score, 0.5) < ?'); filterParams.push((range[0] - 0.5) / 10, (range[1] + 0.5) / 10); }
+    if (from) { filters.push('created_at >= ?'); filterParams.push(from); }
+    if (to) { filters.push('created_at < ?'); filterParams.push(new Date(Date.parse(`${to}T00:00:00Z`) + 86_400_000).toISOString().slice(0, 10)); }
     const total = Number((yield* one<{ n: number }>(`SELECT COUNT(*) AS n FROM memories WHERE ${filters.join(' AND ')}`, ...filterParams))?.n ?? 0);
     const page = [...filters];
     const pageParams = [...filterParams];
     if (after) { page.push('(created_at < ? OR (created_at = ? AND id < ?))'); pageParams.push(after[0], after[0], after[1]); }
-    const rows = yield* all<{ id: string; type: string; content: string; drawer_kind: string | null; drawer_key: string | null; topic_key: string | null; importance_score: number | null; memory_layer: string | null; created_at: string; source_agent_id: string | null }>(
-      `SELECT id, type, content, drawer_kind, drawer_key, topic_key, importance_score, memory_layer, created_at, source_agent_id
+    const rows = yield* all<{ id: string; type: string; content: string; drawer_kind: string | null; drawer_key: string | null; topic_key: string | null; importance_score: number | null; memory_layer: string | null; created_at: string; source_agent_id: string | null; metadata: string | null }>(
+      `SELECT id, type, content, drawer_kind, drawer_key, topic_key, importance_score, memory_layer, created_at, source_agent_id, metadata
          FROM memories WHERE ${page.join(' AND ')} ORDER BY created_at DESC, id DESC LIMIT ?`, ...pageParams, limit + 1);
     const facet = function* (col: string) {
       const r = yield* all<{ v: string | null; n: number }>(`SELECT ${col} AS v, COUNT(*) AS n FROM memories WHERE ${base.join(' AND ')} GROUP BY ${col} ORDER BY n DESC LIMIT 50`, ...baseParams);
@@ -284,18 +334,35 @@ export async function exploreScope(ownerId: string, input: { scope?: unknown; q?
     const layer_ = yield* facet("COALESCE(memory_layer, 'factual')");
     const drawerRows = yield* all<{ k: string | null; key: string | null; n: number }>(
       `SELECT drawer_kind AS k, drawer_key AS key, COUNT(*) AS n FROM memories WHERE ${base.join(' AND ')} GROUP BY drawer_kind, drawer_key ORDER BY n DESC LIMIT 50`, ...baseParams);
+    const sourceRow = yield* one<Record<string, number | null>>(
+      `SELECT ${MEMORY_SOURCES.map((x, i) => `SUM(CASE WHEN ${SOURCE_SQL} THEN 1 ELSE 0 END) AS s${i}`).join(', ')} FROM memories WHERE ${base.join(' AND ')}`,
+      ...MEMORY_SOURCES.map(sourceParam), ...baseParams);
+    const source_ = Object.fromEntries(MEMORY_SOURCES.map((x, i) => [x, Number(sourceRow?.[`s${i}`] ?? 0)]).filter(([, n]) => Number(n) > 0));
     const items = rows.slice(0, limit).map((r): ExplorerItem => ({
       id: r.id, type: r.type, preview: r.content.length > PREVIEW_CHARS ? `${r.content.slice(0, PREVIEW_CHARS)}…` : r.content,
       drawerId: drawerIdOf(r.drawer_kind, r.drawer_key), topicKey: r.topic_key, importance: Math.round((r.importance_score ?? 0.5) * 10),
       layer: r.memory_layer ?? 'factual', createdAt: r.created_at, sourceAgentId: r.source_agent_id ?? null,
+      source: sourceOf(r.metadata), usedIn: 0,
     }));
     const last = items[items.length - 1];
     return {
       scope, items, total,
       nextCursor: rows.length > limit && last ? encodeCursor([last.createdAt, last.id]) : null,
-      facets: { type: type_, layer: layer_, drawer: Object.fromEntries(drawerRows.map((r) => [drawerIdOf(r.k, r.key), Number(r.n)])) },
+      facets: { type: type_, layer: layer_, drawer: Object.fromEntries(drawerRows.map((r) => [drawerIdOf(r.k, r.key), Number(r.n)])), source: source_ },
     };
-  })());
+  })()).then(async (page) => {
+    const used = await memoryUseCounts(ownerId, page.items.map((i) => i.id)).catch(() => new Map<string, number>());
+    for (const i of page.items) i.usedIn = used.get(i.id) ?? 0;
+    return page;
+  });
+}
+
+function sourceOf(metadata: string | null): string | null {
+  if (!metadata) return null;
+  try {
+    const v = JSON.parse(metadata) as { source?: unknown };
+    return typeof v?.source === 'string' && /^[a-z_-]{1,32}$/.test(v.source) ? v.source : null;
+  } catch { return null; }
 }
 
 function drawerIdOf(kind: string | null, key: string | null): string {

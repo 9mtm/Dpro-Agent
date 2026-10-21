@@ -74,6 +74,12 @@ export interface ToolExecutionContext {
   workspaceDir: string;
   timeout?: number;
   userId?: string;
+  /**
+   * MEM-GAPS-02: the owner whose memory access policies narrow this run
+   * (MEM-SCALE-01) when it is not `userId` — a board task run's owner (its
+   * tool user is the agent). Absent = `userId`.
+   */
+  accessOwnerId?: string;
   sessionId?: string;
   /** Agent the tools run for (agents_config.id). Its grants limit the tools (S1.2). */
   agentId?: string;
