@@ -9,7 +9,7 @@
 //   GET    /api/memory/scopes/tree[?fresh=1]
 //   GET    /api/memory/scopes/search?q=&kinds=&limit=
 //   GET    /api/memory/scopes/agents?q=&cursor=&limit=
-//   GET    /api/memory/scopes/memories?scope=&q=&type=&layer=&topic=&cursor=&limit=
+//   GET    /api/memory/scopes/memories?scope=&q=&type=&layer=&topic=&source=&agent=&importance=&from=&to=&cursor=&limit=
 //   GET    /api/memory/scopes/pinned?scope=
 //   POST   /api/memory/scopes/pinned                     { scope, text }
 //   PATCH  /api/memory/scopes/pinned/:id                 { text?, position? }
@@ -31,7 +31,7 @@
 //   GET    /api/memory/graph/links?status=&limit=
 //   POST   /api/memory/graph/links/:id/approve | reject
 //   Handoffs (CORE-MEM-HANDOFF)
-//   GET    /api/handoffs?agentId=&kind=&limit=
+//   GET    /api/handoffs?agentId=&kind=&projectId=&limit=
 //   GET    /api/handoffs/:kind/:scopeId?agentId=
 //   PUT    /api/handoffs/:kind/:scopeId                  { agentId, done?, left?, next?, questions? }
 //   Conflicts (CORE-MEM-CONFLICT)
@@ -50,9 +50,14 @@ const text = (x, max) => typeof x === 'string' && !!x.trim() && x.length <= max 
 const hash = x => typeof x === 'string' && /^[a-f0-9]{64}$/.test(x);
 
 export const DRAWER_KINDS = ['owner', 'project', 'experience', 'task', 'people'];
+/** Columns of the access grid: the drawer kinds, then company / department pinned facts (MEM-GAPS-02). */
+export const SCOPE_COLUMNS = ['company', 'department'];
+export const ACCESS_COLUMNS = [...DRAWER_KINDS, ...SCOPE_COLUMNS];
+/** metadata.source values the explorer filters on. */
+export const MEMORY_SOURCES = ['owner', 'agent', 'outsider', 'chat', 'conversation', 'learning', 'import', 'memory_file', 'retention'];
 export const PROJECT_ACTIONS = ['pin', 'unpin', 'archive', 'unarchive', 'move', 'merge', 'forget'];
 export const ACCESS_MODES = ['allow', 'deny', 'inherit'];
-export const DOCTOR_KINDS = ['duplicate', 'expired', 'embedding-missing', 'embedding-stale', 'orphan-versions', 'broken-drawer', 'topic-key-invalid'];
+export const DOCTOR_KINDS = ['duplicate', 'expired', 'embedding-missing', 'embedding-stale', 'orphan-versions', 'broken-drawer', 'topic-key-invalid', 'graph-orphan'];
 export const ENTITY_KINDS = ['person', 'project', 'place', 'topic', 'agent', 'task', 'decision'];
 export const LINK_STATUSES = ['active', 'pending', 'rejected'];
 export const HANDOFF_KINDS = ['conversation', 'task'];
@@ -72,13 +77,15 @@ const cursor = x => typeof x === 'string' && /^[A-Za-z0-9_=-]{1,1024}$/.test(x);
 const limit = max => x => /^[1-9][0-9]{0,3}$/.test(x) && Number(x) <= max;
 const word = x => typeof x === 'string' && /^[a-z][a-z_-]{0,31}$/.test(x);
 const queryText = max => x => typeof x === 'string' && x.length <= max && !badChars.test(x);
+const day = x => typeof x === 'string' && /^\d{4}-\d{2}-\d{2}$/.test(x) && !Number.isNaN(Date.parse(`${x}T00:00:00Z`));
 export function validDrawerId(x) {
   return typeof x === 'string' && (x === 'owner' || x === 'experience' || /^project:[a-z0-9][a-z0-9_-]{0,63}$/.test(x)
     || (/^(task|people):[A-Za-z0-9][A-Za-z0-9_.@-]{0,127}$/.test(x) && !x.includes('..')));
 }
-/** A scope of the explorer: company, department:<id>, agent:<id> or a drawer id. */
+/** A scope of the explorer: company, department:<id>, agent:<id>, kind:<drawer kind> or a drawer id. */
 export function validScope(x) {
-  return x === 'company' || validDrawerId(x) || (typeof x === 'string' && ((x.startsWith('department:') && departmentId(x.slice(11))) || (x.startsWith('agent:') && agentId(x.slice(6)))));
+  return x === 'company' || validDrawerId(x) || (typeof x === 'string' && ((x.startsWith('department:') && departmentId(x.slice(11))) || (x.startsWith('agent:') && agentId(x.slice(6)))
+    || (x.startsWith('kind:') && DRAWER_KINDS.includes(x.slice(5)))));
 }
 /** A scope that holds pinned facts or access rules. */
 export const validRuleScope = x => x === 'company' || (typeof x === 'string' && ((x.startsWith('department:') && departmentId(x.slice(11))) || (x.startsWith('project:') && slug(x.slice(8)))));
@@ -108,12 +115,15 @@ const QUERIES = {
   tree: { fresh: x => x === '1' },
   search: { q: queryText(200), kinds: x => /^[a-z]+(,[a-z]+){0,3}$/.test(x), limit: limit(50) },
   agents: { q: queryText(200), cursor, limit: limit(200) },
-  memories: { scope: validScope, q: queryText(200), type: word, layer: word, topic: x => x === 'has' || x === 'none', cursor, limit: limit(200) },
+  memories: {
+    scope: validScope, q: queryText(200), type: word, layer: word, topic: x => x === 'has' || x === 'none', cursor, limit: limit(200),
+    source: x => MEMORY_SOURCES.includes(x), agent: agentId, importance: x => /^(10|[1-9])(-(10|[1-9]))?$/.test(x), from: day, to: day,
+  },
   pinned: { scope: validRuleScope },
   effective: { project: slug },
   entities: { q: queryText(200), kind: x => ENTITY_KINDS.includes(x), limit: limit(500) },
   links: { status: x => LINK_STATUSES.includes(x), limit: limit(500) },
-  handoffs: { agentId: handoffAgent, kind: x => HANDOFF_KINDS.includes(x), limit: limit(200) },
+  handoffs: { agentId: handoffAgent, kind: x => HANDOFF_KINDS.includes(x), projectId: plainId, limit: limit(200) },
   handoff: { agentId: handoffAgent },
 };
 
@@ -156,19 +166,24 @@ export function memoryPagesPath(path) {
 export function memoryPagesRoute(path) { return memoryPagesPath(path) !== null; }
 
 const kinds = x => Array.isArray(x) && x.length <= DRAWER_KINDS.length && x.every(k => DRAWER_KINDS.includes(k)) && new Set(x).size === x.length;
+const scopeCols = x => Array.isArray(x) && x.length <= SCOPE_COLUMNS.length && x.every(k => SCOPE_COLUMNS.includes(k)) && new Set(x).size === x.length;
 function accessChange(c) {
   if (!record(c)) return false;
   const agent = c.agentId === undefined || c.agentId === null || agentId(c.agentId);
   switch (c.op) {
     case 'set_rule':
-      return onlyKeys(c, ['op', 'scope', 'agentId', 'drawerKind', 'read', 'write', 'endsAt', 'reason']) && agent && validRuleScope(c.scope) && DRAWER_KINDS.includes(c.drawerKind)
+      return onlyKeys(c, ['op', 'scope', 'agentId', 'drawerKind', 'read', 'write', 'endsAt', 'reason']) && agent && validRuleScope(c.scope) && ACCESS_COLUMNS.includes(c.drawerKind)
         && (c.read === undefined || ACCESS_MODES.includes(c.read)) && (c.write === undefined || ACCESS_MODES.includes(c.write))
         && (c.endsAt === undefined || c.endsAt === null || (typeof c.endsAt === 'string' && /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}(:\d{2}(\.\d{3})?)?Z$/.test(c.endsAt) && !!c.agentId))
         && (c.reason === undefined || c.reason === null || text(c.reason, 200));
-    case 'clear_rule': return onlyKeys(c, ['op', 'scope', 'agentId', 'drawerKind']) && agent && validRuleScope(c.scope) && DRAWER_KINDS.includes(c.drawerKind);
+    case 'clear_rule': return onlyKeys(c, ['op', 'scope', 'agentId', 'drawerKind']) && agent && validRuleScope(c.scope) && ACCESS_COLUMNS.includes(c.drawerKind);
     case 'save_template':
-      return onlyKeys(c, ['op', 'id', 'name', 'memoryRead', 'memoryWrite']) && (c.id === undefined || c.id === null || (typeof c.id === 'string' && /^[A-Za-z0-9_-]{1,64}$/.test(c.id)))
-        && text(c.name, 80) && kinds(c.memoryRead) && kinds(c.memoryWrite) && c.memoryWrite.every(k => c.memoryRead.includes(k));
+      return onlyKeys(c, ['op', 'id', 'name', 'memoryRead', 'memoryWrite', 'scopeRead', 'scopeWrite']) && (c.id === undefined || c.id === null || (typeof c.id === 'string' && /^[A-Za-z0-9_-]{1,64}$/.test(c.id)))
+        && text(c.name, 80) && kinds(c.memoryRead) && kinds(c.memoryWrite) && c.memoryWrite.every(k => c.memoryRead.includes(k))
+        // Scope columns: left out = keep; null = no limit; a list caps them (scopeWrite only with scopeRead, within it).
+        && (c.scopeRead === undefined ? c.scopeWrite === undefined
+          : c.scopeRead === null ? (c.scopeWrite === undefined || c.scopeWrite === null || (Array.isArray(c.scopeWrite) && c.scopeWrite.length === 0))
+            : scopeCols(c.scopeRead) && (c.scopeWrite === undefined || c.scopeWrite === null || (scopeCols(c.scopeWrite) && c.scopeWrite.every(k => c.scopeRead.includes(k)))));
     case 'delete_template': return onlyKeys(c, ['op', 'id']) && typeof c.id === 'string' && /^[A-Za-z0-9_-]{1,64}$/.test(c.id);
     case 'assign_template':
       return onlyKeys(c, ['op', 'template', 'agentIds']) && (c.template === null || text(c.template, 80))
@@ -241,6 +256,8 @@ const list = (x, max) => (Array.isArray(x) ? x.slice(0, max) : []);
 const health = x => (['ok', 'attention', 'problem'].includes(x) ? x : 'ok');
 const reasons = x => list(x, 8).filter(r => typeof r === 'string' && /^[a-z_]{1,32}$/.test(r));
 const kindList = x => list(x, 5).filter(k => DRAWER_KINDS.includes(k));
+const columnList = x => list(x, ACCESS_COLUMNS.length).filter(k => ACCESS_COLUMNS.includes(k));
+const scopeList = x => (x === null || x === undefined ? null : list(x, 2).filter(k => SCOPE_COLUMNS.includes(k)));
 const idOr = (x, ok, fallback = null) => (ok(x) ? x : fallback);
 
 function counts(c) {
@@ -278,6 +295,7 @@ function explorerItem(i) {
   return {
     id: i.id, type: clip(i.type, 32), preview: clip(i.preview, 400), drawerId: idOr(i.drawerId, validDrawerId, 'owner'), topicKey: typeof i.topicKey === 'string' ? clip(i.topicKey, 120) : null,
     importance: Math.min(10, Math.max(0, count(i.importance))), layer: clip(i.layer, 20), createdAt: when(i.createdAt), sourceAgentId: idOr(i.sourceAgentId, agentId),
+    source: typeof i.source === 'string' && /^[a-z_-]{1,32}$/.test(i.source) ? i.source : null, usedIn: count(i.usedIn),
   };
 }
 function fact(f) {
@@ -301,31 +319,37 @@ function effects(e) {
 function sample(x) {
   return list(x, 20).filter(s => record(s) && agentId(s.agentId)).map(s => ({
     agentId: s.agentId, agentName: clip(s.agentName, 120), project: idOr(s.project, slug),
-    before: { read: kindList(s.before?.read), write: kindList(s.before?.write) }, after: { read: kindList(s.after?.read), write: kindList(s.after?.write) },
+    before: { read: columnList(s.before?.read), write: columnList(s.before?.write) }, after: { read: columnList(s.after?.read), write: columnList(s.after?.write) },
   }));
 }
 function rule(r) {
   if (!record(r) || !plainId(r.id)) fail();
   return {
-    id: r.id, scope: idOr(r.scope, validRuleScope, 'company'), agentId: idOr(r.agentId, agentId), drawerKind: DRAWER_KINDS.includes(r.drawerKind) ? r.drawerKind : 'owner',
+    id: r.id, scope: idOr(r.scope, validRuleScope, 'company'), agentId: idOr(r.agentId, agentId), drawerKind: ACCESS_COLUMNS.includes(r.drawerKind) ? r.drawerKind : 'owner',
     read: ACCESS_MODES.includes(r.read) ? r.read : 'inherit', write: ACCESS_MODES.includes(r.write) ? r.write : 'inherit', endsAt: whenOrNull(r.endsAt), expired: r.expired === true, reason: typeof r.reason === 'string' ? clip(r.reason, 200) : null, createdAt: when(r.createdAt),
   };
 }
 function template(t) {
   if (!record(t) || typeof t.id !== 'string' || !/^[A-Za-z0-9_-]{1,64}$/.test(t.id)) fail();
-  return { id: t.id, name: clip(t.name, 80) || t.id, memoryRead: kindList(t.memoryRead), memoryWrite: kindList(t.memoryWrite), agents: count(t.agents) };
+  return { id: t.id, name: clip(t.name, 80) || t.id, memoryRead: kindList(t.memoryRead), memoryWrite: kindList(t.memoryWrite), scopeRead: scopeList(t.scopeRead), scopeWrite: scopeList(t.scopeWrite), agents: count(t.agents) };
 }
 const WHY_LAYERS = ['default', 'company', 'department', 'project', 'agent-company', 'agent-department', 'agent-project', 'agent-permissions', 'role-template'];
 const why = x => list(x, 20).filter(w => record(w) && WHY_LAYERS.includes(w.layer) && ['allow', 'deny'].includes(w.value)).map(w => ({ layer: w.layer, value: w.value, ...(w.endsAt ? { endsAt: when(w.endsAt) } : {}), ...(typeof w.name === 'string' ? { name: clip(w.name, 80) } : {}) }));
 function effective(b, id) {
   if (b.agentId !== id || !record(b.kinds)) fail();
   const k = {};
-  for (const d of DRAWER_KINDS) { const x = record(b.kinds[d]) ? b.kinds[d] : {}; k[d] = { read: x.read === true, write: x.write === true, readWhy: why(x.readWhy), writeWhy: why(x.writeWhy) }; }
+  for (const d of ACCESS_COLUMNS) { const x = record(b.kinds[d]) ? b.kinds[d] : {}; k[d] = { read: x.read === true, write: x.write === true, readWhy: why(x.readWhy), writeWhy: why(x.writeWhy) }; }
   return {
     agentId: id, agentName: clip(b.agentName, 120) || id, project: idOr(b.project, slug), department: idOr(b.department, departmentId), version: count(b.version),
     template: record(b.template) && typeof b.template.id === 'string' ? { id: clip(b.template.id, 64), name: clip(b.template.name, 80) } : null,
     exceptions: list(b.exceptions, 200).map(rule),
-    effective: { memoryRead: kindList(b.effective?.memoryRead), memoryWrite: kindList(b.effective?.memoryWrite) }, kinds: k,
+    effective: {
+      memoryRead: kindList(b.effective?.memoryRead), memoryWrite: kindList(b.effective?.memoryWrite),
+      // Older servers send no scope columns: every agent read them then.
+      scopeRead: Array.isArray(b.effective?.scopeRead) ? list(b.effective.scopeRead, 2).filter(x => SCOPE_COLUMNS.includes(x)) : [...SCOPE_COLUMNS],
+      scopeWrite: Array.isArray(b.effective?.scopeWrite) ? list(b.effective.scopeWrite, 2).filter(x => SCOPE_COLUMNS.includes(x)) : [...SCOPE_COLUMNS],
+    },
+    kinds: k,
   };
 }
 function accessPreview(b) {
@@ -398,7 +422,7 @@ export function memoryPagesResponse(path, status, body) {
     case 'memories': {
       if (!Array.isArray(body.items) || body.items.length > 200) fail();
       const f = record(body.facets) ? body.facets : {};
-      return { scope: idOr(body.scope, validScope, 'company'), items: body.items.map(explorerItem), nextCursor: cursor(body.nextCursor) ? body.nextCursor : null, total: count(body.total), facets: { type: facet(f.type), layer: facet(f.layer), drawer: facet(f.drawer) } };
+      return { scope: idOr(body.scope, validScope, 'company'), items: body.items.map(explorerItem), nextCursor: cursor(body.nextCursor) ? body.nextCursor : null, total: count(body.total), facets: { type: facet(f.type), layer: facet(f.layer), drawer: facet(f.drawer), source: facet(f.source) } };
     }
     case 'pinned':
       if (status === 201) return { fact: fact(body.fact) };

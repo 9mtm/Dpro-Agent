@@ -1,4 +1,7 @@
 export const DRAWER_KINDS: readonly DrawerKind[];
+export const SCOPE_COLUMNS: readonly ScopeColumn[];
+export const ACCESS_COLUMNS: readonly AccessColumn[];
+export const MEMORY_SOURCES: readonly string[];
 export const PROJECT_ACTIONS: readonly ProjectAction[];
 export const ACCESS_MODES: readonly AccessMode[];
 export const DOCTOR_KINDS: readonly DoctorKind[];
@@ -10,9 +13,12 @@ export const MAX_PINNED_TEXT: number;
 export const MAX_HANDOFF_ITEMS: number;
 export const MAX_HANDOFF_ITEM: number;
 export type DrawerKind = 'owner' | 'project' | 'experience' | 'task' | 'people';
+/** Access grid columns besides the drawer kinds: company / department pinned facts. */
+export type ScopeColumn = 'company' | 'department';
+export type AccessColumn = DrawerKind | ScopeColumn;
 export type ProjectAction = 'pin' | 'unpin' | 'archive' | 'unarchive' | 'move' | 'merge' | 'forget';
 export type AccessMode = 'allow' | 'deny' | 'inherit';
-export type DoctorKind = 'duplicate' | 'expired' | 'embedding-missing' | 'embedding-stale' | 'orphan-versions' | 'broken-drawer' | 'topic-key-invalid';
+export type DoctorKind = 'duplicate' | 'expired' | 'embedding-missing' | 'embedding-stale' | 'orphan-versions' | 'broken-drawer' | 'topic-key-invalid' | 'graph-orphan';
 export type EntityKind = 'person' | 'project' | 'place' | 'topic' | 'agent' | 'task' | 'decision';
 export type LinkStatus = 'active' | 'pending' | 'rejected';
 export type HandoffKind = 'conversation' | 'task';
@@ -30,21 +36,21 @@ export type ScopeTree = {
 };
 export type ScopeHit = { kind: 'department' | 'project' | 'people' | 'agent'; id: string; name: string; departmentId?: string; archived: boolean; memories: number };
 export type AgentScope = { id: string; name: string; department: string | null; template: { id: string; name: string } | null; exceptions: number };
-export type ExplorerItem = { id: string; type: string; preview: string; drawerId: string; topicKey: string | null; importance: number; layer: string; createdAt: string; sourceAgentId: string | null };
-export type ExplorerPage = { scope: string; items: ExplorerItem[]; nextCursor: string | null; total: number; facets: { type: Record<string, number>; layer: Record<string, number>; drawer: Record<string, number> } };
+export type ExplorerItem = { id: string; type: string; preview: string; drawerId: string; topicKey: string | null; importance: number; layer: string; createdAt: string; sourceAgentId: string | null; source?: string | null; usedIn?: number };
+export type ExplorerPage = { scope: string; items: ExplorerItem[]; nextCursor: string | null; total: number; facets: { type: Record<string, number>; layer: Record<string, number>; drawer: Record<string, number>; source?: Record<string, number> } };
 export type PinnedFact = { id: string; scope: string; text: string; position: number; createdAt: string; updatedAt: string };
-export type AgentSample = { agentId: string; agentName: string; project: string | null; before: { read: DrawerKind[]; write: DrawerKind[] }; after: { read: DrawerKind[]; write: DrawerKind[] } };
+export type AgentSample = { agentId: string; agentName: string; project: string | null; before: { read: AccessColumn[]; write: AccessColumn[] }; after: { read: AccessColumn[]; write: AccessColumn[] } };
 export type Effects = Record<string, number | boolean | string | null> & { sample?: AgentSample[] };
 export type ProjectPreview = { action: ProjectAction; project: ProjectRef; target?: ProjectRef; department?: { id: string; name: string }; effects: Effects; previewHash: string };
 export type ProjectApplied = { action: ProjectAction; project: ProjectRef; effects: Effects; result: Effects };
 export type ProjectExport = { project: string; files: Array<{ name: string; content: string }> };
-export type AccessRule = { id: string; scope: string; agentId: string | null; drawerKind: DrawerKind; read: AccessMode; write: AccessMode; endsAt: string | null; expired: boolean; reason: string | null; createdAt: string };
-export type RoleTemplate = { id: string; name: string; memoryRead: DrawerKind[]; memoryWrite: DrawerKind[]; agents: number };
+export type AccessRule = { id: string; scope: string; agentId: string | null; drawerKind: AccessColumn; read: AccessMode; write: AccessMode; endsAt: string | null; expired: boolean; reason: string | null; createdAt: string };
+export type RoleTemplate = { id: string; name: string; memoryRead: DrawerKind[]; memoryWrite: DrawerKind[]; scopeRead: ScopeColumn[] | null; scopeWrite: ScopeColumn[] | null; agents: number };
 export type AccessOverview = { version: number; rules: AccessRule[]; templates: RoleTemplate[] };
 export type AccessChange =
-  | { op: 'set_rule'; scope: string; agentId?: string | null; drawerKind: DrawerKind; read?: AccessMode; write?: AccessMode; endsAt?: string | null; reason?: string | null }
-  | { op: 'clear_rule'; scope: string; agentId?: string | null; drawerKind: DrawerKind }
-  | { op: 'save_template'; id?: string | null; name: string; memoryRead: DrawerKind[]; memoryWrite: DrawerKind[] }
+  | { op: 'set_rule'; scope: string; agentId?: string | null; drawerKind: AccessColumn; read?: AccessMode; write?: AccessMode; endsAt?: string | null; reason?: string | null }
+  | { op: 'clear_rule'; scope: string; agentId?: string | null; drawerKind: AccessColumn }
+  | { op: 'save_template'; id?: string | null; name: string; memoryRead: DrawerKind[]; memoryWrite: DrawerKind[]; scopeRead?: ScopeColumn[] | null; scopeWrite?: ScopeColumn[] | null }
   | { op: 'delete_template'; id: string }
   | { op: 'assign_template'; template: string | null; agentIds: string[] };
 export type AccessPreview = { previewHash: string; version: number; changes: number; agentsAffected: number; projectsAffected: number; noProjectAffected: boolean; pairsChanged: number; widened: number; narrowed: number; agentsTotal: number; projectsTotal: number; sample: AgentSample[] };
@@ -52,7 +58,7 @@ export type WhyStep = { layer: 'default' | 'company' | 'department' | 'project' 
 export type KindAccess = { read: boolean; write: boolean; readWhy: WhyStep[]; writeWhy: WhyStep[] };
 export type EffectiveAccess = {
   agentId: string; agentName: string; project: string | null; department: string | null; version: number; template: { id: string; name: string } | null;
-  exceptions: AccessRule[]; effective: { memoryRead: DrawerKind[]; memoryWrite: DrawerKind[] }; kinds: Record<DrawerKind, KindAccess>;
+  exceptions: AccessRule[]; effective: { memoryRead: DrawerKind[]; memoryWrite: DrawerKind[]; scopeRead: ScopeColumn[]; scopeWrite: ScopeColumn[] }; kinds: Record<AccessColumn, KindAccess>;
 };
 export type DoctorIssue = { kind: DoctorKind; drawerId: string; memoryIds: string[]; detail?: string };
 export type DoctorReport = { checkedAt: string; embeddingModel: string; total: number; counts: Record<DoctorKind, number>; issues: DoctorIssue[]; reportHash: string };

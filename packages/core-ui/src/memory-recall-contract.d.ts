@@ -5,6 +5,8 @@ export type RecallState = 'active' | 'changed' | 'moved' | 'deleted' | 'forgotte
 export const RECALL_STATES: readonly RecallState[];
 export type SummarySource = 'model' | 'fallback' | 'inline';
 export const SUMMARY_SOURCES: readonly SummarySource[];
+export type NotLoadedWhy = 'no_access' | 'archived' | 'not_open';
+export const NOT_LOADED_WHY: readonly NotLoadedWhy[];
 export const CACHE_METRICS_PATH: string;
 export type RecallItem = {
   /** fact = an owner-pinned scope fact; its drawer is 'company', 'department:<id>' or 'project:<slug>'. */
@@ -18,7 +20,11 @@ export type RecallTrace = {
     summaries: Array<{ id: string; turns: number; source: SummarySource }>;
     fromCache: { pack: boolean; recall: boolean };
     budgetTokens: number; numCtx: number; packChars: number; promptTokens: number; ttftMs: number | null;
+    /** Drawers the reply loaded; open drawers this agent may not read. Absent on older traces. */
+    drawers?: { loaded: string[]; noAccess: string[] };
   };
+  /** The owner's drawers the reply did not load and why (at most 20 named, `more` counts the rest); null on older traces. */
+  notLoaded: { drawers: Array<{ drawer: string; why: NotLoadedWhy }>; more: number } | null;
 };
 export type CacheCounter = { hits: number; misses: number; hitRate: number | null };
 export type CacheMetrics = {

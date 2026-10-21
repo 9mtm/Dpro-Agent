@@ -27,6 +27,8 @@ export const MAX_CORRECTION = 50000;
 export const RECALL_REASONS = ['pinned', 'topic', 'graph', 'meaning', 'keyword', 'handoff'];
 export const RECALL_STATES = ['active', 'changed', 'moved', 'deleted', 'forgotten'];
 export const SUMMARY_SOURCES = ['model', 'fallback', 'inline'];
+/** Why a drawer of the owner was not loaded into a reply (MEM-GAPS-02). */
+export const NOT_LOADED_WHY = ['no_access', 'archived', 'not_open'];
 export const CACHE_METRICS_PATH = '/api/memory/cache/metrics';
 
 export const recallMessagePath = id => `/api/memory/recall/messages/${id}`;
@@ -100,7 +102,13 @@ function trace(t) {
       keptTurns: count(c.keptTurns), summarisedTurns: count(c.summarisedTurns), droppedTurns: count(c.droppedTurns), summaries,
       fromCache: { pack: record(c.fromCache) && c.fromCache.pack === true, recall: record(c.fromCache) && c.fromCache.recall === true },
       budgetTokens: count(c.budgetTokens), numCtx: count(c.numCtx), packChars: count(c.packChars), promptTokens: count(c.promptTokens), ttftMs: num(c.ttftMs),
+      // MEM-GAPS-02: the drawers the reply loaded (absent on older traces).
+      ...(record(c.drawers) && Array.isArray(c.drawers.loaded) ? { drawers: { loaded: c.drawers.loaded.slice(0, 64).filter(drawerId), noAccess: (Array.isArray(c.drawers.noAccess) ? c.drawers.noAccess : []).slice(0, 64).filter(drawerId) } } : {}),
     },
+    // The owner's drawers this reply did not load and why; null for older traces.
+    notLoaded: record(t.notLoaded) && Array.isArray(t.notLoaded.drawers)
+      ? { drawers: t.notLoaded.drawers.slice(0, 20).filter(d => record(d) && drawerId(d.drawer) && NOT_LOADED_WHY.includes(d.why)).map(d => ({ drawer: d.drawer, why: d.why })), more: count(t.notLoaded.more) }
+      : null,
   };
 }
 

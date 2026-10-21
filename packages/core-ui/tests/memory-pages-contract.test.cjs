@@ -158,3 +158,44 @@ test('the reply-trace contract also projects the same twice (move answered throu
   const metrics = memoryRecallResponse('/api/memory/cache/metrics', 200, { process: { since: '2026-10-21T08:00:00Z', caches: { pack: { hits: 8, misses: 2, hitRate: 0.8 } } }, recent: { turns: 3, packHitRate: 0.82 }, budget: { numCtx: 32768 } });
   assert.deepEqual(memoryRecallResponse('/api/memory/cache/metrics', 200, metrics), metrics);
 });
+
+test('MEM-GAPS-02 shapes: explorer filters, access columns, graph-orphan, handoffs by project, not-loaded drawers', () => {
+  const { memoryRecallResponse } = require('../src/memory-recall-contract.js');
+  for (const path of [
+    '/api/memory/scopes/memories' + queryString({ scope: 'kind:project', source: 'agent', agent: 'writer', importance: '7-10', from: '2026-01-01', to: '2026-12-31' }),
+    '/api/memory/scopes/memories' + queryString({ scope: 'company', importance: '3' }), '/api/handoffs?projectId=proj-1&limit=20',
+  ]) assert.equal(both('GET', path), true, path);
+  for (const path of [
+    '/api/memory/scopes/memories?scope=kind%3Anope', '/api/memory/scopes/memories?scope=company&source=bogus', '/api/memory/scopes/memories?scope=company&importance=11',
+    '/api/memory/scopes/memories?scope=company&from=2026-13-01', '/api/handoffs?projectId=..%2Fx',
+  ]) assert.equal(both('GET', path), false, path);
+  const column = { op: 'set_rule', scope: 'company', drawerKind: 'department', read: 'deny', write: 'deny' };
+  assert.equal(both('POST', '/api/memory/access/preview', { changes: [column] }), true);
+  assert.equal(both('POST', '/api/memory/access/preview', { changes: [{ op: 'save_template', name: 'Designer', memoryRead: ['project'], memoryWrite: [], scopeRead: ['department'], scopeWrite: [] }] }), true);
+  assert.equal(both('POST', '/api/memory/access/preview', { changes: [{ op: 'save_template', name: 'Designer', memoryRead: ['project'], memoryWrite: [], scopeRead: null }] }), true);
+  assert.equal(both('POST', '/api/memory/access/preview', { changes: [{ op: 'save_template', name: 'Designer', memoryRead: ['project'], memoryWrite: [], scopeWrite: ['company'] }] }), false, 'scopeWrite needs scopeRead');
+  assert.equal(both('POST', '/api/memory/access/preview', { changes: [{ op: 'save_template', name: 'Designer', memoryRead: ['company'], memoryWrite: [] }] }), false, 'scope columns are not drawer kinds');
+  assert.equal(both('POST', '/api/memory/doctor/fix', { confirm: true, expectedReportHash: H, kinds: ['graph-orphan'] }), true);
+
+  const explorer = memoryPagesResponse('/api/memory/scopes/memories?scope=company', 200, { scope: 'company', total: 1, nextCursor: null,
+    items: [{ id: 'm1', type: 'fact', preview: 'x', drawerId: 'owner', topicKey: null, importance: 5, layer: 'factual', createdAt: '2026-10-21T10:00:00.000Z', sourceAgentId: 'writer', source: 'agent', usedIn: 14 }],
+    facets: { type: { fact: 1 }, layer: {}, drawer: { owner: 1 }, source: { agent: 1 } } });
+  assert.deepEqual([explorer.items[0].usedIn, explorer.items[0].source, explorer.facets.source.agent], [14, 'agent', 1]);
+  const access = memoryPagesResponse('/api/memory/access', 200, { version: 1,
+    rules: [{ id: 'r1', scope: 'company', agentId: null, drawerKind: 'department', read: 'deny', write: 'deny', endsAt: null, expired: false, reason: null, createdAt: '2026-10-21T10:00:00.000Z' }],
+    templates: [{ id: 'tpl-1', name: 'Designer', memoryRead: ['project'], memoryWrite: [], scopeRead: ['department'], scopeWrite: [], agents: 2 }, { id: 'tpl-2', name: 'Old', memoryRead: ['owner'], memoryWrite: [], agents: 1 }] });
+  assert.equal(access.rules[0].drawerKind, 'department');
+  assert.deepEqual([access.templates[0].scopeRead, access.templates[1].scopeRead], [['department'], null]);
+  assert.deepEqual(memoryPagesResponse('/api/memory/access', 200, access), access);
+  const doc = memoryPagesResponse('/api/memory/doctor', 200, { checkedAt: '2026-10-21T10:00:00.000Z', embeddingModel: 'm', total: 1, counts: { 'graph-orphan': 4 },
+    issues: [{ kind: 'graph-orphan', drawerId: 'graph', memoryIds: ['m9'], detail: 'mentions 2, link sources 1, state 1, links 0, entities 0' }], reportHash: H });
+  assert.deepEqual([doc.counts['graph-orphan'], doc.issues[0].drawerId, doc.issues[0].memoryIds], [4, '?', ['m9']]);
+  const trace = { runId: 'run-12345678', messageId: null, agentId: 'main', createdAt: '2026-10-21T10:00:00.000Z', items: [],
+    context: { keptTurns: 1, summarisedTurns: 0, droppedTurns: 0, summaries: [], fromCache: { pack: false, recall: false }, budgetTokens: 1, numCtx: 1, packChars: 0, promptTokens: 1, ttftMs: null,
+      drawers: { loaded: ['owner', 'project:flowxtra'], noAccess: ['people:sara', '../x'] } },
+    notLoaded: { drawers: [{ drawer: 'project:tel-agent', why: 'not_open' }, { drawer: 'project:old', why: 'archived' }, { drawer: 'owner', why: 'weird' }], more: 3 } };
+  const t = memoryRecallResponse('/api/memory/recall/runs/run-12345678', 200, { trace }).trace;
+  assert.deepEqual(t.context.drawers.noAccess, ['people:sara']);
+  assert.deepEqual(t.notLoaded, { drawers: [{ drawer: 'project:tel-agent', why: 'not_open' }, { drawer: 'project:old', why: 'archived' }], more: 3 });
+  assert.equal(memoryRecallResponse('/api/memory/recall/runs/run-12345678', 200, { trace: { ...trace, notLoaded: undefined } }).trace.notLoaded, null, 'older traces');
+});
