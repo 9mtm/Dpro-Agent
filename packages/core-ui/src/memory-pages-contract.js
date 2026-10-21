@@ -242,7 +242,8 @@ function project(p) {
 function tree(b) {
   const c = record(b.company) ? b.company : {};
   const drawers = {};
-  if (record(c.drawers)) for (const [k, v] of Object.entries(c.drawers).slice(0, 2000)) if (validDrawerId(k)) drawers[k] = count(v);
+  // Counts per drawer kind (owner, project, …).
+  if (record(c.drawers)) for (const [k, v] of Object.entries(c.drawers).slice(0, 20)) if (DRAWER_KINDS.includes(k)) drawers[k] = count(v);
   const a = record(b.agents) ? b.agents : {};
   return {
     generatedAt: when(b.generatedAt), cached: b.cached === true,

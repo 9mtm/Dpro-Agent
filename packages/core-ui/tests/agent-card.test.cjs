@@ -122,7 +122,7 @@ test('memory page: drawers, add to a project, edit, history and forget', async t
   await m.forget(id);
   assert.equal(m.getSnapshot().items.length, before);
   const html = renderToStaticMarkup(React.createElement(MemoryPage, { client: cl }));
-  assert.match(html, /Agent files and reviews/);
+  assert.match(html, /aria-label="Memory views"/, 'the memory page opens with its views (files and reviews moved into Review, board M0)');
 });
 
 test('tools are grouped by kind; a group turns on or off together (server-off tools stay off)', async t => {

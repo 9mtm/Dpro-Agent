@@ -68,13 +68,13 @@ test('writes need exact bodies; many-memory changes need the preview hash and co
 test('responses keep reviewed fields only and never error text', () => {
   const tree = memoryPagesResponse('/api/memory/scopes/tree', 200, {
     generatedAt: '2026-10-21T10:00:00.000Z', cached: false, secret: 'x',
-    company: { memories: 9, pendingReviews: 1, conflicts: 1, pinnedFacts: 2, lastMemoryAt: null, health: 'problem', reasons: ['conflicts', 'Bad Reason!'], drawers: { owner: 3, 'project:flowxtra': 6, '../x': 1 }, departments: 2, projects: 1, archivedProjects: 0 },
+    company: { memories: 9, pendingReviews: 1, conflicts: 1, pinnedFacts: 2, lastMemoryAt: null, health: 'problem', reasons: ['conflicts', 'Bad Reason!'], drawers: { owner: 3, project: 6, '../x': 1 }, departments: 2, projects: 1, archivedProjects: 0 },
     departments: [{ id: 'general', name: 'General', isDefault: true, projects: 1, archivedProjects: 0, memories: 6, pendingReviews: 0, conflicts: 0, pinnedFacts: 0, lastMemoryAt: null, health: 'ok', reasons: [] }],
     projects: [{ slug: 'flowxtra', name: 'Flowxtra', departmentId: 'general', pinned: true, archived: false, archivedAt: null, mergedInto: null, chatProjectId: 'internal', memories: 6, pendingReviews: 0, conflicts: 0, pinnedFacts: 1, lastMemoryAt: '2026-10-20T08:00:00.000Z', health: 'ok', reasons: [] }],
     people: [{ key: 'ahmed', memories: 2, pendingReviews: 0, conflicts: 0, pinnedFacts: 0, lastMemoryAt: null, health: 'ok', reasons: [] }],
     agents: { total: 3, withTemplate: 1, withExceptions: 0 },
   });
-  assert.equal(tree.secret, undefined); assert.deepEqual(tree.company.reasons, ['conflicts']); assert.deepEqual(Object.keys(tree.company.drawers), ['owner', 'project:flowxtra']);
+  assert.equal(tree.secret, undefined); assert.deepEqual(tree.company.reasons, ['conflicts']); assert.deepEqual(Object.keys(tree.company.drawers), ['owner', 'project']);
   assert.equal(tree.projects[0].chatProjectId, undefined, 'internal chat ids stay out'); assert.equal(tree.projects[0].pinned, true);
   assert.deepEqual(memoryPagesResponse('/api/memory/scopes/projects/flowxtra/apply', 409, { error: 'Preview changed: secret detail', code: 'preview_changed' }), { code: 'preview_changed' });
   assert.equal(memoryPagesResponse('/api/memory/doctor/fix', 400, { error: 'boom', code: 'weird' }), null);
