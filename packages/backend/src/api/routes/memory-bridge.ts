@@ -11,7 +11,7 @@
  *   POST  /api/memory-bridge/projects/:projectId/files          { previewHash, confirm: true } writes them; kept in sync from then on
  *   PATCH /api/memory-bridge/projects/:projectId                { filesEnabled: false?, backflowEnabled?, gitExclude? }
  *   POST  /api/memory-bridge/projects/:projectId/backflow       imports the CLIs' own memory files as review proposals now
- *   GET   /api/memory-bridge/audit?limit=                       what the bridge did
+ *   GET   /api/memory-bridge/audit?limit=&client=&projectId=    what the bridge did (activity log), newest first
  *
  * The dpro-memory MCP server (public in the gate; loopback only, own proof):
  *   POST  /api/memory-bridge/mcp/session   { client, nonce, proof } -> { token }   (install proof, CLI switched on)
@@ -22,7 +22,7 @@
 import type { FastifyInstance, FastifyReply, FastifyRequest } from 'fastify';
 import { authorizeActiveRole } from '../../auth/route-guards.js';
 import {
-  auditLog, backflowNow, BridgeError, bridgeStatus, filesApply, filesPreview, mcpCall, openSession, registrationApply, registrationPreview,
+  activity, backflowNow, BridgeError, bridgeStatus, filesApply, filesPreview, mcpCall, openSession, registrationApply, registrationPreview,
   registrationUndo, setClient, setFolder,
 } from '../../memory/bridge/service.js';
 
@@ -57,11 +57,9 @@ export async function memoryBridgeRoutes(fastify: FastifyInstance) {
   fastify.post('/api/memory-bridge/projects/:projectId/files', { config }, asOwner(async (o, r) => ({ result: await filesApply(o, r.params.projectId, bodyOf(r)) })));
   fastify.patch('/api/memory-bridge/projects/:projectId', { config }, asOwner(async (o, r) => ({ folder: await setFolder(o, r.params.projectId, bodyOf(r)) })));
   fastify.post('/api/memory-bridge/projects/:projectId/backflow', { config }, asOwner(async (o, r) => ({ result: await backflowNow(o, r.params.projectId) })));
-  fastify.get('/api/memory-bridge/audit', { config }, asOwner(async (o, r) => {
-    const n = r.query?.limit === undefined ? 100 : Number(r.query.limit);
-    if (!Number.isInteger(n) || n < 1 || n > 500) throw new BridgeError('limit must be 1-500');
-    return { entries: await auditLog(o, n) };
-  }));
+  fastify.get('/api/memory-bridge/audit', { config }, asOwner(async (o, r) => ({
+    entries: await activity(o, { limit: r.query?.limit, client: r.query?.client, projectId: r.query?.projectId }),
+  })));
 
   // --- the dpro-memory MCP server (no user token; its own proof, this machine only) ---
   const local = (request: FastifyRequest, reply: FastifyReply): boolean => {

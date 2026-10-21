@@ -11,6 +11,7 @@
  *   POST /api/memory/recall/messages/:messageId/forget    { memoryId } -> { forgotten } (CORE-07, complete removal)
  *   GET  /api/memory/recall/conversations/:id/summaries   the conversation's stored summaries of older turns
  *   GET  /api/memory/cache/metrics                        cache hit rates, pack size, time to first word, budget
+ *   POST /api/memory/cache/clear      { confirm: true }   drop the owner's cached context packs and recalls (rebuilt on the next turn)
  *   POST /api/memory/:id/move                             { drawer, reason? } -> { memory, from, to } (versioned)
  *
  * Correct and Forget accept only memories that the reply actually used.
@@ -26,7 +27,7 @@ import { all, one, sql } from '../../repositories/sql-steps.js';
 import { traceForMessage, traceForRun, traceMetrics, type TraceView } from '../../memory/context/trace.js';
 import { cacheMetrics } from '../../memory/context/metrics.js';
 import { contextBudget } from '../../memory/context/budget.js';
-import { contextCacheEntries } from '../../memory/context/cache.js';
+import { contextCacheEntries, dropContextCache } from '../../memory/context/cache.js';
 import { getEmbeddingService } from '../../memory/embedding.js';
 import { DrawerInputError, drawerId, parseDrawerId } from '../../memory/drawers.js';
 import { MoveError, ownerCorrection, MAX_LEARNED_CONTENT } from '../../memory/learning.js';
@@ -146,6 +147,22 @@ export async function memoryRecallRoutes(fastify: FastifyInstance) {
       recent: await traceMetrics(owner.userId!),
       budget: { numCtx: budget.numCtx, promptTokens: budget.promptTokens, summaryTokens: budget.summaryTokens, keepAlive: budget.keepAlive },
     };
+  });
+
+  // The owner's "Clear cache": only this owner's in-memory context entries. Nothing
+  // stored is touched; every entry is keyed by memory revisions anyway, so this only
+  // forces the next turn to rebuild its context.
+  fastify.post('/api/memory/cache/clear', { config }, async (request, reply) => {
+    const owner = ownerOf(request, reply);
+    if (!owner) return reply;
+    const b = body(request);
+    if (b.confirm !== true || Object.keys(b).some((k) => k !== 'confirm')) return reply.code(400).send({ error: 'Send confirm: true to clear the cache', code: 'confirm_required' });
+    const cleared = dropContextCache(owner.userId!);
+    void repositories.audit.record(owner, {
+      event_type: 'data.update', event_category: 'data_modification', severity: 'info',
+      resource_type: 'memory_cache', resource_id: owner.userId!, action: 'memory_cache.clear', success: true, metadata: { cleared },
+    }, requestMeta(request));
+    return { cleared };
   });
 
   fastify.post<{ Params: { id: string } }>('/api/memory/:id/move', { config }, async (request, reply) => {

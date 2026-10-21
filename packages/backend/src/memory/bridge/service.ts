@@ -149,6 +149,19 @@ export async function registrationUndo(ownerId: string, id: unknown, actor = 'ow
   return r;
 }
 
+/** The bridge's activity log for the owner (API and tool): newest first, optionally one CLI or one project. */
+export async function activity(ownerId: string, input: { limit?: unknown; client?: unknown; projectId?: unknown } = {}) {
+  const limit = input.limit === undefined ? 100 : Number(input.limit);
+  if (!Number.isInteger(limit) || limit < 1 || limit > 500) throw new BridgeError('limit must be 1-500');
+  const c = input.client === undefined ? undefined : client(input.client);
+  let projectId: string | undefined;
+  if (input.projectId !== undefined) {
+    if (typeof input.projectId !== 'string' || !(await findProject(ownerId, input.projectId))) throw new BridgeError('Not found', 404, 'not_found');
+    projectId = input.projectId;
+  }
+  return auditLog(ownerId, limit, { client: c, projectId });
+}
+
 export { auditLog };
 
 /**
@@ -212,11 +225,11 @@ export async function mcpCall(c: unknown, token: unknown, cwd: unknown, tool: un
   switch (tool as McpTool) {
     case 'project_brief': {
       const b = await projectBrief(ownerId, project);
-      return { text: briefMarkdown(b), data: { project: { id: project.id, name: b.name }, facts: b.facts.length, handoff: !!b.handoff } };
+      return { text: briefMarkdown(b), data: { project: { id: project.id, name: b.name }, facts: b.facts.length, memories: b.memories.length, handoff: !!b.handoff } };
     }
     case 'pinned_facts': {
       const facts = await pinnedFacts(ownerId, project);
-      return { text: facts.length ? facts.map((f) => `- ${f.content}`).join('\n') : 'No approved facts for this project yet.', data: { facts } };
+      return { text: facts.length ? facts.map((f) => `- ${f.content}`).join('\n') : 'The owner has not pinned facts for this project yet.', data: { facts } };
     }
     case 'latest_handoff': {
       const h = await projectHandoff(ownerId, project.id);

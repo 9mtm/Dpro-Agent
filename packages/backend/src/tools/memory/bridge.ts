@@ -3,12 +3,13 @@
  * operations as the owner API, with the same gates.
  *
  * memory_bridge        read only: status, dry-run previews of a project's managed
- *                      files and of a CLI's MCP registration
+ *                      files and of a CLI's MCP registration, the activity log
  * memory_bridge_apply  every call needs one-time owner approval (approvals.ts,
  *                      'settings'); the approval is the explicit confirm. Writing
  *                      files / registering carries the previewHash of the preview
  *                      the owner saw (a changed file -> refused). Also: undo a
- *                      registration, kill switch per CLI, back-flow now.
+ *                      registration, kill switch per CLI, back-flow now, the
+ *                      "hide managed files from Git" option per folder.
  *
  * Owner's own turns only: never when answering an outside sender, never for
  * an account other than the owner.
@@ -16,7 +17,7 @@
 import type { Tool, ToolResult, ToolExecutionContext } from '../types.js';
 import { toolActor } from '../../repositories/actor.js';
 import {
-  backflowNow, BridgeError, bridgeStatus, filesApply, filesPreview, registrationApply, registrationPreview, registrationUndo, setClient, setFolder,
+  activity, backflowNow, BridgeError, bridgeStatus, filesApply, filesPreview, registrationApply, registrationPreview, registrationUndo, setClient, setFolder,
 } from '../../memory/bridge/service.js';
 import { BRIDGE_CLIENTS } from '../../memory/bridge/clients.js';
 
@@ -48,17 +49,19 @@ export const memoryBridgeTool: Tool = {
 action "status": which CLIs are on, registered, and which project folders have managed files.
 action "preview_files" (project_id): the AGENTS.md / CLAUDE.md / GEMINI.md change for a project folder, as a diff, with a previewHash.
 action "preview_registration" (client): the dpro-memory entry for that CLI's config file, with a previewHash.
+action "activity" (optional client, project_id, limit): what the bridge did, newest first (sessions, tool calls, files written, registrations, settings).
 To apply a preview, call memory_bridge_apply with its previewHash (the owner approves the call).`,
   input_schema: {
     type: 'object',
     properties: {
-      action: { type: 'string', enum: ['status', 'preview_files', 'preview_registration'] },
+      action: { type: 'string', enum: ['status', 'preview_files', 'preview_registration', 'activity'] },
       project_id: { type: 'string' },
       client: { type: 'string', enum: [...BRIDGE_CLIENTS] },
+      limit: { type: 'number', minimum: 1, maximum: 500 },
     },
     required: ['action'],
   },
-  async execute(params: { action?: unknown; project_id?: unknown; client?: unknown }, context?: ToolExecutionContext): Promise<ToolResult> {
+  async execute(params: { action?: unknown; project_id?: unknown; client?: unknown; limit?: unknown }, context?: ToolExecutionContext): Promise<ToolResult> {
     return guarded(context, async (owner) => {
       if (params.action === 'status') {
         const s = await bridgeStatus(owner);
@@ -71,6 +74,13 @@ To apply a preview, call memory_bridge_apply with its previewHash (the owner app
       if (params.action === 'preview_registration') {
         const p = await registrationPreview(owner, params.client);
         return ok(`${p.name}: ${p.action}${p.reason ? ` (${p.reason})` : ''} in ${p.configPath}. previewHash ${p.previewHash}`, p);
+      }
+      if (params.action === 'activity') {
+        const entries = await activity(owner, { limit: params.limit ?? 30, client: params.client, projectId: params.project_id });
+        const text = entries.length
+          ? entries.map((e) => `- ${e.createdAt} ${e.action}${e.client ? ` [${e.client}]` : ''}${e.projectId ? ` project ${e.projectId}` : ''}${e.detail ? `: ${e.detail}` : ''}`).join('\n')
+          : 'The bridge has not done anything yet.';
+        return ok(text, { entries });
       }
       return fail('unknown action');
     });
@@ -86,11 +96,12 @@ action "register" (client, preview_hash): add the dpro-memory server to that CLI
 action "undo_registration" (registration_id): restore the CLI config.
 action "set_client" (client, enabled): kill switch for one CLI.
 action "set_backflow" (project_id, enabled): import that folder's CLI memory files as review proposals from now on.
-action "backflow_now" (project_id): do that import once now.`,
+action "backflow_now" (project_id): do that import once now.
+action "set_git_exclude" (project_id, enabled): list the files Dpro creates in that folder in .git/info/exclude (hidden from Git), or stop doing so for files it creates from now on.`,
   input_schema: {
     type: 'object',
     properties: {
-      action: { type: 'string', enum: ['apply_files', 'stop_files', 'register', 'undo_registration', 'set_client', 'set_backflow', 'backflow_now'] },
+      action: { type: 'string', enum: ['apply_files', 'stop_files', 'register', 'undo_registration', 'set_client', 'set_backflow', 'backflow_now', 'set_git_exclude'] },
       project_id: { type: 'string' },
       client: { type: 'string', enum: [...BRIDGE_CLIENTS] },
       preview_hash: { type: 'string' },
@@ -109,6 +120,7 @@ action "backflow_now" (project_id): do that import once now.`,
         case 'undo_registration': { const r = await registrationUndo(owner, params.registration_id, actor); return ok(`Registration undone (${r.mode}).`, r); }
         case 'set_client': { const r = await setClient(owner, params.client, params.enabled, actor); return ok(`${r.client} is ${r.enabled ? 'on' : 'off'}.`, r); }
         case 'set_backflow': { const r = await setFolder(owner, params.project_id, { backflowEnabled: params.enabled }, actor); return ok(`Back-flow ${r.backflowEnabled ? 'on' : 'off'}.`, r); }
+        case 'set_git_exclude': { const r = await setFolder(owner, params.project_id, { gitExclude: params.enabled }, actor); return ok(`Managed files ${r.gitExclude ? 'are hidden from Git (.git/info/exclude)' : 'are no longer added to .git/info/exclude'} for this folder.`, r); }
         case 'backflow_now': { const r = await backflowNow(owner, params.project_id, actor); return ok(`${r.proposed} proposal(s) from ${r.files} file(s); the owner reviews them in Memory.`, r); }
         default: return fail('unknown action');
       }

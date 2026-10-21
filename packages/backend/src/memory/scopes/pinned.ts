@@ -108,6 +108,12 @@ export async function removePinnedFact(ownerId: string, id: string): Promise<Pin
   });
 }
 
+/** The pinned facts of one reply: the prompt block and which facts it holds (for the reply trace). */
+export interface ReplyPinnedFacts {
+  text: string;
+  facts: Array<{ id: string; scope: string; text: string; updatedAt: string }>;
+}
+
 /**
  * The "Pinned facts" prompt block for a reply of this owner in this project
  * (null = no project: company facts only), or ''. Budget goes to the most
@@ -115,9 +121,15 @@ export async function removePinnedFact(ownerId: string, id: string): Promise<Pin
  * company first.
  */
 export async function pinnedFactsBlock(ownerId: string | null | undefined, projectSlug?: string | null, allow: { company: boolean; project: boolean } = { company: true, project: true }): Promise<string> {
-  if (!ownerId) return '';
+  return (await pinnedFactsForReply(ownerId, projectSlug, allow)).text;
+}
+
+/** pinnedFactsBlock with the facts it holds (MEM-CACHE-01 context pack and reply trace). */
+export async function pinnedFactsForReply(ownerId: string | null | undefined, projectSlug?: string | null, allow: { company: boolean; project: boolean } = { company: true, project: true }): Promise<ReplyPinnedFacts> {
+  if (!ownerId) return { text: '', facts: [] };
   return sql().read((function* () {
     const sections: Array<{ title: string; facts: string[] }> = [];
+    const used: ReplyPinnedFacts['facts'] = [];
     // Company facts follow the owner drawer, department and project facts the project drawer.
     const company = allow.company ? yield* listStep(ownerId, { kind: 'company', id: '' }) : [];
     let dept: { title: string; facts: PinnedFact[] } | null = null;
@@ -129,24 +141,32 @@ export async function pinnedFactsBlock(ownerId: string | null | undefined, proje
       project = { title: `Project "${p.name}"`, facts: yield* listStep(ownerId, { kind: 'project', id: p.slug }) };
     }
     let budget = MAX_PINNED_BLOCK_CHARS;
-    const take = (facts: PinnedFact[]): string[] => {
-      const out: string[] = [];
+    const take = (facts: PinnedFact[]): Array<{ line: string; fact: PinnedFact }> => {
+      const out: Array<{ line: string; fact: PinnedFact }> = [];
       for (const f of facts) {
         const line = `- ${f.text}`;
         if (line.length + 1 > budget) break;
         budget -= line.length + 1;
-        out.push(line);
+        out.push({ line, fact: f });
       }
       return out;
     };
     const projectLines = project ? take(project.facts) : [];
     const deptLines = dept ? take(dept.facts) : [];
     const companyLines = take(company);
-    if (companyLines.length) sections.push({ title: 'Company', facts: companyLines });
-    if (dept && deptLines.length) sections.push({ title: dept.title, facts: deptLines });
-    if (project && projectLines.length) sections.push({ title: project.title, facts: projectLines });
-    if (!sections.length) return '';
-    return ['## Pinned facts', 'The owner pinned these facts. They hold unless the owner changes them.',
-      ...sections.map((s) => `${s.title}:\n${s.facts.join('\n')}`)].join('\n');
+    const add = (title: string, lines: Array<{ line: string; fact: PinnedFact }>) => {
+      if (!lines.length) return;
+      sections.push({ title, facts: lines.map((l) => l.line) });
+      for (const l of lines) used.push({ id: l.fact.id, scope: l.fact.scope, text: l.fact.text, updatedAt: l.fact.updatedAt });
+    };
+    add('Company', companyLines);
+    if (dept) add(dept.title, deptLines);
+    if (project) add(project.title, projectLines);
+    if (!sections.length) return { text: '', facts: [] };
+    return {
+      text: ['## Pinned facts', 'The owner pinned these facts. They hold unless the owner changes them.',
+        ...sections.map((s) => `${s.title}:\n${s.facts.join('\n')}`)].join('\n'),
+      facts: used,
+    };
   })());
 }

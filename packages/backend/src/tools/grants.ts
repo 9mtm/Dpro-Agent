@@ -65,6 +65,11 @@ export const DEFAULT_AGENT_TOOLS: readonly string[] = [
   'memory_access_apply', // MEM-SCALE-01: inherited access policies; every call needs owner approval
   'memory_scope_forget', // MEM-SCALE-01: forget a whole project; every call needs owner approval
   'memory_move',   // MEM-CACHE-01: owner's runs, both drawers open; every call needs one-time owner approval
+  'memory_review', // CORE-MEM-CONFLICT: read-only list of conflicts, owner's own turns, open drawers only
+  'memory_review_decide', // CORE-MEM-CONFLICT: keep new / old / both; every call needs one-time owner approval
+  'memory_graph_review', // CORE-MEM-GRAPH: approve / reject a pending link; every call needs one-time owner approval
+  'memory_graph_topic', // MEM-GRAPH-CLUSTER: cluster -> topic or dismiss; every call needs one-time owner approval
+  'memory_recall', // MEM-CACHE-01: read-only trace of the agent's own replies, summaries, cache metrics
   'storage_search',
   // BOARD-02: the agent's own board cards only (list, comment, move)
   'board_my_cards',

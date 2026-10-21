@@ -31,7 +31,7 @@ import { getCurrentPersonality } from '../../services/personality-store.js';
 import { stripPersonalityExport, traitsToBehavior, type Behavior } from '../../services/personality.js';
 import { outsiderAgentMemoryEnabled } from '../../services/outsider-memory.js';
 import { DrawerInputError, chatTurnDrawers, type DrawerRef } from '../../memory/drawers.js';
-import { pinnedFactsBlock } from '../../memory/scopes/pinned.js';
+import { pinnedFactsForReply, type ReplyPinnedFacts } from '../../memory/scopes/pinned.js';
 import { withoutArchivedDrawers } from '../../memory/scopes/store.js';
 import { loadRunPermissions } from '../../tools/agent-permissions.js';
 import { createModelRouter, ModelRouter } from '../../services/model-router.js';
@@ -467,15 +467,15 @@ export async function executeChatTurn(reply: FastifyReply, input: ChatTurnInput)
     // MEM-SCALE-01: the owner's pinned facts of this scope load first (company, department, project).
     // Only facts of drawers this agent may read in this project (its inherited access, CORE-PERMS-01 cap).
     const pinnedProject = memoryDrawers.find((d) => d.kind === 'project')?.key ?? null;
-    let pinnedFacts = '';
+    let pinnedFacts: ReplyPinnedFacts = { text: '', facts: [] };
     if (includeAgentMemory) {
       try {
         const read = agentConfig?.id
           ? (await loadRunPermissions(agentConfig.id, [], { userId, project: pinnedProject })).memoryRead
           : ['owner', 'project'];
         const allow = { company: read.includes('owner') && memoryDrawers.some((d) => d.kind === 'owner'), project: read.includes('project') };
-        pinnedFacts = allow.company || allow.project ? await pinnedFactsBlock(userId, pinnedProject, allow) : '';
-      } catch { pinnedFacts = ''; }
+        if (allow.company || allow.project) pinnedFacts = await pinnedFactsForReply(userId, pinnedProject, allow);
+      } catch { pinnedFacts = { text: '', facts: [] }; }
     }
 
     // Load PERSONALITY.md and MEMORY.md from agent files if agent has ID
@@ -510,15 +510,14 @@ export async function executeChatTurn(reply: FastifyReply, input: ChatTurnInput)
         : behavior.promptBlock;
     }
 
-    if (pinnedFacts) resolvedSystemPrompt += `${resolvedSystemPrompt ? '\n\n' : ''}${pinnedFacts}`;
-
     // Add MEMORY.md content if exists
     if (memoryFileContent) {
       resolvedSystemPrompt += `\n\n## Agent Memory\n${memoryFileContent}`;
     }
 
-    // MEM-CACHE-01: the context pack (this persona text + pinned facts, standing
-    // topics and the handoff note, cached per agent + drawers + revisions), then
+    // MEM-CACHE-01: the context pack (this persona text + the scope's pinned facts,
+    // pinned memories, standing topics and the handoff note, cached per agent +
+    // drawers + revisions; every item listed in the reply trace), then
     // the memories that match this message. A turn for an outsider opens no
     // drawers and gets no handoff note.
     const turnStartedAt = Date.now();
@@ -527,11 +526,12 @@ export async function executeChatTurn(reply: FastifyReply, input: ChatTurnInput)
     const lastUser = messages[messages.length - 1];
     try {
       const drawers = await readableDrawers(agentConfig?.id, memoryDrawers, userId);
-      pack = await contextPack({ userId, agentId: agentConfig?.id ?? null, drawers, persona: resolvedSystemPrompt, handoff: includeAgentMemory && !channelTurn ? input.handoff ?? null : null });
+      pack = await contextPack({ userId, agentId: agentConfig?.id ?? null, drawers, persona: resolvedSystemPrompt, scopeFacts: pinnedFacts, handoff: includeAgentMemory && !channelTurn ? input.handoff ?? null : null });
       resolvedSystemPrompt = pack.text;
       recall = await messageRecall({ userId, drawers, query: messageText(lastUser?.content), pack });
     } catch (err) {
       safeConsole.log('[Chat] Memory context unavailable', safeErrorFields(err));
+      if (pinnedFacts.text) resolvedSystemPrompt += `${resolvedSystemPrompt ? '\n\n' : ''}${pinnedFacts.text}`;
       if (input.handoff?.text && includeAgentMemory && !channelTurn) resolvedSystemPrompt += `\n\n${input.handoff.text}`;
     }
 

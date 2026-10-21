@@ -1,6 +1,7 @@
 import { agentSkillsPrompt } from '../skills/central-store.js';
 import { HANDOFF_NOTE } from '../memory/handoff/store.js';
-import { taskHandoffText } from '../memory/handoff/scope.js';
+import { taskHandoffText, taskRunOwner } from '../memory/handoff/scope.js';
+import { taskRunPinnedFacts } from '../memory/scopes/task-facts.js';
 /**
  * Durable task-run executor + startup recovery (CORE-08, R2).
  *
@@ -330,6 +331,7 @@ export async function executeTaskRun(runId: string, owner: string = WORKER_ID): 
     let systemPrompt: string;
     let smallTemp: number | undefined;
     let claudeClient: ClaudeClient | undefined;
+    let factsOwner: string | null | undefined;
     if (isSmall) {
       // MCP-01: the small local agent. Tools = what the run was given at
       // spawn ∩ the agent's grants now (never wider); only the stored
@@ -339,6 +341,7 @@ export async function executeTaskRun(runId: string, owner: string = WORKER_ID): 
       // workspace); prompt, model and sampling are the built-in ones, never
       // the editable agents_config row.
       registry.updateContext({ grants: scope.grants, memoryDrawers: scope.memoryDrawers, userId: scope.userId ?? undefined, fileReadRoot: scope.fileReadRoot });
+      factsOwner = scope.userId;
       systemPrompt = smallAgentSystemPrompt();
       smallTemp = scope.temperature;
       driver = ollamaDriver({ ...agent, model: scope.model, temperature: scope.temperature, max_tokens: scope.maxTokens }, systemPrompt, registry.getToolsForAPI());
@@ -358,6 +361,7 @@ export async function executeTaskRun(runId: string, owner: string = WORKER_ID): 
       const handoffTools = !contract?.allowedTools && delegatingAgents(taskId).length === 0;
       const parts = [handoff, handoffTools ? HANDOFF_NOTE : ''].filter(Boolean);
       if (parts.length) systemPrompt += `\n\n${parts.join('\n\n')}`;
+      factsOwner = await taskRunOwner(run.user_id).catch(() => undefined);
       claudeClient = new ClaudeClient(apiKey, agent.model);
       driver = claudeDriver(claudeClient, agent, systemPrompt, registry.getToolsForAPI());
     }
@@ -372,8 +376,15 @@ export async function executeTaskRun(runId: string, owner: string = WORKER_ID): 
       // ones, or the audience default when none are set); never widen.
       registry.updateContext({ memoryDrawers: contractRunDrawers(contract, toolMemoryDrawers(registry.getContext())) });
     }
-    if (contract?.allowedTools || contract?.allowedDrawers) {
-      // Rebuild the driver so the model is only offered the narrowed tools.
+    // MEM-SCALE-01: the owner's pinned facts of the task's scope (company /
+    // department / project), only what this agent may read in this run.
+    const facts = await taskRunPinnedFacts({
+      ownerId: factsOwner, agentId: agent.id, taskId, delegatedFrom: delegatingAgents(taskId),
+      drawers: toolMemoryDrawers(registry.getContext()), drawersNarrowed: !!contract?.allowedDrawers,
+    });
+    if (facts) systemPrompt += `\n\n${facts}`;
+    if (contract?.allowedTools || contract?.allowedDrawers || facts) {
+      // Rebuild the driver so the model is only offered the narrowed tools (and gets the facts).
       const tools = registry.getToolsForAPI();
       driver = isSmall
         ? ollamaDriver({ ...agent, model: driver.model, temperature: smallTemp!, max_tokens: driver.maxTokens }, systemPrompt, tools)

@@ -21,6 +21,12 @@ low-level `Server` + `StdioServerTransport`).
 | `spawn_small_agent` | `task` (required, ≤ 8000 chars, self-contained), `kind` (`lookup` \| `summary` \| `classification` \| `draft` \| `other`, default `other`), `tools` (subset of `memory_search`, `storage_search`, `read`; default `memory_search` + `storage_search`), `drawers` (e.g. `owner`, `experience`, `project:alpha`, `task:<id>`, `people:<id>`; default none), `max_steps` (default and upper limit 15) | run id, granted tools, opened drawers, budget, model, warnings, capacity |
 | `get_result` | `run_id`, `wait_seconds` (0–60, default 0) | result card |
 | `list_runs` | `status`, `limit` (default 20) | recent runs + capacity (`active`, `running`, `queued`, `waiting`, `limit`, `available`, `queue_length`) |
+| `list_handoffs` | `agent_id`, `kind` (`conversation` \| `task`), `limit` (default 50) | newest done / left / next note of every chat and board task |
+| `read_handoff` | `kind`, `scope_id`, `agent_id` (all required) | the note and its earlier versions |
+| `edit_handoff` | `kind`, `scope_id`, `agent_id` (required), `done`, `left`, `next`, `questions` (lists you leave out stay) | the new version (source `owner`); the agent's next session starts from it |
+
+The handoff tools use the owner-only `/api/handoffs` routes: a session that is
+not the owner account is refused.
 
 Each tool answers with a short Markdown text, the same data as JSON text, and
 `structuredContent`.

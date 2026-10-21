@@ -117,7 +117,7 @@ test('initialize and tools/list over stdio', async () => {
     assert.match(init.result.instructions, /spawn_small_agent/);
     const list = await srv.request('tools/list', {});
     const tools = list.result.tools;
-    assert.deepEqual(tools.map((t) => t.name), ['spawn_small_agent', 'get_result', 'list_runs']);
+    assert.deepEqual(tools.map((t) => t.name), ['spawn_small_agent', 'get_result', 'list_runs', 'list_handoffs', 'read_handoff', 'edit_handoff']);
     const spawnTool = tools[0];
     assert.deepEqual(spawnTool.inputSchema.required, ['task']);
     assert.deepEqual(Object.keys(spawnTool.inputSchema.properties).sort(), ['drawers', 'kind', 'max_steps', 'read_dir', 'task', 'tools']);
@@ -347,5 +347,50 @@ test('the backend identity is verified before the token is sent (MCP-01b)', asyn
     } finally {
       await s3.stop();
     }
+  }
+});
+
+test('handoff notes: list, read and edit through the owner-only API; a non-owner session is refused', async () => {
+  const ctx = setup();
+  const srv = startServer(ctx);
+  try {
+    await srv.initialize();
+    const list = await srv.callTool('list_handoffs', { kind: 'conversation', limit: 5 });
+    assert.equal(list.isError, undefined, list.content[0].text);
+    assert.match(list.content[0].text, /main-agent — conversation `conv-1` v1/);
+    const read = await srv.callTool('read_handoff', { kind: 'conversation', scope_id: 'conv-1', agent_id: 'main-agent' });
+    assert.match(read.content[0].text, /\*\*Next:\*\*\n- Write the release notes/);
+    const edit = await srv.callTool('edit_handoff', { kind: 'conversation', scope_id: 'conv-1', agent_id: 'main-agent', next: ['Ship on Friday'] });
+    assert.equal(edit.isError, undefined, edit.content[0].text);
+    assert.match(edit.content[0].text, /Saved as version 2/);
+    assert.match(edit.content[0].text, /- Ship on Friday/);
+    assert.match(edit.content[0].text, /- Set up the repository/, 'lists left out keep their text');
+    const put = fetchLog(ctx).find((e) => e.method === 'PUT');
+    assert.equal(put.url, 'http://127.0.0.1:41522/api/handoffs/conversation/conv-1');
+    assert.deepEqual(put.body, { agentId: 'main-agent', next: ['Ship on Friday'], done: ['Set up the repository'], left: ['Release notes'], questions: [] });
+    assert.ok(fetchLog(ctx).every((e) => e.authOk && e.redirect === 'error'));
+    // Bad input never reaches the backend.
+    const before = fetchLog(ctx).length;
+    assert.ok((await srv.callTool('read_handoff', { kind: 'chat', scope_id: 'conv-1', agent_id: 'main-agent' })).isError);
+    assert.ok((await srv.callTool('read_handoff', { kind: 'task', scope_id: '../etc', agent_id: 'main-agent' })).isError);
+    assert.ok((await srv.callTool('edit_handoff', { kind: 'task', scope_id: 't-1', agent_id: 'main-agent' })).isError, 'nothing to save');
+    assert.ok((await srv.callTool('edit_handoff', { kind: 'task', scope_id: 't-1', agent_id: 'main-agent', next: 'x' })).isError);
+    assert.equal(fetchLog(ctx).length, before);
+    const missing = await srv.callTool('read_handoff', { kind: 'conversation', scope_id: 'conv-1', agent_id: 'other' });
+    assert.ok(missing.isError);
+    assert.match(missing.content[0].text, /404/);
+    noToken(srv);
+  } finally {
+    await srv.stop();
+  }
+  const ctx2 = setup();
+  const srv2 = startServer(ctx2, { FAKE_SCENARIO: 'notowner' });
+  try {
+    await srv2.initialize();
+    const res = await srv2.callTool('list_handoffs', {});
+    assert.equal(res.isError, true);
+    assert.match(res.content[0].text, /not the owner account/);
+  } finally {
+    await srv2.stop();
   }
 });

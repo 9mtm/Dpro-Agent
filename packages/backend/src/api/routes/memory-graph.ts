@@ -11,6 +11,10 @@
  *   POST /api/memory/graph/links/:id/approve                                 pending -> active
  *   POST /api/memory/graph/links/:id/reject                                  pending -> rejected
  *   POST /api/memory/graph/sync              { limit? }                      index memories without a graph, prune orphans
+ *   GET  /api/memory/graph/clusters          ?limit=&drawers=                 topic suggestions (<= 150 entities in all)
+ *   POST /api/memory/graph/clusters/:id/topic-preview  { topicKey? }          read only: what making it a topic would do
+ *   POST /api/memory/graph/clusters/:id/topic  { topicKey?, expectedPreviewHash, confirm: true }  one memory gets the key (versioned)
+ *   POST /api/memory/graph/clusters/:id/dismiss                               "not a topic"
  *
  * `drawers` (drawer ids, comma separated) narrows any read to those drawers.
  */
@@ -23,6 +27,7 @@ import { requestMeta } from '../../repositories/audit.js';
 import { actorOrReply, requireOwner } from '../../repositories/scope.js';
 import { DrawerInputError, parseDrawerId, type DrawerRef } from '../../memory/drawers.js';
 import { decideLink, entityDetail, listEntities, listLinks, syncMemoryGraph, type GraphScope } from '../../memory/graph/index.js';
+import { applyTopic, ClusterError, dismissCluster, graphClusters, topicPreview } from '../../memory/graph/clusters.js';
 
 function ownerOf(request: FastifyRequest, reply: FastifyReply): Actor | null {
   return actorOrReply(reply, actorOf(request), requireOwner);
@@ -91,6 +96,47 @@ export async function memoryGraphRoutes(fastify: FastifyInstance) {
       return { link: res };
     });
   }
+
+  // ---- clusters -> topics (nothing changes without the owner's confirm) ----
+  const bodyOf = (request: FastifyRequest): Record<string, unknown> =>
+    request.body && typeof request.body === 'object' && !Array.isArray(request.body) ? request.body as Record<string, unknown> : {};
+  const clusterFail = (reply: FastifyReply, err: unknown) => {
+    if (err instanceof ClusterError) return reply.code(err.status).send({ error: err.message, code: err.code });
+    throw err;
+  };
+  const clusterId = (request: FastifyRequest) => (request.params as { id: string }).id;
+
+  fastify.get('/api/memory/graph/clusters', { config }, async (request, reply) => {
+    const ctx = withScope(request, reply);
+    if (!ctx) return reply;
+    const n = Number(query(request).limit ?? 50);
+    return { clusters: await graphClusters(ctx.scope, { limit: Number.isInteger(n) && n >= 1 && n <= 200 ? n : 50 }) };
+  });
+
+  fastify.post('/api/memory/graph/clusters/:id/topic-preview', { config }, async (request, reply) => {
+    const ctx = withScope(request, reply);
+    if (!ctx) return reply;
+    try { return { preview: await topicPreview(ctx.scope, clusterId(request), bodyOf(request).topicKey) }; } catch (err) { return clusterFail(reply, err); }
+  });
+
+  fastify.post('/api/memory/graph/clusters/:id/topic', { config }, async (request, reply) => {
+    const ctx = withScope(request, reply);
+    if (!ctx) return reply;
+    try {
+      const result = await applyTopic(ctx.scope, clusterId(request), bodyOf(request), ctx.owner.userId!);
+      void repositories.audit.record(ctx.owner, {
+        event_type: 'data.update', event_category: 'data_modification', severity: 'info',
+        resource_type: 'memory', resource_id: result.memoryId, action: 'memory_graph.cluster_topic', success: true, metadata: { topicKey: result.topicKey, drawer: result.drawer },
+      }, requestMeta(request));
+      return { result };
+    } catch (err) { return clusterFail(reply, err); }
+  });
+
+  fastify.post('/api/memory/graph/clusters/:id/dismiss', { config }, async (request, reply) => {
+    const ctx = withScope(request, reply);
+    if (!ctx) return reply;
+    try { return await dismissCluster(ctx.scope, clusterId(request), ctx.owner.userId!); } catch (err) { return clusterFail(reply, err); }
+  });
 
   fastify.post('/api/memory/graph/sync', { config }, async (request, reply) => {
     const owner = ownerOf(request, reply);

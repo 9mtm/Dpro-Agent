@@ -162,8 +162,13 @@ export async function audit(ownerId: string, action: string, detail: { client?: 
     randomUUID(), ownerId, detail.client ?? null, detail.projectId ?? null, action.slice(0, 64), detail.note ? detail.note.slice(0, 300) : null, now());
 }
 
-export async function auditLog(ownerId: string, limit = 100): Promise<Array<{ id: string; client: string | null; projectId: string | null; action: string; detail: string | null; createdAt: string }>> {
+/** What the bridge did, newest first; optionally only one CLI or one project. */
+export async function auditLog(ownerId: string, limit = 100, filter: { client?: string; projectId?: string } = {}): Promise<Array<{ id: string; client: string | null; projectId: string | null; action: string; detail: string | null; createdAt: string }>> {
+  const where = ['owner_id = ?'];
+  const params: string[] = [ownerId];
+  if (filter.client) { where.push('client = ?'); params.push(filter.client); }
+  if (filter.projectId) { where.push('project_id = ?'); params.push(filter.projectId); }
   const rows = await q.all<{ id: string; client: string | null; project_id: string | null; action: string; detail: string | null; created_at: string }>(
-    `SELECT * FROM memory_bridge_audit WHERE owner_id = ? ORDER BY created_at DESC, id DESC LIMIT ${Math.min(Math.max(1, limit), 500)}`, ownerId);
+    `SELECT * FROM memory_bridge_audit WHERE ${where.join(' AND ')} ORDER BY created_at DESC, id DESC LIMIT ${Math.min(Math.max(1, limit), 500)}`, ...params);
   return rows.map((r) => ({ id: r.id, client: r.client, projectId: r.project_id, action: r.action, detail: r.detail, createdAt: r.created_at }));
 }

@@ -44,6 +44,9 @@ export const APPROVAL_REQUIRED_TOOLS: Readonly<Record<string, ApprovalCategory>>
   memory_scope_apply: 'settings', // MEM-SCALE-01: project lifecycle, departments, pinned facts; the approval is the confirm
   memory_access_apply: 'settings', // MEM-SCALE-01: inherited access policies; the approval is the confirm
   memory_move: 'other', // MEM-CACHE-01: moving a memory changes which turns may load it; the owner approves each move
+  memory_review_decide: 'other', // CORE-MEM-CONFLICT: keep new / old / both changes a memory; the approval is the confirm
+  memory_graph_review: 'other', // CORE-MEM-GRAPH: an approved link is used by recall; the approval is the confirm
+  memory_graph_topic: 'other', // MEM-GRAPH-CLUSTER: gives a memory a topic key / dismisses a suggestion; the approval is the confirm
   // spending money
   make_call: 'money',
   trading_execute: 'money',
