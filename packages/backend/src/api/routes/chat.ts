@@ -41,7 +41,6 @@ import { OLLAMA_URL, DEFAULT_OLLAMA_MODEL, ollamaThinkOption } from '../../llm/o
 import { resolveLocalModel } from '../../llm/local-models.js';
 import { lmStudioApiUrl, lmStudioModelName, lmStudioNotRunningMessage } from '../../llm/lmstudio.js';
 import { runLmStudioAgentLoop } from '../../services/lmstudio-agent-loop.js';
-import { loadRunPermissions } from '../../tools/agent-permissions.js';
 import { contextPack, messageRecall, type ContextPack, type MessageRecall } from '../../memory/context/pack.js';
 import { budgetHistory, type BudgetedHistory, type HistoryTurn } from '../../memory/context/summaries.js';
 import { saveTrace, setTraceTtft } from '../../memory/context/trace.js';
@@ -378,10 +377,14 @@ export interface ChatTurnInput {
 /** Room for the tool definitions and instructions the turn adds after the system prompt (tokens). */
 const TOOLS_RESERVE_TOKENS = 3000;
 
-/** Drawers the agent may read automatically: the turn's drawers narrowed by its memory permissions (CORE-PERMS-01). */
-async function readableDrawers(agentId: string | undefined, drawers: DrawerRef[]): Promise<DrawerRef[]> {
+/**
+ * Drawers the agent may read automatically: the turn's drawers narrowed by its memory permissions
+ * (CORE-PERMS-01) and its inherited access in this project (MEM-SCALE-01).
+ */
+async function readableDrawers(agentId: string | undefined, drawers: DrawerRef[], userId: string): Promise<DrawerRef[]> {
   if (!agentId || drawers.length === 0) return drawers;
-  const read = (await loadRunPermissions(agentId)).memoryRead;
+  const project = drawers.find((d) => d.kind === 'project')?.key ?? null;
+  const read = (await loadRunPermissions(agentId, [], { userId, project })).memoryRead;
   return drawers.filter((d) => read.includes(d.kind));
 }
 
@@ -523,7 +526,7 @@ export async function executeChatTurn(reply: FastifyReply, input: ChatTurnInput)
     let recall: MessageRecall = { text: '', items: [], hit: false };
     const lastUser = messages[messages.length - 1];
     try {
-      const drawers = await readableDrawers(agentConfig?.id, memoryDrawers);
+      const drawers = await readableDrawers(agentConfig?.id, memoryDrawers, userId);
       pack = await contextPack({ userId, agentId: agentConfig?.id ?? null, drawers, persona: resolvedSystemPrompt, handoff: includeAgentMemory && !channelTurn ? input.handoff ?? null : null });
       resolvedSystemPrompt = pack.text;
       recall = await messageRecall({ userId, drawers, query: messageText(lastUser?.content), pack });
