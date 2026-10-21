@@ -1848,3 +1848,15 @@ button.status-item:hover { background:var(--row-hover); color:var(--text); }
 .agent-handoffs li { display:grid; gap:2px; font-size:12.5px; }
 @container (max-width: 980px) { .agent-memory-grid { grid-template-columns:minmax(0,1fr) minmax(0,1fr); } .agent-memory-grid > :first-child { grid-column:1 / -1; } }
 @container (max-width: 600px) { .agent-memory-grid { grid-template-columns:minmax(0,1fr); } }
+/* MEM-UI-01 (board M7): health and rules */
+.mem-health { display:grid; gap:12px; }
+.mem-health-grid { display:grid; grid-template-columns:repeat(3,minmax(0,1fr)); gap:16px; align-items:start; }
+.mem-check { display:grid; grid-template-columns:12px minmax(0,1fr) auto; gap:10px; align-items:center; padding:8px 0; border-block-start:1px solid var(--border); }
+.mem-check-label { display:grid; gap:2px; font-size:13px; }
+.mem-check-count { font-variant-numeric:tabular-nums; font-size:13px; }
+.mem-fix { display:grid; gap:6px; }
+.mem-rule { display:flex !important; justify-content:space-between; gap:10px; padding-block-start:8px; border-block-start:1px solid var(--border); font-size:13px; max-inline-size:none !important; }
+.mem-rule-field { display:grid !important; gap:6px; padding-block-start:8px; border-block-start:1px solid var(--border); font-size:13px !important; color:var(--text) !important; max-inline-size:none !important; }
+.mem-secret-note { padding:10px 12px; border-radius:8px; background:var(--mem-ok-bg); color:var(--mem-ok); font-size:12.5px; }
+@container (max-width: 980px) { .mem-health-grid { grid-template-columns:minmax(0,1fr) minmax(0,1fr); } }
+@container (max-width: 640px) { .mem-health-grid { grid-template-columns:minmax(0,1fr); } }
