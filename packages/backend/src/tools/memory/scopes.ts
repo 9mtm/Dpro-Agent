@@ -28,7 +28,7 @@
  */
 
 import type { Tool, ToolResult, ToolExecutionContext } from '../types.js';
-import { toolMemoryDrawers, toolMemoryUser } from './scope.js';
+import { toolMemoryDrawers, toolMemoryUser, toolOwnerTurn } from './scope.js';
 import { one, sql } from '../../repositories/sql-steps.js';
 import { repositories } from '../../repositories/index.js';
 import { toolActor, actorLabel } from '../../repositories/actor.js';
@@ -48,6 +48,7 @@ const ok = (text: string, data: Record<string, unknown>): ToolResult => ({ conte
 async function ownerGate(context?: ToolExecutionContext): Promise<{ ownerId: string } | { refused: string }> {
   const userId = toolMemoryUser(context);
   if (!userId) return { refused: 'no user for this memory' };
+  if (!toolOwnerTurn(context)) return { refused: "only in the owner's own turn, not in a board task run" };
   if (context?.toolPolicy) return { refused: 'not available when answering someone else' };
   const row = await sql().read(one<{ role: string }>('SELECT role FROM users WHERE id = ?', userId));
   if (row?.role !== 'owner') return { refused: 'only for the owner' };

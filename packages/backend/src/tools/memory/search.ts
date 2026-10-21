@@ -10,7 +10,7 @@ import type { ImportanceLevel, MemoryType } from '../../memory/types.js';
 import type { ToolExecutionContext } from '../types.js';
 import { toolMemoryUser } from './scope.js';
 import { repositories } from '../../repositories/index.js';
-import { toolActor } from '../../repositories/actor.js';
+import { toolMemoryActor } from '../../repositories/actor.js';
 
 interface MemorySearchParams {
   /** Search query */
@@ -163,7 +163,7 @@ Returns:
       if (!toolMemoryUser(context)) throw new Error('No user for this memory search');
 
       // Search memories using new Multi-Tier Memory API
-      const results = await repositories.memory.search(toolActor(context), {
+      const results = await repositories.memory.search(await toolMemoryActor(context), {
         query: params.query,
         type: params.type,
         layer: params.layer,

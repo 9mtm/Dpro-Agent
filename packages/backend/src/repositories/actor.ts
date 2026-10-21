@@ -15,7 +15,8 @@
  *
  * Kinds:
  *  - 'user'    a signed-in account; role owner | admin | user | guest
- *  - 'agent'   a tool call inside an agent run for `userId`, limited to the
+ *  - 'agent'   a tool call inside an agent run for `userId` (for memory in a
+ *              board task run: the run's owner, see toolMemoryActor), limited to the
  *              run's open memory `drawers`; never owner-wide, whatever the
  *              user's role (`role` is the run user's role, for information)
  *  - 'service' a server-created channel/phone turn (an outsider is answered);
@@ -142,6 +143,21 @@ export async function actorFromToolContextAsync(context?: ToolExecutionContext):
 /** The tool call's actor: the one the registry attached, else built from the context. */
 export function toolActor(context?: ToolExecutionContext): Actor {
   return context?.actor ?? actorFromToolContext(context);
+}
+
+/**
+ * MEM-OWNER-01: the actor of a memory tool call. In a board task run the tool
+ * user is the agent, but the memory belongs to the run's owner
+ * (`accessOwnerId`): the same agent actor (agent id, channel, open drawers,
+ * write kinds, run) for that owner, with the owner's role, so saves land as
+ * the owner's memories with `source_agent_id` = the agent and important ones
+ * become the owner's proposals, as in the owner's chats. Otherwise toolActor.
+ */
+export async function toolMemoryActor(context?: ToolExecutionContext): Promise<Actor> {
+  const owner = typeof context?.accessOwnerId === 'string' && context.accessOwnerId ? context.accessOwnerId : undefined;
+  const user = contextUserId(context);
+  if (!owner || !user || owner === user) return toolActor(context);
+  return buildToolActor(context, owner, await activeRoleAsync(owner));
 }
 
 /** Short label for logs/audit metadata (no secrets): `user:<id>`, `agent:<id>`, ... */

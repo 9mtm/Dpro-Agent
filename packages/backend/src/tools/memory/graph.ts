@@ -24,7 +24,7 @@
  */
 
 import type { Tool, ToolResult, ToolExecutionContext } from '../types.js';
-import { toolMemoryDrawers, toolMemoryUser } from './scope.js';
+import { toolMemoryDrawers, toolMemoryUser, toolOwnerTurn } from './scope.js';
 import { one, sql } from '../../repositories/sql-steps.js';
 import { entityDetail, findEntity, graphRecall, listEntities, listLinks, memoryEntities, type GraphScope } from '../../memory/graph/index.js';
 import { ScopeInputError, agentViewMap } from '../../memory/scopes/index.js';
@@ -89,6 +89,7 @@ Only the memory drawers open for this conversation are read. Read-only.`,
   async execute(params: Record<string, any>, context?: ToolExecutionContext): Promise<ToolResult> {
     const userId = toolMemoryUser(context);
     if (!userId) return fail('no user for this memory');
+    if (!toolOwnerTurn(context)) return fail("only in the owner's own turn, not in a board task run");
     if (context?.toolPolicy) return fail('not available when answering someone else');
     if (!(await isOwnerAccount(userId))) return fail('the memory graph is for the owner only');
     const op = params?.op;
@@ -205,6 +206,7 @@ action "dismiss" (cluster_id): "not a topic"; it is not suggested again until it
   async execute(params: Record<string, unknown>, context?: ToolExecutionContext): Promise<ToolResult> {
     const userId = toolMemoryUser(context);
     if (!userId) return fail('no user for this memory');
+    if (!toolOwnerTurn(context)) return fail("only in the owner's own turn, not in a board task run");
     if (context?.toolPolicy) return fail('not available when answering someone else');
     if (!(await isOwnerAccount(userId))) return fail('the memory graph is for the owner only');
     const scope: GraphScope = { userId, drawers: toolMemoryDrawers(context) };
