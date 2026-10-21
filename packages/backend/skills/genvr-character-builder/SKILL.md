@@ -20,7 +20,7 @@ Use stable existing agent IDs. An avatar is an appearance, not a second agent, a
 a tool grant or a change of personality, memory or role. Linking agents to characters is not done
 from the GenVR spaces page; the owner decides where that lives.
 
-Discover actual tools before acting. With the live Studio connection (3d-world-sdk 0.3.0-preview.15):
+Discover actual tools before acting. With the live Studio connection (3d-world-sdk 0.3.0-preview.16):
 `user_avatar_library` lists built-in and private characters and assigns one to `self` (My avatar);
 `list_avatar_motions` and `present_avatar` preview actions and expressions (see the SDK skill
 `genvr-avatar-presentation`). `avatar_studio` edits a character's body, shape, muscle, fat, face,
