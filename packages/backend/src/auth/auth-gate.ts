@@ -74,6 +74,11 @@ export const PUBLIC_ROUTES: ReadonlySet<string> = new Set([
   key('POST', '/api/auth/login'),
   // MCP-01b: HMAC proof of the install's identity for local clients (no data, no secret).
   key('GET', '/api/instance'),
+  // MEM-BRIDGE-01: the dpro-memory MCP server. Loopback only; the session needs the
+  // install proof (instance.json HMAC), a call needs the CLI's token from the
+  // encrypted credential store. Both refuse while the CLI is switched off.
+  key('POST', '/api/memory-bridge/mcp/session'),
+  key('POST', '/api/memory-bridge/mcp/call'),
   // @fastify/static wildcard for the repo `public/` folder (see S0-A.7).
   key('GET', '/*'),
   // Login page translations.
@@ -201,6 +206,7 @@ export const TIER_RULES: readonly Rule[] = [
   { methods: '*', prefix: '/api/budget', access: 'owner' },        // paid model spend today + daily cap (R2)
   { methods: '*', prefix: '/api/small-agent', access: 'owner' },   // delegate light tasks to the small local agent (MCP-01)
   { methods: '*', prefix: '/api/handoffs', access: 'owner' },      // the agents' handoff notes (CORE-MEM-HANDOFF)
+  { methods: '*', prefix: '/api/memory-bridge', access: 'owner' }, // CLI configs, project files, back-flow, kill switch (MEM-BRIDGE-01)
   { methods: '*', prefix: '/api/mcp', access: 'owner' },           // MCP client servers: start processes / reach URLs for agents (M1)
 
   // --- owner or admin: configuration, outbound requests, money, other users' data ---

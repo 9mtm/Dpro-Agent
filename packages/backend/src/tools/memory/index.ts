@@ -13,3 +13,4 @@ export { memoryDoctorTool, memoryDoctorFixTool } from './doctor.js';
 export { memoryGraphTool } from './graph.js';
 export { memoryScopesTool, memoryScopeApplyTool, memoryAccessApplyTool, memoryScopeForgetTool } from './scopes.js';
 export { memoryMoveTool } from './move.js';
+export { memoryBridgeTool, memoryBridgeApplyTool } from './bridge.js';
