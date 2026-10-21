@@ -78,10 +78,12 @@ export class MemoryScopesController extends Store<ScopeState> {
     return s.scope.startsWith('project:') ? s.tree?.projects.find(p => p.slug === s.scope.slice(8)) ?? null : null;
   }
 
+  /** The desktop Memory window reads only the tree for Everything (no home statistics). */
+  light = false;
   private async loadScope() {
     const t = ++this.#ticket;
     const scope = this.getSnapshot().scope;
-    if (scope === 'company') await this.loadHome(t);
+    if (scope === 'company') { if (!this.light) await this.loadHome(t); }
     else await this.loadOverview(t, scope);
   }
 

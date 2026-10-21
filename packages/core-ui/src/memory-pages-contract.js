@@ -56,7 +56,7 @@
 //   Rules and speed (CORE-05/07, MEM-CACHE-01)
 //   GET    /api/memory/weekly-summary
 //   GET    /api/memory/retention
-//   PUT    /api/memory/retention                         { enabled?, taskTtlDays?, experienceAfterDays?, experienceMinGroup? }
+//   PUT    /api/memory/retention                         { enabled?, taskTtlDays?, experienceAfterDays?, experienceMinGroup?, trashDays? (0|7|30|90, Trash) }
 //   POST   /api/memory/cache/clear                       { confirm: true }
 
 const record = x => !!x && typeof x === 'object' && !Array.isArray(x);
@@ -254,8 +254,8 @@ export function allowedMemoryPages(method, path, body) {
       return get;
     case 'retention':
       if (method === 'GET') return body === undefined;
-      return method === 'PUT' && record(body) && onlyKeys(body, ['enabled', 'taskTtlDays', 'experienceAfterDays', 'experienceMinGroup']) && Object.keys(body).length > 0
-        && (body.enabled === undefined || typeof body.enabled === 'boolean')
+      return method === 'PUT' && record(body) && onlyKeys(body, ['enabled', 'taskTtlDays', 'experienceAfterDays', 'experienceMinGroup', 'trashDays']) && Object.keys(body).length > 0
+        && (body.enabled === undefined || typeof body.enabled === 'boolean') && (body.trashDays === undefined || [0, 7, 30, 90].includes(body.trashDays))
         && ['taskTtlDays', 'experienceAfterDays', 'experienceMinGroup'].every(k => body[k] === undefined || (Number.isInteger(body[k]) && body[k] >= 1 && body[k] <= 3650));
     case 'cache-clear': return method === 'POST' && record(body) && Object.keys(body).length === 1 && body.confirm === true;
     case 'pinned':
@@ -544,7 +544,7 @@ const family = route => (['doctor', 'doctor-fix'].includes(route) ? 'doctor' : [
     : route.startsWith('cluster') || route === 'graph-sync' || route === 'agent-view' ? 'graph' : 'scopes');
 function retention(c) {
   const n = (x, d) => (Number.isSafeInteger(x) && x > 0 ? x : d);
-  return record(c) ? { enabled: c.enabled === true, taskTtlDays: n(c.taskTtlDays, 90), experienceAfterDays: n(c.experienceAfterDays, 180), experienceMinGroup: n(c.experienceMinGroup, 3) } : fail();
+  return record(c) ? { enabled: c.enabled === true, taskTtlDays: n(c.taskTtlDays, 90), experienceAfterDays: n(c.experienceAfterDays, 180), experienceMinGroup: n(c.experienceMinGroup, 3), ...([0, 7, 30, 90].includes(c.trashDays) ? { trashDays: c.trashDays } : {}) } : fail();
 }
 
 export function memoryPagesResponse(path, status, body) {

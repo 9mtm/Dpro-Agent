@@ -30,7 +30,8 @@ export function SpeedCard({ m, title = 'Speed: cache and context' }: { m: CacheM
 
 const TTL = [30, 60, 90, 180, 365];
 
-export function HealthView({ c, conflicts, onReview, onFiles }: { c: MemoryHealthController; conflicts: number | null; onReview: () => void; onFiles: () => void }) {
+/** `part` shows only the health and backup half or only the rules half (Settings › Memory has a pane for each). */
+export function HealthView({ c, conflicts, onReview, onFiles, part }: { c: MemoryHealthController; conflicts: number | null; onReview: () => void; onFiles: () => void; part?: 'health' | 'rules' }) {
   const s = useSyncExternalStore(c.subscribe, c.getSnapshot, c.getSnapshot);
   if (s.phase === 'error') return <p className="empty-note">{s.notice} <button type="button" className="link-button" onClick={() => void c.load()}>Try again</button></p>;
   if (s.phase !== 'ready') return <p className="empty-note" role="status">Checking the memory…</p>;
@@ -41,7 +42,7 @@ export function HealthView({ c, conflicts, onReview, onFiles }: { c: MemoryHealt
     {s.result && <p className="memory-status" role="status">{s.result}</p>}
     <SafeFixDialog c={c}/>
     <div className="mem-health-grid">
-      <section className="mem-card" aria-label="Health check">
+      {part !== 'rules' && <section className="mem-card" aria-label="Health check">
         <div className="mem-card-head"><h3>Health check</h3><span className="fine-print">{r ? `checked ${ago(r.checkedAt) === 'now' ? 'just now' : `${ago(r.checkedAt)} ago`} · ${r.total} memories` : 'not checked'}</span></div>
         {CHECKS.map(ch => { const n = c.count(ch.kinds);
           return <div key={ch.label} className="mem-check"><span className="mem-dot" data-health={n ? 'attention' : 'ok'}/><span className="mem-check-label">{ch.label}<small className="fine-print">{ch.kinds.includes('embedding-missing') && r?.embeddingModel ? `every memory indexed with ${r.embeddingModel}` : ch.note}</small></span><span className="mem-check-count">{n}</span></div>; })}
@@ -52,8 +53,8 @@ export function HealthView({ c, conflicts, onReview, onFiles }: { c: MemoryHealt
         </div>}
         {s.fixed && <p className="fine-print" role="status">Fixed {Object.values(s.fixed.fixed).reduce((a, b) => a + b, 0)}{s.fixed.skipped.length ? `; ${s.fixed.skipped.length} skipped (changed meanwhile)` : ''}.</p>}
         <span className="fine-print">Nothing changes until you confirm each fix.</span>
-      </section>
-      <section className="mem-card" aria-label="Rules">
+      </section>}
+      {part !== 'health' && <section className="mem-card" aria-label="Rules">
         <div className="mem-card-head"><h3>Rules</h3><span className="fine-print">{s.rules ? (s.rules.scope === 'company' ? 'for the whole company' : `for ${scopeName(s.rules.scope)}`) : ''}</span></div>
         {s.rules && s.rulesDraft ? <RuleFields c={c} d={s.rulesDraft} from={s.rules.effective.from} company={s.rules.scope === 'company'}/> : <>
           <div className="mem-rule"><span>Routine facts</span><span className="fine-print">Saved automatically</span></div>
@@ -65,20 +66,20 @@ export function HealthView({ c, conflicts, onReview, onFiles }: { c: MemoryHealt
           <label className="mem-rule-field">Keep Tasks drawer items<select value={rd.taskTtlDays} onChange={e => c.editRetention({ taskTtlDays: Number(e.target.value) })}>{[...new Set([...TTL, rd.taskTtlDays])].sort((a, b) => a - b).map(d => <option key={d} value={d}>{d} days, then forget</option>)}</select></label>
           <label className="mem-rule-field">Summarise lessons older than<select value={rd.experienceAfterDays} onChange={e => c.editRetention({ experienceAfterDays: Number(e.target.value) })}>{[...new Set([...TTL, rd.experienceAfterDays])].sort((a, b) => a - b).map(d => <option key={d} value={d}>{d} days</option>)}</select></label>
         </>}
-        {id && <label className="mem-rule-field">Import from other agents<select value={id.enabled ? id.intervalMinutes : 0} onChange={e => { const v = Number(e.target.value); c.editImport(v ? { enabled: true, intervalMinutes: v as 15 | 30 | 60 } : { enabled: false }); }}>
+        {id && part !== 'rules' && <label className="mem-rule-field">Import from other agents<select value={id.enabled ? id.intervalMinutes : 0} onChange={e => { const v = Number(e.target.value); c.editImport(v ? { enabled: true, intervalMinutes: v as 15 | 30 | 60 } : { enabled: false }); }}>
           <option value={0}>Off</option><option value={15}>Every 15 minutes</option><option value={30}>Every 30 minutes</option><option value={60}>Every 60 minutes</option></select></label>}
         {!(s.rules?.scope === 'company') && <div className="mem-rule"><span>Weekly summary</span><span className="fine-print">Built each week (read it on Home)</span></div>}
         <div className="actions"><button type="button" className="primary" disabled={s.busy || !c.rulesChanged()} onClick={() => void c.saveRules()}>Save rules</button></div>
         <span className="mem-secret-note">Secrets are never saved to memory: they go to the key store.</span>
-      </section>
-      <div className="mem-col">
+      </section>}
+      {part !== 'rules' && <div className="mem-col">
         <SpeedCard m={m}/>
         <section className="mem-card" aria-label="Backup">
           <h3>Backup and export</h3>
           <p>Readable files per drawer, kept in sync. Edits come back as reviews.</p>
-          <div className="actions"><button type="button" disabled={s.busy} onClick={() => void download(c)}>Export all</button><button type="button" onClick={onFiles}>Open files view</button></div>
+          <div className="actions"><button type="button" disabled={s.busy} onClick={() => void download(c)}>Export all memory</button><button type="button" onClick={onFiles}>Open as files</button></div>
         </section>
-      </div>
+      </div>}
     </div>
   </div>;
 }

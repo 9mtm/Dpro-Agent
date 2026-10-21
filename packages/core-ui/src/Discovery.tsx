@@ -3,7 +3,7 @@
 import { useEffect, useState, useSyncExternalStore, type ReactElement } from 'react';
 import { DiscoveryController, FILE_KIND_LABEL, KIND_LABEL, KIND_SHORT, STATE_LABEL } from './discovery-controller';
 import { DISCOVERY_KINDS, DISCOVERY_STATES, FILE_KINDS } from './discovery-contract.js';
-import type { DiscoveryItem, DiscoveryPlace } from './discovery-contract.js';
+import type { DiscoveryItem, DiscoveryKind, DiscoveryPlace } from './discovery-contract.js';
 import type { SessionClient } from './session';
 
 const ago = (iso: string | null) => {
@@ -27,7 +27,7 @@ export function Discovery({ client, active }: { client: SessionClient; active: b
 }
 
 /** DISCOVER-02 (board M18): the folders and drives Dpro may read; tick several, then allow them at once. */
-function FolderTree({ c }: { c: DiscoveryController }) {
+export function FolderTree({ c }: { c: DiscoveryController }) {
   const s = useSyncExternalStore(c.subscribe, c.getSnapshot, c.getSnapshot);
   const [adding, setAdding] = useState(false); const [folder, setFolder] = useState('');
   const pending = c.pendingPlaces(); const changes = pending.allow.length + pending.deny.length + pending.exclude.length;
@@ -58,7 +58,8 @@ function FolderTree({ c }: { c: DiscoveryController }) {
   </section>;
 }
 
-export function DiscoveryView({ c, active }: { c: DiscoveryController; active: boolean }) {
+/** `kinds` limits the list (Settings › Memory › Sources shows memory kinds; skills, MCP and SSH live in their own sections); `noFolders` leaves the folder tree to Folders and drives. */
+export function DiscoveryView({ c, active, kinds, noFolders = false }: { c: DiscoveryController; active: boolean; kinds?: readonly DiscoveryKind[]; noFolders?: boolean }) {
   const s = useSyncExternalStore(c.subscribe, c.getSnapshot, c.getSnapshot);
   useEffect(() => { if (active && s.phase === 'idle') void c.load(); }, [active, c, s.phase]);
   useEffect(() => { if (active && !s.places.top) void c.loadPlaces(); }, [active, c, s.places.top]);
@@ -66,7 +67,7 @@ export function DiscoveryView({ c, active }: { c: DiscoveryController; active: b
   if (s.phase === 'error' || !s.view) return <p className="fine-print">{s.notice} <button type="button" className="link-button" onClick={() => void c.load()}>Try again</button></p>;
   const v = s.view;
   const root = v.roots.find(r => r.id === s.rootId) ?? null;
-  const shown = c.shown(); const counts = c.counts();
+  const shown = c.shown().filter(i => !kinds || kinds.includes(i.kind)); const counts = c.counts();
   const act = (it: DiscoveryItem) => {
     if (it.state === 'new' || it.state === 'changed') return void c.importIds([it.id]);
     if (it.state === 'ignored') return void c.ignore(it.id, false);
@@ -78,7 +79,7 @@ export function DiscoveryView({ c, active }: { c: DiscoveryController; active: b
   const otherRoots = v.roots.filter(r => r.id !== 'computer' && r.watch);
   return <div className="disc">
     <div className="disc-side">
-    <FolderTree c={c}/>
+    {!noFolders && <FolderTree c={c}/>}
     <nav className="disc-roots" aria-label="Projects found">
       <span className="fine-print">By project folder</span>
       {v.roots.map(r => <button key={r.id} type="button" className="disc-root" aria-current={r.id === s.rootId ? 'true' : undefined} onClick={() => c.setRoot(r.id)}>
@@ -96,7 +97,7 @@ export function DiscoveryView({ c, active }: { c: DiscoveryController; active: b
         <label className="disc-every check">every<select aria-label="How often to scan" value={v.settings.intervalMinutes} disabled={s.busy} onChange={e => void c.setWatch(v.settings.watch, Number(e.target.value) as 15 | 30 | 60)}>{[15, 30, 60].map(n => <option key={n} value={n}>{n} min</option>)}</select></label>
       </div>
       <div className="seg small" role="radiogroup" aria-label="Kind">
-        {(['all', ...DISCOVERY_KINDS] as const).map(k => <button key={k} type="button" role="radio" aria-checked={s.kind === k} onClick={() => c.setKind(k)}>{k === 'all' ? 'All' : KIND_LABEL[k]} <span className="muted">{counts.kind[k] ?? 0}</span></button>)}
+        {(['all', ...DISCOVERY_KINDS.filter(k => !kinds || kinds.includes(k))] as const).map(k => <button key={k} type="button" role="radio" aria-checked={s.kind === k} onClick={() => c.setKind(k)}>{k === 'all' ? 'All' : KIND_LABEL[k]} <span className="muted">{counts.kind[k] ?? 0}</span></button>)}
       </div>
       <div className="seg small" role="radiogroup" aria-label="State">
         <button type="button" role="radio" aria-checked={s.state === 'all'} onClick={() => c.setState('all')}>Any state</button>

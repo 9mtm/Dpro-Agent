@@ -127,7 +127,7 @@ test('mock login is explicitly fictional and rejects wrong credentials', async (
 test('shell renders fixture by default, login has no protected content, logout needs explicit confirmation', async () => {
   let html = renderToStaticMarkup(React.createElement(App)); assert.match(html, /Open offline login mock/); assert.doesNotMatch(html, /Use live sign-in/);
   const s = setup(() => ok({ setupComplete: true, setupRequired: false, message: 'Setup already completed' })); s.client.selectMode('mock'); await s.client.discoverSetup(); html = renderToStaticMarkup(React.createElement(App, { client: s.client })); assert.match(html, /Welcome to Dpro/); assert.doesNotMatch(html, /type="password"|Memory review/);
-  await s.login(); html = renderToStaticMarkup(React.createElement(App, { client: s.client })); assert.match(html, /disabled="">Sign out on all devices/); assert.match(html, /aria-label="Memory views"/); assert.doesNotMatch(html, /must-not-escape|fictional-token|Mira/);
+  await s.login(); html = renderToStaticMarkup(React.createElement(App, { client: s.client })); assert.match(html, /disabled="">Sign out on all devices/); assert.match(html, /class="dk-mem" aria-label="Memory"/); assert.doesNotMatch(html, /must-not-escape|fictional-token|Mira/);
 });
 
 test('late old 401 cannot revoke a newer authenticated session', async () => {

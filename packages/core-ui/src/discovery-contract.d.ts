@@ -1,4 +1,4 @@
-export type DiscoveryKind = 'memory' | 'note' | 'tool' | 'skill' | 'mcp' | 'ssh';
+export type DiscoveryKind = 'memory' | 'note' | 'tool' | 'skill' | 'mcp' | 'ssh' | 'design' | 'database';
 export type FileKind = 'notes' | 'tools' | 'skills' | 'mcp' | 'ssh';
 export type DiscoveryPlace = { id: string; name: string; path: string; kind: 'home' | 'drive' | 'folder' | 'added'; state: 'allow' | 'exclude' | null; inherited: 'allow' | 'exclude' | null; hasChildren: boolean };
 export type MergeSuggestion = { key: string; a: { id: string; name: string }; b: { id: string; name: string }; reason: string };

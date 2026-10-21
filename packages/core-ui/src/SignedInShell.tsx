@@ -15,8 +15,10 @@ import type {SettingsTab} from './AppSettings';
 import { AppSettings } from './AppSettings';
 import { useAppNavigation, useAppTheme } from './app-navigation';
 import { AccountPanel } from './SessionPanels';
-import { MemoryPage } from './MemoryViews';
-import type { MemoryFocus } from './MemoryViews';
+import { MemoryWindow } from './MemoryDesktop';
+import type { MemoryFocus, SettingsTarget } from './MemoryDesktop';
+import type { MemorySettingsPane } from './MemorySettings';
+import { McpSection, SkillsSection, TerminalSection } from './ToolSections';
 import { Icon } from './icons';
 import type { IconName } from './icons';
 import { UiIcon } from './ui-icons';
@@ -24,7 +26,9 @@ import { CommandPalette } from './CommandPalette';
 import { ChatSearchController } from './chat-search';
 import type { Command } from './CommandPalette';
 
-type Page = 'approvals' | 'chat' | 'genvr' | 'agents' | 'board' | 'memory' | 'account' | 'settings' | 'about';
+type Page = 'approvals' | 'chat' | 'genvr' | 'agents' | 'board' | 'memory' | 'skills' | 'mcp' | 'terminal' | 'account' | 'settings' | 'about';
+/** Sections that own the sidebar with their own places (the chat list shows only in Chat). */
+const OWN_SIDEBAR: ReadonlyArray<Page> = ['memory', 'settings', 'agents', 'skills', 'mcp', 'terminal'];
 const pages: ReadonlyArray<{ key: Page; label: string; icon: IconName | 'board' }> = [
   { key: 'chat', label: 'Chat', icon: 'message-circle' },
   { key: 'agents', label: 'Agents', icon: 'user' },
@@ -36,8 +40,10 @@ const pages: ReadonlyArray<{ key: Page; label: string; icon: IconName | 'board' 
 ];
 
 /**
- * The signed-in workspace: a left sidebar for chats only (new chat, the
- * conversations, the account; UI-SIDEBAR-01), every page in the status bar, the page area and a status bar. Every page
+ * The signed-in workspace: one left sidebar owned by the open section (the
+ * chat list in Chat; Memory, Settings, Agents, Skills, MCP connections and
+ * Terminal show their own places in it), every page in the status bar, the
+ * page area and a status bar. Every page
  * stays mounted and only the active one is shown, so a conversation or an
  * unsaved agent draft survives switching pages.
  */
@@ -67,25 +73,32 @@ export function SignedInShell({ client, notice }: { client: SessionClient; notic
   const [palette, setPalette] = useState(false);
   const [choosingChat,setChoosingChat]=useState(false);
   const [settingsTab,setSettingsTab]=useState<SettingsTab>('general');
+  const [memoryPane,setMemoryPane]=useState<MemorySettingsPane>('rules');
+  const [slot,setSlot]=useState<HTMLElement|null>(null);
+  const ownSidebar=OWN_SIDEBAR.includes(page);
   const [settingsVisit,setSettingsVisit]=useState(0);
   const [terminalRequest,setTerminalRequest]=useState(0);
   const openSettings=(tab:SettingsTab)=>{setSettingsTab(tab);setSettingsVisit(n=>n+1);setPage('settings');};
   const openTerminal=()=>{if(user.role!=='owner')return;setTerminalRequest(n=>n+1);setPage('chat');};
+  const openMemorySettings=(target:SettingsTarget)=>{setMemoryPane(target);setSettingsTab('memory');setSettingsVisit(n=>n+1);setPage('settings');};
   const tools=[
     {id:'genvr',label:'GenVR',icon:<Icon name="dice"/>,run:()=>setPage('genvr')},
     ...(user.role==='owner'?[
-      {id:'terminal',label:'Terminal',icon:<UiIcon name="terminal" size={14}/>,run:openTerminal},
-      {id:'skills',label:'Skills',icon:<UiIcon name="file" size={14}/>,run:()=>openSettings('skills')},
+      {id:'terminal',label:'Terminal',icon:<UiIcon name="terminal" size={14}/>,run:()=>setPage('terminal')},
+      {id:'skills',label:'Skills',icon:<UiIcon name="file" size={14}/>,run:()=>setPage('skills')},
       {id:'specialties',label:'Specialties',icon:<Icon name="user"/>,run:()=>openSettings('specialties')},
-      {id:'mcp',label:'MCP connections',icon:<UiIcon name="tool" size={14}/>,run:()=>openSettings('mcp')},
+      {id:'mcp',label:'MCP connections',icon:<UiIcon name="tool" size={14}/>,run:()=>setPage('mcp')},
     ]:[]),
   ];
   const [connectorsFocus, setConnectorsFocus] = useState(0);
   const [memoryFocus, setMemoryFocus] = useState<MemoryFocus | null>(null);
   const boardState = useSyncExternalStore(board ? board.subscribe : noopSubscribe, board ? board.getSnapshot : nullSnapshot, board ? board.getSnapshot : nullSnapshot);
-  // ⌘K / Ctrl+K opens the command box anywhere in the workspace.
+  // ⌘K / Ctrl+K opens the command box anywhere in the workspace; ⌘, / Ctrl+, opens Settings.
   useEffect(() => {
-    const onKey = (e: KeyboardEvent) => { if ((e.metaKey || e.ctrlKey) && e.key.toLowerCase() === 'k') { e.preventDefault(); setPalette(v => !v); } };
+    const onKey = (e: KeyboardEvent) => {
+      if ((e.metaKey || e.ctrlKey) && e.key.toLowerCase() === 'k') { e.preventDefault(); setPalette(v => !v); }
+      else if ((e.metaKey || e.ctrlKey) && e.key === ',') { e.preventDefault(); setPage('settings'); }
+    };
     window.addEventListener('keydown', onKey); return () => window.removeEventListener('keydown', onKey);
   }, []);
   const newChat = () => {setChoosingChat(true);setPage('chat');};
@@ -98,15 +111,16 @@ export function SignedInShell({ client, notice }: { client: SessionClient; notic
     { id: 'rail', group: 'Actions', icon:<UiIcon name="sidebar" size={14}/>, label: rail ? 'Hide the sidebar' : 'Show the sidebar', run: () => setRail(v => !v) },
   ];
   const active = chatState?.conversations.find(c => c.id === chatState.activeId);
-  const pageTitle = page === 'chat' && active ? (active.title || 'Chat') : pages.find(p => p.key === page)?.label ?? '';
+  const pageTitle = page === 'chat' && active ? (active.title || 'Chat') : page === 'skills' ? 'Skills' : page === 'mcp' ? 'MCP connections' : page === 'terminal' ? 'Terminal' : pages.find(p => p.key === page)?.label ?? '';
   const openCards = boardState?.boards.reduce((a, b) => a + b.cards, 0);
 
-  return <div className="shell app-shell" data-theme={theme} data-rail={rail ? 'open' : 'closed'} lang="en" dir="ltr">
+  const sidebarShown = rail && (page === 'chat' || ownSidebar);
+  return <div className="shell app-shell" data-theme={theme} data-rail={sidebarShown ? 'open' : 'closed'} data-section={page} lang="en" dir="ltr">
     {choosingChat&&chat&&<NewChatDialog controller={chat} onClose={()=>setChoosingChat(false)}/>}
     <header className="titlebar">
       <div className="titlebar-tools">
         <button type="button" className="tool" aria-label={rail ? 'Hide the sidebar' : 'Show the sidebar'} title={rail ? 'Hide the sidebar' : 'Show the sidebar'} aria-pressed={rail} onClick={() => setRail(v => !v)}><UiIcon name="sidebar" size={14}/></button>
-        <button type="button" className="tool" aria-label="New chat" title="New chat" onClick={newChat}><UiIcon name="compose" size={14}/></button>
+        {page === 'chat' && <button type="button" className="tool" aria-label="New chat" title="New chat" onClick={newChat}><UiIcon name="compose" size={14}/></button>}
       </div>
       <p className="titlebar-title">{pageTitle}</p>
       <div className="titlebar-tools end">
@@ -116,14 +130,15 @@ export function SignedInShell({ client, notice }: { client: SessionClient; notic
     </header>
     <aside className="sidebar">
       <div className="sidebar-brand"><span className="workspace-mark" aria-hidden="true"/>Dpro Agent</div>
-      <button className="nav-item new-chat" onClick={newChat}>
+      {/* The open section owns the sidebar: the chat list only in Chat; other sections render their places into the slot. */}
+      <div className="section-sidebar" ref={setSlot} hidden={page === 'chat'}/>
+      {page === 'chat' && <><button className="nav-item new-chat" onClick={newChat}>
         <UiIcon name="compose" size={15}/>New chat
       </button>
-      {/* UI-SIDEBAR-01: the sidebar is for chats only; every page is in the status bar (and ⌘K). */}
       <p className="section-label"><span className="checker" aria-hidden="true"/>Conversations</p>
       <div className="session-list">
         {chat && <ConversationList controller={chat} search={user.role === 'guest' ? undefined : search?.side} onOpen={() => setPage('chat')}/>}
-      </div>
+      </div></>}
       <div className="sidebar-footer">
         <details className="account-menu"><summary className="user-chip" title="Account">
           <span className="avatar" aria-hidden="true">{(displayName(user) || '?').slice(0, 1).toUpperCase()}</span>
@@ -139,23 +154,30 @@ export function SignedInShell({ client, notice }: { client: SessionClient; notic
           onOpenCard={(boardId, cardId) => { setPage('board'); void board?.reveal(boardId, cardId); }}
           onOpenMemory={(drawerId, memoryId) => { setMemoryFocus(f => ({ drawerId, memoryId, n: (f?.n ?? 0) + 1 })); setPage('memory'); }}/> : null}
       </section>
-      <section className="page page-scroll" hidden={page !== 'agents'}><div className="page-column"><AgentsDestination key={`agents-${connectorsFocus}`} client={client} active={page === 'agents'} focusConnectors={connectorsFocus > 0} onOpenMemory={agentId => { if (agentId) setMemoryFocus(f => ({ scope: `agent:${agentId}`, n: (f?.n ?? 0) + 1 })); setPage('memory'); }}/></div></section>
+      <section className="page page-scroll" hidden={page !== 'agents'}><div className="page-column"><AgentsDestination key={`agents-${connectorsFocus}`} client={client} active={page === 'agents'} sidebarSlot={slot} focusConnectors={connectorsFocus > 0} onOpenMemory={agentId => { if (agentId) setMemoryFocus(f => ({ scope: `agent:${agentId}`, n: (f?.n ?? 0) + 1 })); setPage('memory'); }}/></div></section>
       <section className="page page-scroll page-board page-ui" hidden={page !== 'board'}>{board && <TaskBoard controller={board} active={page === 'board'} onOpenChat={id => { void chat?.open(id); setPage('chat'); }}/>}</section>
       {user.role==='owner'&&<section className="page page-scroll" hidden={page!=='approvals'}><ApprovalPage client={client} active={page==='approvals'} onDecision={pendingApprovals.reload}/></section>}
-      <section className="page page-ui mem-host" hidden={page !== 'memory'}><MemoryPage client={client} active={page === 'memory'} focus={memoryFocus} onOpenChat={id => { void chat?.open(id); setPage('chat'); }} onOpenProjects={() => setPage('chat')}/></section>
+      <section className="page page-ui mem-desk" hidden={page !== 'memory'}><MemoryWindow client={client} active={page === 'memory'} focus={memoryFocus} sidebarSlot={slot} onOpenChat={id => { void chat?.open(id); setPage('chat'); }} onOpenSettings={openMemorySettings}/></section>
+      {user.role === 'owner' && <>
+        <section className="page page-ui mem-desk" hidden={page !== 'skills'}><SkillsSection client={client} active={page === 'skills'} slot={slot}/></section>
+        <section className="page page-ui mem-desk" hidden={page !== 'mcp'}><McpSection client={client} active={page === 'mcp'} slot={slot}/></section>
+        <section className="page page-ui mem-desk" hidden={page !== 'terminal'}><TerminalSection client={client} active={page === 'terminal'} slot={slot} onOpenTerminal={openTerminal}/></section>
+      </>}
       <section className="page page-genvr" hidden={page !== 'genvr'}><GenVRPage key={user.id} client={client} active={page === 'genvr'}/></section>
-      {(page === 'settings' || page === 'about') && <section className="page page-scroll"><AppSettings key={settingsVisit} initialTab={settingsTab} signedIn client={client} preference={appearance.preference} onTheme={appearance.setPreference} onAccount={() => setPage('account')} onAgents={() => setPage('agents')} aboutOnly={page === 'about'}/></section>}
+      {(page === 'settings' || page === 'about') && <section className="page page-scroll"><AppSettings key={settingsVisit} initialTab={settingsTab} initialMemoryPane={memoryPane} sidebarSlot={page === 'settings' ? slot : null} active={page === 'settings'} signedIn client={client} preference={appearance.preference} onTheme={appearance.setPreference} onAccount={() => setPage('account')} onAgents={() => setPage('agents')} onOpenMemory={() => setPage('memory')} aboutOnly={page === 'about'}/></section>}
       <section className="page page-scroll" hidden={page !== 'account'}><div className="page-column"><AccountPanel client={client}/></div></section>
     </main>
     <footer className="statusbar">
       <span className="statusbar-group">
-        <span className="status-item"><span className={`status-dot ${mode}`} aria-hidden="true"/>{mode === 'mock' ? 'Offline practice — fictional data' : 'Connected · this installation'}</span>
+        {/* A quiet dot with a tooltip; words only when it is not the normal state. */}
+        {mode === 'mock' ? <span className="status-item"><span className={`status-dot ${mode}`} aria-hidden="true"/>Offline practice — fictional data</span>
+          : <span className="status-item status-dot-only" title="Connected · this installation" aria-label="Connected · this installation" role="img"><span className={`status-dot ${mode}`} aria-hidden="true"/></span>}
         <button type="button" className="status-item" aria-current={page === 'chat' ? 'page' : undefined} onClick={() => setPage('chat')}><Icon name="message-circle"/>Chat</button>
         <button type="button" className="status-item" aria-current={page === 'agents' ? 'page' : undefined} onClick={() => setPage('agents')}><Icon name="user"/>Agents</button>
         <button type="button" className="status-item" aria-current={page === 'board' ? 'page' : undefined} onClick={() => setPage('board')}>Board{typeof openCards === 'number' && boardState?.boards.length ? ` · ${openCards} cards` : ''}</button>
         <button type="button" className="status-item" aria-current={page === 'memory' ? 'page' : undefined} onClick={() => setPage('memory')}><Icon name="database"/>Memory</button>
         {user.role==='owner'&&<button type="button" className="status-item" aria-current={page === 'approvals' ? 'page' : undefined} onClick={()=>setPage('approvals')}><Icon name="clock"/>{approvalLabel}</button>}
-        {tools.map(t=><button key={t.id} type="button" className="status-item" onClick={t.run}>{t.icon}{t.label}</button>)}
+        {tools.map(t=><button key={t.id} type="button" className="status-item" aria-current={page === t.id ? 'page' : undefined} onClick={t.run}>{t.icon}{t.label}</button>)}
         <button type="button" className="status-item" aria-current={page === 'settings' ? 'page' : undefined} onClick={() => setPage('settings')}><Icon name="settings"/>Settings</button>
       </span>
       <span className="statusbar-group">

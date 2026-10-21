@@ -10,8 +10,11 @@ import { namingLanguages, validatedDisplayName } from './naming';
 import type { NamingLanguage } from './naming';
 import type { SessionClient } from './session';
 import { ConnectorsSection } from './ConnectorsSection';
+import { createPortal } from 'react-dom';
+import { UiIcon } from './ui-icons';
+import { Avatar } from './desktop-ui';
 
-export function AgentsDestination({ client, active = false, onOpenMemory, focusConnectors = false }: { client: SessionClient; active?: boolean; onOpenMemory?: (agentId?: string) => void; focusConnectors?: boolean }) {
+export function AgentsDestination({ client, active = false, onOpenMemory, focusConnectors = false, sidebarSlot }: { client: SessionClient; active?: boolean; onOpenMemory?: (agentId?: string) => void; focusConnectors?: boolean; sidebarSlot?: HTMLElement | null }) {
   const [open, setOpen] = useState<string | null>(null);
   // The effect owns subscription cleanup; construction also supports offline SSR without reads.
   const [controller, setController] = useState<AgentsController>();
@@ -32,11 +35,14 @@ export function AgentsDestination({ client, active = false, onOpenMemory, focusC
   }, [client]);
   // Opening the page shows the team at once (one read the first time the page is shown).
   useEffect(() => { if (active && session.phase === 'authenticated' && controller && controller.getSnapshot().phase === 'idle' && !controller.getSnapshot().agents.length) void controller.list(); }, [active, session.phase, controller]);
-  if (open && controller && !owner) return <MemberAgent controller={controller} agentId={open} onBack={() => setOpen(null)}/>;
-  if (open && controller && personality) return <section aria-label="Agents">
+  // The Agents section owns the sidebar: search, New agent and the team by department (board M28 H4).
+  const sidebar = sidebarSlot && active && controller ? createPortal(<AgentsSidebar controller={controller} open={open} onOpen={id => setOpen(id)} onTeam={() => setOpen(null)}
+    onNew={owner && hire ? () => { setOpen(null); hire.restart(); setHiring(true); } : undefined}/>, sidebarSlot) : null;
+  if (open && controller && !owner) return <>{sidebar}<MemberAgent controller={controller} agentId={open} onBack={() => setOpen(null)}/></>;
+  if (open && controller && personality) return <section aria-label="Agents">{sidebar}
     <AgentCard client={client} agentId={open} agents={controller} personality={personality} onBack={() => { setOpen(null); void controller.list(); }} onOpenMemory={onOpenMemory}/>
   </section>;
-  return <section aria-label="Agents"><h2>Your team</h2>
+  return <section aria-label="Agents">{sidebar}<h2>Your team</h2>
     <p>Each agent is a member of your staff with its own role, persona, memory and permissions. Open an agent to change any of them.{client.getSnapshot().mode === 'mock' ? ' Offline practice: fictional agents only.' : ''}</p>
     {owner && hire && company && !hiring && !building && <div className="hire-actions">
       <button type="button" className="primary" onClick={() => { hire.restart(); setHiring(true); }}>Hire an agent</button>
@@ -136,4 +142,26 @@ export function AgentsReview({ controller }: { controller: AgentsController }) {
       <button disabled={busy || s.unknown} onClick={() => controller.cancel()}>Cancel draft</button>
     </>}
   </>;
+}
+
+/** The Agents section's sidebar: search agents, New agent, the team by department. */
+function AgentsSidebar({ controller, open, onOpen, onTeam, onNew }: { controller: AgentsController; open: string | null; onOpen: (id: string) => void; onTeam: () => void; onNew?: () => void }) {
+  const s = useSyncExternalStore(controller.subscribe, controller.getSnapshot, controller.getSnapshot);
+  const [q, setQ] = useState('');
+  const shown = s.agents.filter(a => !q.trim() || [a.name, a.department, a.role].some(x => (x ?? '').toLowerCase().includes(q.trim().toLowerCase())));
+  const groups = new Map<string, typeof shown>();
+  for (const a of [...shown].sort((x, y) => Number(!!y.isPrimary) - Number(!!x.isPrimary) || (x.name ?? '').localeCompare(y.name ?? ''))) { const k = a.department ?? 'No department'; groups.set(k, [...(groups.get(k) ?? []), a]); }
+  return <nav className="dk-sidebar" aria-label="Agents">
+    <div className="dk-side-top">
+      <label className="dk-search"><UiIcon name="search" size={13}/><input type="search" placeholder="Search agents" aria-label="Search agents" value={q} onChange={e => setQ(e.target.value)}/></label>
+      {onNew && <button type="button" className="primary dk-main" onClick={onNew}><UiIcon name="plus" size={12}/>New agent</button>}
+    </div>
+    <button type="button" className="nav-item dk-place" aria-current={open === null ? 'page' : undefined} onClick={onTeam}><UiIcon name="users" size={15}/><span className="dk-place-name">Your team</span></button>
+    {[...groups.entries()].map(([dept, list]) => <div key={dept} className="dk-group">
+      <p className="section-label dk-label"><span>{dept[0].toUpperCase() + dept.slice(1)}</span></p>
+      {list.map(a => <button key={a.id} type="button" className="nav-item dk-place" aria-current={open === a.id ? 'page' : undefined} onClick={() => onOpen(a.id)}>
+        <Avatar name={a.name ?? '?'}/><span className="dk-place-name"><bdi>{a.name ?? 'Name unavailable'}</bdi></span>{a.isPrimary && <span className="dk-muted">main</span>}</button>)}
+    </div>)}
+    {s.phase === 'listing' && !s.agents.length && <p className="dk-side-note" role="status">Loading the team…</p>}
+  </nav>;
 }
