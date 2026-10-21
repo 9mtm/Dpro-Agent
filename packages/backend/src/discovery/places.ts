@@ -68,16 +68,21 @@ async function drives(platform = process.platform): Promise<string[]> {
 }
 /** A system folder: one of the system's own names at the top of a disk or of the home folder, or a profile's app data. */
 export function isSystemPath(p: string, home = os.homedir()): boolean {
+  if (p.split(path.sep).includes('AppData')) return true;
   const top = path.parse(p).root;
   const under = (base: string) => { const r = path.relative(base, p); return r && !r.startsWith('..') && !path.isAbsolute(r) ? r.split(path.sep)[0] : null; };
-  const first = under(top), inHome = under(home);
-  if (inHome !== null) return SYSTEM.has(inHome) || p.split(path.sep).includes('AppData');
+  const inHome = under(home);
+  if (inHome !== null) return SYSTEM.has(inHome);
+  // A drive's own top (macOS /Volumes/<drive>, Linux /media/<user>/<drive> and /mnt/<drive>, Windows X:\) counts like a disk.
+  const slash = p.split(path.sep).join('/');
+  const drive = /^(\/Volumes\/[^/]+|\/media\/[^/]+\/[^/]+|\/mnt\/[^/]+)(\/|$)/.exec(slash)?.[1];
+  const first = drive ? under(drive.split('/').join(path.sep)) : under(top);
+  if (drive && first === null) return false;
   return first !== null && SYSTEM.has(first) && first !== 'Users' && first !== 'home';
 }
 async function subfolders(dir: string, limit = 400, home = os.homedir()): Promise<string[]> {
   let entries; try { entries = await fs.readdir(dir, { withFileTypes: true }); } catch { return []; }
-  const top = dir === path.parse(dir).root || dir === home;
-  return entries.filter((e) => e.isDirectory() && !e.isSymbolicLink() && !e.name.startsWith('.') && !e.name.startsWith('$') && e.name !== 'node_modules' && !(top && SYSTEM.has(e.name))).map((e) => path.join(dir, e.name)).sort((a, b) => a.localeCompare(b)).slice(0, limit);
+  return entries.filter((e) => e.isDirectory() && !e.isSymbolicLink() && !e.name.startsWith('.') && !e.name.startsWith('$') && e.name !== 'node_modules' && !isSystemPath(path.join(dir, e.name), home)).map((e) => path.join(dir, e.name)).sort((a, b) => a.localeCompare(b)).slice(0, limit);
 }
 
 type Saved = { place: string; state: 'allow' | 'exclude' };

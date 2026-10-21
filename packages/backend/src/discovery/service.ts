@@ -654,6 +654,8 @@ export async function setPlaces(userId: string, input: { allow?: string[]; deny?
   const home = opts.home ?? os.homedir();
   const resolve = async (ids: string[] = []) => { const out: string[] = []; for (const id of ids) { const p = await P.resolvePlace(userId, id, home); if (!p) throw new DiscoveryError('not_found', 404); out.push(p); } return out; };
   const allow = await resolve(input.allow), deny = await resolve(input.deny), exclude = await resolve(input.exclude);
+  // The same rule as a folder added by its path: system folders are never allowed, however they are named.
+  if (allow.some((p) => P.isSystemPath(p, home))) throw new DiscoveryError('system_folder');
   await P.setPlaces(userId, { allow, deny, exclude });
   invalidate(userId);
   return { allowed: allow.length, removed: deny.length, excluded: exclude.length };

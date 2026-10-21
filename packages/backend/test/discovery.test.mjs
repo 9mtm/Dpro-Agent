@@ -293,3 +293,14 @@ test('agent tools: listed, owner-only, apply needs approval', async () => {
   const refused = await discoveryTool.execute({ action: 'list' }, { toolPolicy: {} });
   assert.match(refused.error, /answering someone else/);
 });
+
+test('system folders are never allowed, by path or by id, also on a drive', async () => {
+  const P = await loadFile(join(backendDir, 'src/discovery/places.ts'));
+  for (const p of ['/System/Library', '/usr/local', '/Volumes/Backup/System', '/Volumes/Backup/Library/x', '/mnt/disk/Windows', join(home, 'Library'), join(home, 'AppData', 'Roaming')]) assert.equal(P.isSystemPath(p, home), true, p);
+  for (const p of ['/Volumes/Backup', '/Volumes/Backup/Projects', join(home, 'Documents', 'private'), '/mnt/disk/work']) assert.equal(P.isSystemPath(p, home), false, p);
+  mkdirSync(join(home, 'Library', 'Mail'), { recursive: true });
+  const top = (await call('GET', `${BASE}/places`)).json().places;
+  assert.ok(!top.some((p) => p.name === 'Library'), 'never offered');
+  const id = P.placeId(join(home, 'Library'));
+  assert.notEqual((await call('PUT', `${BASE}/places`, { allow: [id] })).statusCode, 200, 'an id that was never offered is refused');
+});
