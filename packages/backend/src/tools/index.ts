@@ -20,7 +20,7 @@ export * from './notifications/index.js';
 export * from './credentials/index.js';
 
 // Utility function to create a pre-configured registry
-import { loadRunPermissions, loadRunPermissionsSync } from './agent-permissions.js';
+import { loadRunPermissions, loadRunPermissionsSync, type RunScope } from './agent-permissions.js';
 import { ToolsRegistry } from './registry.js';
 import type { ToolExecutionContext } from './types.js';
 import { defaultGrants, loadAgentGrants, loadAgentGrantsSync } from './grants.js';
@@ -52,6 +52,10 @@ import {
   memoryDoctorTool,
   memoryDoctorFixTool,
   memoryGraphTool,
+  memoryScopesTool,
+  memoryScopeApplyTool,
+  memoryAccessApplyTool,
+  memoryScopeForgetTool,
 } from './memory/index.js';
 
 import {
@@ -100,6 +104,7 @@ const CORE_TOOLS: Tool[] = [
   browserNavigateTool, browserScreenshotTool, browserExtractTool, browserInteractTool,
   memorySaveTool, memorySearchTool, memoryReflectTool, memoryStatsTool, memoryEditTool, memoryDeleteTool, memoryForgetTool, memoryGraphTool,
   memoryDoctorTool, memoryDoctorFixTool,
+  memoryScopesTool, memoryScopeApplyTool, memoryAccessApplyTool, memoryScopeForgetTool,
   desktopControlTool,
   storageSaveTool, storageSearchTool, storageDeleteTool,
   createReminderTool,
@@ -158,6 +163,11 @@ export function getExtensionTools(extensionId?: string): Tool[] {
   return [...extensionTools];
 }
 
+/** MEM-SCALE-01: the run's user and project (its open project drawer) for the owner's access policies. */
+function runScope(context: ToolExecutionContext): RunScope {
+  return { userId: context.userId ?? null, project: context.memoryDrawers?.find((d) => d.kind === 'project')?.key ?? null };
+}
+
 /**
  * Create a tools registry with all tools registered
  */
@@ -181,7 +191,7 @@ export function createToolsRegistry(context: ToolExecutionContext): ToolsRegistr
   }
   // CORE-PERMS-01: the agent's memory scope and off / ask / allow modes,
   // narrowed by every agent this run was delegated from.
-  if (!context.permissions && context.agentId) registry.updateContext({ permissions: loadRunPermissionsSync(context.agentId, context.delegatedFrom || []) });
+  if (!context.permissions && context.agentId) registry.updateContext({ permissions: loadRunPermissionsSync(context.agentId, context.delegatedFrom || [], runScope(context)) });
   return registry;
 }
 
@@ -200,7 +210,7 @@ export async function createAgentToolsRegistry(context: ToolExecutionContext): P
   }
   // CORE-PERMS-01: the agent's memory scope and off / ask / allow modes,
   // narrowed by every agent this run was delegated from.
-  if (!context.permissions && context.agentId) registry.updateContext({ permissions: await loadRunPermissions(context.agentId, context.delegatedFrom || []) });
+  if (!context.permissions && context.agentId) registry.updateContext({ permissions: await loadRunPermissions(context.agentId, context.delegatedFrom || [], runScope(context)) });
   return registry;
 }
 
