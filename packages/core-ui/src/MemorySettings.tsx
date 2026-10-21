@@ -19,7 +19,7 @@ import { MemoryPanel } from './SessionPanels';
 import { UiIcon } from './ui-icons';
 import { Tile, useMenu, ContextMenu } from './desktop-ui';
 import type { ProjectGroup } from './memory-desktop-contract.js';
-import type { Retention } from './memory-pages-contract.js';
+import type { ScopeRules } from './memory-pages-contract.js';
 
 export type MemorySettingsPane = 'rules' | 'folders' | 'sources' | 'projects' | 'access' | 'health' | 'schedule';
 export const MEMORY_PANES: ReadonlyArray<{ key: MemorySettingsPane; label: string }> = [
@@ -75,17 +75,17 @@ const STANDING = [
 function RulesPane({ client, health, scopes }: { client: SessionClient; health: MemoryHealthController; scopes?: MemoryScopesController }) {
   const s = use(health); const ss = use(scopes);
   const [scope, setScope] = useState('company');
-  const [retention, setRetention] = useState<Retention | null | 'error'>(null);
+  // How long Trash keeps things: the company's rules (MEM-TRASH-01).
+  const [trashDays, setTrashDays] = useState<number | null>(null);
   useEffect(() => { void health.load(scope); }, [health, scope]);
-  useEffect(() => { void (async () => { try { const r = await client.request({ method: 'GET', path: '/api/memory/retention' } as never); setRetention(r.status === 200 ? r.body as Retention : 'error'); } catch { setRetention('error'); } })(); }, [client]);
-  const trashDays = retention && retention !== 'error' ? retention.config.trashDays : undefined;
+  useEffect(() => { void (async () => { try { const r = await client.request({ method: 'GET', path: '/api/memory/scopes/rules?scope=company' } as never); if (r.status === 200) setTrashDays((r.body as ScopeRules).effective.trashDays); } catch { /* shown as 30 */ } })(); }, [client]);
   const [saved, setSaved] = useState<string | null>(null);
   async function setTrash(days: number) {
+    const before = trashDays; setTrashDays(days);
     try {
-      const r = await client.request({ method: 'PUT', path: '/api/memory/retention', body: { trashDays: days } } as never);
-      if (r.status === 200) { setRetention(x => x && x !== 'error' ? { ...x, config: { ...x.config, trashDays: days } } : x); setSaved('Saved.'); }
-      else setSaved('Trash time arrives with the next backend update.');
-    } catch { setSaved('Not saved (no connection).'); }
+      const r = await client.request({ method: 'PUT', path: '/api/memory/scopes/rules', body: { scope: 'company', trashDays: days } } as never);
+      if (r.status === 200) setSaved('Saved.'); else { setTrashDays(before); setSaved('Not saved.'); }
+    } catch { setTrashDays(before); setSaved('Not saved (no connection).'); }
   }
   const projects = (ss?.tree?.projects ?? []).filter(p => !p.archived && !p.mergedInto);
   return <div className="mem-settings-body">
@@ -98,13 +98,12 @@ function RulesPane({ client, health, scopes }: { client: SessionClient; health: 
     <div className="mem-two"><div><b><UiIcon name="archive" size={13}/> Archived</b><p className="fine-print">Kept for good, not loaded into replies. For old projects you may need again. Bring back any time.</p></div>
       <div><b><UiIcon name="trash" size={13}/> Trash</b><p className="fine-print">Deleted. Agents no longer read it. Restore within the time below, then it is forgotten for good. Empty Trash forgets now.</p></div></div>
     <label className="settings-row"><span>Forget what is in Trash after<span className="fine-print">Empty Trash is the only action in Memory that asks first, because it cannot be undone.</span></span>
-      <select value={trashDays ?? 30} disabled={retention === null} onChange={e => void setTrash(Number(e.target.value))}><option value={7}>7 days</option><option value={30}>30 days</option><option value={90}>90 days</option><option value={0}>Never on its own</option></select></label>
+      <select value={trashDays ?? 30} disabled={trashDays === null} onChange={e => void setTrash(Number(e.target.value))}><option value={7}>7 days</option><option value={30}>30 days</option><option value={90}>90 days</option><option value={0}>Never on its own</option></select></label>
     {saved && <p className="fine-print" role="status">{saved}</p>}
     <h4>What every agent does in a project, without being told</h4>
     <p className="fine-print">This comes with Dpro’s skill for every agent and coding app. It is on for all projects; you never have to remind it.</p>
     <ul className="mem-standing">{STANDING.map(([a, b]) => <li key={a}><UiIcon name="check" size={13}/><span><b>{a}</b><span className="fine-print">{b}</span></span></li>)}</ul>
-    <label className="settings-row"><span>Write DESIGN.md into project folders<span className="fine-print">Off: kept only inside Dpro. Per project: right-click the project › Rules.</span></span>
-      <input type="checkbox" role="switch" defaultChecked disabled title="Arrives with the next backend update"/></label>
+    <p className="fine-print">DESIGN.md is written into each project folder (only between Dpro's markers). Switch it off per project in Memory › the project › Design.</p>
   </div>;
 }
 

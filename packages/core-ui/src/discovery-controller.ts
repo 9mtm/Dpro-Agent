@@ -24,7 +24,7 @@ export type DiscoveryUiState = Readonly<{
 }>;
 const record = (x: unknown): x is Record<string, unknown> => typeof x === 'object' && x !== null && !Array.isArray(x);
 export const KIND_LABEL: Record<DiscoveryKind, string> = { memory: 'Memory files', note: 'Project notes', tool: 'Commands & sub-agents', skill: 'Skills', mcp: 'MCP servers', ssh: 'SSH hosts', design: 'Design and brand', database: 'Databases' };
-export const FILE_KIND_LABEL: Record<FileKind, string> = { notes: 'Agent notes (.md)', tools: 'Agent commands and sub-agents', skills: 'Skills', mcp: 'MCP servers', ssh: 'SSH hosts' };
+export const FILE_KIND_LABEL: Record<FileKind, string> = { notes: 'Agent notes (.md)', tools: 'Agent commands and sub-agents', skills: 'Skills', mcp: 'MCP servers', ssh: 'SSH hosts', design: 'Design and brand (colours, fonts, logos)', databases: 'Databases (names and tables only)' };
 export const KIND_SHORT: Record<DiscoveryKind, string> = { memory: 'Memory', note: 'Note', tool: 'Tool', skill: 'Skill', mcp: 'MCP', ssh: 'SSH', design: 'Design', database: 'Database' };
 export const STATE_LABEL: Record<DiscoveryState, string> = { new: 'New', changed: 'Changed', decision: 'Needs your decision', imported: 'Imported', ignored: 'Ignored', gone: 'Gone from this computer' };
 const CODE_TEXT: Record<string, string> = {

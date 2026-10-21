@@ -222,13 +222,13 @@ export function MemoryWindow({ client, active = false, focus, sidebarSlot, onOpe
   const content = ds.extra === 'map' ? <KnowledgeMap c={k.map} agents={ss.agents} onOpenMemories={name => { d.setExtra(null); d.open('all'); x.setQuery(name); void x.load(); }}/>
     : ds.extra === 'handoffs' ? <HandoffsView c={k.ho} onOpenChat={onOpenChat}/>
     : ds.extra === 'files' ? <div className="dk-files"><MemoryPanel client={client} active={active}/><p className="fine-print">Edits in these files come back as questions in Needs you.</p></div>
-    : place === 'needs' ? <NeedsYou c={rv} mode={ds.needsMode} onOpenChat={onOpenChat}/>
-    : place === 'trash' ? <TrashView d={d} onAsk={ids => setSheet({ kind: 'forget', ids })}/>
+    : place === 'needs' ? <NeedsYou c={rv} mode={ds.needsMode} onOpenChat={onOpenChat} design={d}/>
+    : place === 'trash' ? <TrashView d={d} me={client.getSnapshot().user?.id} onAsk={ids => setSheet({ kind: 'forget', ids })}/>
     : place.startsWith('group:') ? <GroupView d={d} sc={sc} groupId={place.slice(6)}/>
     : place === 'agents' ? <AgentsPlace names={ss.agents} onOpen={id => d.open(`agent:${id}`)}/>
     : place === 'archived' ? <ArchivedPlace projects={(ss.tree?.projects ?? []).filter(p => p.archived)} onOpen={slug => d.open(`project:${slug}`)} onBack={slug => projectAction(slug, 'unarchive')}/>
     : project && ds.projectView === 'design' ? <DesignView d={d} slug={project.slug}/>
-    : project && ds.projectView === 'databases' ? <DatabasesView d={d} slug={project.slug}/>
+    : project && ds.projectView === 'databases' ? <DatabasesView d={d} slug={project.slug} agents={ss.agents}/>
     : project && ds.projectView === 'files' ? <div className="dk-files"><MemoryPanel client={client} active={active}/><p className="fine-print">Read-only. Edits in these files come back as questions in Needs you.</p></div>
     : <MemoryList k={k} pinned={ds.pinned} showPinned={place === 'all' || !!project} onMenu={(e, i) => menu.at(e, memoryMenu(i))} onPinnedMenu={(e, f) => menu.at(e, [{ label: 'Edit…', icon: 'pencil', run: () => setSheet({ kind: 'edit-pinned', fact: f }) }, { label: 'Unpin', icon: 'pin', run: () => void d.unpin(f) }])}
       empty={project ? <><p>Nothing remembered here yet. Dpro remembers on its own while you chat. You can add something yourself too.</p><button type="button" className="primary" onClick={() => { x.startAdd(); setSheet({ kind: 'remember' }); }}>Remember</button></>
@@ -300,7 +300,7 @@ function MemorySidebar({ k, waiting, searchRef, onRemember, menu, projectMenu, o
   const [drop, setDrop] = useState<string | null>(null);
   const [query, setQuery] = useState(xs.query);
   const tree = ss.tree;
-  const projects = (tree?.projects ?? []).filter(p => !p.archived && !p.mergedInto).sort((a, b) => Number(b.pinned) - Number(a.pinned) || a.name.localeCompare(b.name));
+  const projects = (tree?.projects ?? []).filter(p => !p.archived && !p.mergedInto && !p.trashedAt).sort((a, b) => Number(b.pinned) - Number(a.pinned) || a.name.localeCompare(b.name));
   const groups = Array.isArray(ds.groups) ? (ds.groups as readonly ProjectGroup[]) : [];
   const grouped = new Set(groups.flatMap(g => g.projects));
   const trashCount = ds.trash && ds.trash !== 'missing' ? ds.trash.items.length : null;
@@ -359,7 +359,7 @@ function MemorySidebar({ k, waiting, searchRef, onRemember, menu, projectMenu, o
             'sep', { label: 'Ungroup (projects stay)', icon: 'layers', run: () => void d.ungroup(g.id) },
           ])}>
           <span className="dk-chevron" role="presentation" data-open={!closed || undefined} onClick={e => { e.stopPropagation(); d.toggleCollapsed(g.id); }}><UiIcon name="chevron" size={11}/></span>
-          <Tile name={g.name}/><span className="dk-place-name">{g.name}</span><span className="dk-muted">{g.label ?? `${members.length} projects`}</span>
+          <Tile name={g.name}/><span className="dk-place-name">{g.name}</span><span className="dk-muted">{g.label ?? `${members.length} ${members.length === 1 ? 'project' : 'projects'}`}</span>
         </button>
         {!closed && members.map(p => projectRow(p, true))}
       </div>;

@@ -15,7 +15,8 @@ const daysLeft = (iso: string | null) => (iso ? Math.max(0, Math.ceil((Date.pars
 const kb = (n: number) => (n >= 1_048_576 ? `${Math.round(n / 1_048_576)} MB` : n >= 1024 ? `${Math.round(n / 1024)} KB` : `${n} B`);
 
 // ---------------------------------------------------------------- Trash
-export function TrashView({ d, onAsk }: { d: MemoryDesktopController; onAsk: (ids?: string[]) => void }) {
+export function TrashView({ d, onAsk, me }: { d: MemoryDesktopController; onAsk: (ids?: string[]) => void; me?: string }) {
+  const by = (x: string) => (!x || x === me ? 'you' : x);
   const s = useSyncExternalStore(d.subscribe, d.getSnapshot, d.getSnapshot);
   useEffect(() => { if (s.trash === null) void d.loadTrash(); }, [d]);
   if (s.trash === 'missing') return NOT_YET('Trash');
@@ -35,7 +36,7 @@ export function TrashView({ d, onAsk }: { d: MemoryDesktopController; onAsk: (id
         {list.map(i => { const left = daysLeft(i.forgetAt); return <div key={i.id} className="dk-row" role="option" aria-selected={s.trashOpen === i.id} onClick={() => d.openTrashItem(i.id)}>
           <span className="dk-row-icon"><UiIcon name={i.kind === 'project' ? 'folder' : 'trash'} size={14}/></span>
           <span className="dk-row-text"><span className="dk-row-main" dir="auto">{i.kind === 'project' ? `Whole project: ${i.text || i.id.slice(8)} (${i.count} memories)` : <WithSwatches text={oneLine(i.text)}/>}</span>
-            <span className="dk-row-sub">{i.kind === 'project' ? 'project' : drawerName(i.drawer)} · by {i.deletedBy || 'you'}{left !== null ? ` · ${left} ${left === 1 ? 'day' : 'days'} left` : ''}</span></span>
+            <span className="dk-row-sub">{i.kind === 'project' ? 'project' : drawerName(i.drawer)} · by {by(i.deletedBy)}{left !== null ? ` · ${left} ${left === 1 ? 'day' : 'days'} left` : ''}</span></span>
         </div>; })}
       </section> : null; })}
     </div>
@@ -44,9 +45,8 @@ export function TrashView({ d, onAsk }: { d: MemoryDesktopController; onAsk: (id
         <p className="dk-insp-text" dir="auto"><WithSwatches text={open.kind === 'project' ? `Whole project: ${open.text || open.id.slice(8)}` : open.text}/></p>
         <dl className="dk-facts">
           <dt>Was in</dt><dd>{open.kind === 'project' ? <><Tile name={open.id.slice(8)}/>{open.id.slice(8)}</> : drawerName(open.drawer)}</dd>
-          <dt>Moved by</dt><dd><Avatar name={open.deletedBy || 'you'}/>{open.deletedBy || 'you'}, {ago(open.deletedAt)}</dd>
+          <dt>Moved by</dt><dd><Avatar name={by(open.deletedBy)}/>{by(open.deletedBy)}, {ago(open.deletedAt)}</dd>
           <dt>Forgotten</dt><dd>{open.forgetAt ? `in ${daysLeft(open.forgetAt)} days` : 'only when you empty Trash'}</dd>
-          {open.versions > 0 && <><dt>History</dt><dd>{open.versions} {open.versions === 1 ? 'version' : 'versions'}</dd></>}
           {open.kind === 'project' && <><dt>Memories</dt><dd>{open.count}</dd></>}
         </dl>
         <div className="actions"><button type="button" onClick={() => onAsk([open.id])}>Forget now…</button><button type="button" className="primary" disabled={s.busy} onClick={() => void d.restore(open)}>Restore</button></div>
@@ -89,23 +89,29 @@ export function DesignView({ d, slug }: { d: MemoryDesktopController; slug: stri
   if (s.design === 'missing') return NOT_YET('Design and brand found on their own');
   if (s.design === null) return <p className="dk-empty" role="status">Looking at the design…</p>;
   const x = s.design;
-  if (!x.colours.length && !x.logos.length && !x.fonts.length && !x.rules.length) return <div className="dk-empty"><UiIcon name="palette" size={20}/><p>No design found in this project yet. Dpro looks for design tokens, Tailwind and CSS colours, brand kits and logo files, and adds them here on its own.</p></div>;
-  const logo = x.logos.find(l => l.path === s.logoOpen) ?? null;
+  const writeSwitch = <label className="dk-switch dk-pad"><input type="checkbox" role="switch" checked={x.writeFile} onChange={e => void d.setWriteFile(slug, e.target.checked)}/>
+    <span><b>Keep DESIGN.md in the project folder</b><span className="fine-print">{x.writeFile ? (x.file.problem ? `Not written: ${x.file.problem}` : x.file.writtenAt ? `Written ${ago(x.file.writtenAt)}, only between Dpro's markers; your text stays.` : 'Written between Dpro\'s markers; your text stays.') : 'Off: kept only inside Dpro.'}</span></span></label>;
+  if (!x.colours.length && !x.logos.length && !x.fonts.length && !x.rules.length) return <div className="dk-list"><div className="dk-empty"><UiIcon name="palette" size={20}/><p>No design found in this project yet. Dpro looks for design tokens, Tailwind and CSS colours, brand kits and logo files, and adds them here on its own.</p></div>{writeSwitch}</div>;
+  const logo = x.logos.find(l => l.id === s.logoOpen) ?? null;
   return <div className="dk-split">
     <div className="dk-list dk-design">
-      {x.colours.length > 0 && <section className="dk-list-group"><h3>Colours</h3><div className="dk-swatches">{x.colours.map(c => <div key={c.value + c.name} className="dk-colour"><span className="dk-swatch dk-swatch-big" style={{ background: c.value }} aria-hidden="true"/><span>{c.name || c.value}{c.role ? ` (${c.role})` : ''}</span><span className="fine-print">{c.value}</span></div>)}</div></section>}
-      {x.logos.length > 0 && <section className="dk-list-group"><h3>Logos</h3><div className="dk-logos" role="listbox" aria-label="Logos">{x.logos.map(l => <button key={l.path} type="button" role="option" aria-selected={s.logoOpen === l.path} className="dk-logo" onClick={() => d.openLogo(l.path)}>
-        <span className="dk-logo-art"><UiIcon name="image" size={22}/></span><span>{l.path.split('/').pop()}{l.main ? ' · main' : ''}</span></button>)}</div></section>}
-      {x.fonts.length > 0 && <section className="dk-list-group"><h3>Type</h3>{x.fonts.map(f => <div key={f.name + f.use} className="dk-row"><span className="dk-row-icon"><UiIcon name="type" size={14}/></span><span className="dk-row-text"><span className="dk-row-main" style={{ fontFamily: f.name }}>{f.name}</span><span className="dk-row-sub">{f.use}</span></span></div>)}</section>}
-      {x.rules.length > 0 && <section className="dk-list-group"><h3>Rules</h3>{x.rules.map((r, i) => <div key={i} className="dk-row"><span className="dk-row-icon"><UiIcon name="shield" size={14}/></span><span className="dk-row-text"><span className="dk-row-main" dir="auto"><WithSwatches text={r}/></span></span></div>)}</section>}
-      <p className="fine-print dk-pad">Found in: {x.sources.join(', ') || 'the project files'}. Agents read this before any design work{x.designFile ? '; it is also kept in DESIGN.md' : ''}.</p>
+      {x.conflicts.map((c, i) => <div key={i} className="dk-ask dk-pad-x"><p>{c.question || 'Two main colours were found. Which one is the main colour?'}</p>
+        <div className="actions">{c.options.map(o => <button key={o.value} type="button" onClick={() => void d.setMainColour(slug, o.value)}><span className="dk-swatch" style={{ background: o.value }} aria-hidden="true"/>Use {o.value}<span className="fine-print">{o.source}</span></button>)}</div></div>)}
+      {x.colours.length > 0 && <section className="dk-list-group"><h3>Colours</h3><div className="dk-swatches">{x.colours.map(c => <button type="button" key={c.value + c.name} className="dk-colour" title={`Found in ${c.source}. Click to make it the main colour.`} onClick={() => { if (!c.main) void d.setMainColour(slug, c.value); }}>
+        <span className="dk-swatch dk-swatch-big" style={{ background: c.value }} aria-hidden="true"/><span>{c.name || c.value}{c.main ? ' (main)' : ''}</span><span className="fine-print">{c.value}</span></button>)}</div></section>}
+      {x.logos.length > 0 && <section className="dk-list-group"><h3>Logos</h3><div className="dk-logos" role="listbox" aria-label="Logos">{x.logos.map(l => <button key={l.id} type="button" role="option" aria-selected={s.logoOpen === l.id} className="dk-logo" onClick={() => d.openLogo(l.id)}>
+        <span className="dk-logo-art"><UiIcon name="image" size={22}/></span><span>{l.path.split('/').pop()}{l.main ? ' · main' : ''}</span></button>)}</div>{x.hiddenLogos > 0 && <p className="fine-print dk-pad">{x.hiddenLogos} marked "not a logo".</p>}</section>}
+      {x.fonts.length > 0 && <section className="dk-list-group"><h3>Type</h3>{x.fonts.map(f => <div key={f.name + f.source} className="dk-row"><span className="dk-row-icon"><UiIcon name="type" size={14}/></span><span className="dk-row-text"><span className="dk-row-main" style={{ fontFamily: f.name }}>{f.name}</span><span className="dk-row-sub">{f.source}</span></span></div>)}</section>}
+      {x.rules.length > 0 && <section className="dk-list-group"><h3>Rules</h3>{x.rules.map((r, i) => <div key={i} className="dk-row"><span className="dk-row-icon"><UiIcon name="shield" size={14}/></span><span className="dk-row-text"><span className="dk-row-main" dir="auto"><WithSwatches text={r.text}/></span><span className="dk-row-sub">{r.source}</span></span></div>)}</section>}
+      <p className="fine-print dk-pad">Found in: {x.sources.map(src => src.path).join(', ') || 'the project files'}. Agents read this before any design work.{x.canUndo ? ' ' : ''}{x.canUndo && <button type="button" className="link-button" onClick={() => void d.undoDesign(slug)}>Undo the last automatic change</button>}</p>
+      {writeSwitch}
     </div>
     <aside className="dk-split-detail" aria-label="Selected logo">{!logo ? <p className="dk-empty">Select a logo to see it.</p> : <div className="dk-insp">
       <div className="dk-logo-preview"><UiIcon name="image" size={40}/></div>
-      <dl className="dk-facts"><dt>File</dt><dd className="dk-path">{logo.path}</dd><dt>Size</dt><dd>{logo.kind.toUpperCase()}{logo.size ? ` · ${kb(logo.size)}` : ''}</dd>{x.colours[0] && <><dt>Colours</dt><dd>{x.colours.slice(0, 2).map(c => <Swatch key={c.value} value={c.value}/>)}</dd></>}</dl>
+      <dl className="dk-facts"><dt>File</dt><dd className="dk-path" title={logo.path}>{logo.path}</dd><dt>Size</dt><dd>{logo.kind.toUpperCase()}{logo.bytes ? ` · ${kb(logo.bytes)}` : ''}</dd>{x.colours[0] && <><dt>Colours</dt><dd>{x.colours.filter(c => c.main).concat(x.colours.filter(c => !c.main)).slice(0, 2).map(c => <Swatch key={c.value} value={c.value}/>)}</dd></>}</dl>
       <div className="dk-insp-icons">
-        <IconButton icon="check" label="Set as the main logo" pressed={logo.main} onClick={() => void d.setLogo(slug, { mainLogo: logo.main ? null : logo.path })}/>
-        <IconButton icon="close" label="Not a logo" onClick={() => void d.setLogo(slug, { notLogo: logo.path })}/>
+        <IconButton icon="check" label={logo.main ? 'The main logo (click: let Dpro pick)' : 'Set as the main logo'} pressed={logo.main} onClick={() => void d.setMainLogo(slug, logo.main ? null : logo.id)}/>
+        <IconButton icon="close" label="Not a logo" onClick={() => void d.notLogo(slug, logo.id)}/>
       </div>
       <p className="fine-print">Dpro keeps a link and a small preview. Your file is never moved or changed.</p>
     </div>}</aside>
@@ -113,31 +119,40 @@ export function DesignView({ d, slug }: { d: MemoryDesktopController; slug: stri
 }
 
 // ---------------------------------------------------------------- Databases
-const DB_ICON: Record<string, UiIconName> = { sqlite: 'database', mysql: 'server', postgres: 'server', other: 'database' };
+const DB_ICON: Record<string, UiIconName> = { sqlite: 'database', env: 'key', compose: 'server' };
 const LEVEL: Record<string, string> = { exists: 'Know it exists', tables: 'See its tables', data: 'Read its data (asks each time)' };
-export function DatabasesView({ d, slug }: { d: MemoryDesktopController; slug: string }) {
+export function DatabasesView({ d, slug, agents }: { d: MemoryDesktopController; slug: string; agents: Readonly<Record<string, string>> }) {
   const s = useSyncExternalStore(d.subscribe, d.getSnapshot, d.getSnapshot);
   useEffect(() => { if (s.databases === null) void d.loadDatabases(slug); }, [slug]);
   if (s.databases === 'missing') return NOT_YET('Databases found in a project');
   if (s.databases === null) return <p className="dk-empty" role="status">Looking for databases…</p>;
   const x = s.databases;
   const open = x.databases.find(db => db.id === s.databaseOpen) ?? null;
-  const also = [x.also.mcp && `${x.also.mcp} MCP ${x.also.mcp === 1 ? 'server' : 'servers'}`, x.also.skills && `${x.also.skills} ${x.also.skills === 1 ? 'skill' : 'skills'}`, x.also.ssh && `${x.also.ssh} SSH ${x.also.ssh === 1 ? 'host' : 'hosts'}`].filter(Boolean);
+  const where = (db: typeof x.databases[number]) => [db.engine || db.kind, db.kind === 'env' ? 'from .env' : db.kind === 'compose' ? 'from docker-compose' : db.path.split('/').slice(-2).join('/'),
+    db.host ? `${db.host}${db.port ? `:${db.port}` : ''}` : '', db.bytes ? kb(db.bytes) : '', db.tableCount ? `${db.tableCount} tables` : ''].filter(Boolean).join(' · ');
+  const others = Object.entries(agents).filter(([id]) => !x.access.some(a => a.agentId === id));
   return <div className="dk-split">
     <div className="dk-list" role="listbox" aria-label="Databases">
       {!x.databases.length && <div className="dk-empty"><UiIcon name="database" size={20}/><p>No local database found in this project's folders.</p></div>}
       {x.databases.map(db => <div key={db.id} className="dk-row" role="option" aria-selected={s.databaseOpen === db.id} onClick={() => d.openDatabase(db.id)}>
-        <span className="dk-row-icon"><UiIcon name={DB_ICON[db.kind]} size={14}/></span>
-        <span className="dk-row-text"><span className="dk-row-main">{db.name}</span><span className="dk-row-sub">{[db.kind === 'sqlite' ? 'SQLite' : db.kind === 'mysql' ? 'MySQL' : db.kind === 'postgres' ? 'PostgreSQL' : 'Database', db.from, db.size ? kb(db.size) : '', db.tableCount ? `${db.tableCount} tables` : ''].filter(Boolean).join(' · ')}</span></span>
+        <span className="dk-row-icon"><UiIcon name={DB_ICON[db.kind] ?? 'database'} size={14}/></span>
+        <span className="dk-row-text"><span className="dk-row-main">{db.name}</span><span className="dk-row-sub">{where(db)}</span></span>
       </div>)}
-      {also.length > 0 && <p className="fine-print dk-pad">Also found in this project, in their own sections: {also.join(' · ')}.</p>}
+      <p className="fine-print dk-pad">MCP servers, skills and SSH hosts found in this project live in their own sections (MCP connections, Skills, Terminal).</p>
     </div>
     <aside className="dk-split-detail" aria-label="Selected database">{!open ? <p className="dk-empty">Select a database to see its tables and what agents may do.</p> : <div className="dk-insp">
-      <div className="dk-insp-head"><UiIcon name={DB_ICON[open.kind]} size={22}/><h3>{open.name}</h3></div>
-      <dl className="dk-facts"><dt>Where</dt><dd className="dk-path">{open.where || open.from}</dd>{open.size > 0 && <><dt>Size</dt><dd>{kb(open.size)}</dd></>}
-        {open.tables.length > 0 && <><dt>Tables</dt><dd>{open.tables.slice(0, 6).join(', ')}{open.tables.length > 6 ? ` +${open.tables.length - 6}` : ''}</dd></>}</dl>
-      <label className="dk-field">Agents may<select value={open.level} onChange={e => void d.setLevel(slug, open.id, e.target.value as 'exists' | 'tables' | 'data')}>{Object.entries(LEVEL).map(([v, l]) => <option key={v} value={v}>{l}</option>)}</select></label>
-      <p className="fine-print">Dpro reads only the table names, from a copy, never the rows. Passwords and connection keys are never shown or saved.</p>
+      <div className="dk-insp-head"><UiIcon name={DB_ICON[open.kind] ?? 'database'} size={22}/><h3>{open.name}</h3></div>
+      <dl className="dk-facts"><dt>Kind</dt><dd>{open.engine || open.kind}</dd><dt>Where</dt><dd className="dk-path" title={open.path}>{open.path || '—'}</dd>
+        {open.service && <><dt>Service</dt><dd>{open.service}{open.image ? ` · ${open.image}` : ''}</dd></>}
+        {open.bytes > 0 && <><dt>Size</dt><dd>{kb(open.bytes)}</dd></>}
+        {open.tables.length > 0 ? <><dt>Tables</dt><dd>{open.tables.slice(0, 6).join(', ')}{open.tables.length > 6 ? ` +${open.tables.length - 6}` : ''}</dd></> : open.tablesNote ? <><dt>Tables</dt><dd>{open.tablesNote}</dd></> : null}</dl>
+      <h4>Agents may</h4>
+      <p className="fine-print">Every agent: {LEVEL[x.defaultLevel]}.</p>
+      <ul className="dk-who-after">{x.access.map(a => <li key={a.agentId}><Avatar name={agents[a.agentId] ?? a.agentId}/><span>{agents[a.agentId] ?? a.agentId}</span>
+        <select aria-label={`What ${agents[a.agentId] ?? a.agentId} may do`} value={a.level} onChange={e => void d.setLevel(slug, a.agentId, e.target.value as 'exists')}>{Object.entries(LEVEL).map(([v, l]) => <option key={v} value={v}>{l}</option>)}</select>
+        <IconButton icon="close" label="Back to the default" onClick={() => void d.setLevel(slug, a.agentId, null)}/></li>)}</ul>
+      {others.length > 0 && <label className="dk-field">Let an agent see more<select value="" onChange={e => { if (e.target.value) void d.setLevel(slug, e.target.value, 'tables'); }}><option value="">Choose an agent…</option>{others.map(([id, n]) => <option key={id} value={id}>{n}</option>)}</select></label>}
+      <p className="fine-print">These levels hold for all of this project's databases. Dpro reads only the table names, from a copy, never the rows. Passwords and connection keys are never shown or saved.</p>
     </div>}</aside>
   </div>;
 }

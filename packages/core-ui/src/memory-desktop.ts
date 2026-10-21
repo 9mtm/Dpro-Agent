@@ -119,8 +119,9 @@ export class MemoryDesktopController extends Store<DesktopState> {
     for (const id of ids) {
       try {
         const r = await this.req('POST', `/api/memory/${encodeURIComponent(id)}/restore`);
-        if (r.status === 200) ok++;
-        else if (r.status === 404 && codeOf(r) !== 'not_in_trash') { this.say('Restore arrives with the next backend update; the memory stays in its history.'); return false; }
+        // 409 not_in_trash: it is already back.
+        if (r.status === 200 || codeOf(r) === 'not_in_trash') ok++;
+        else if (r.status === 404 && codeOf(r) !== 'not_found') { this.say('Restore arrives with the next backend update; the memory stays in its history.'); return false; }
       } catch { /* counted */ }
     }
     if (this.getSnapshot().place === 'trash') void this.loadTrash();
@@ -143,7 +144,7 @@ export class MemoryDesktopController extends Store<DesktopState> {
     let ok = false;
     try {
       const r = item.kind === 'project'
-        ? await this.req('POST', `/api/memory/scopes/projects/${encodeURIComponent(item.id.slice(8))}/restore`)
+        ? await this.req('POST', `/api/memory/trash/projects/${encodeURIComponent(item.id.slice(8))}/restore`)
         : await this.req('POST', `/api/memory/${encodeURIComponent(item.id)}/restore`);
       ok = r.status === 200;
     } catch { /* below */ }
@@ -158,11 +159,13 @@ export class MemoryDesktopController extends Store<DesktopState> {
   async forgetForGood(ids?: readonly string[]): Promise<boolean> {
     this.publish({ busy: true });
     try {
-      const r = await this.req('POST', '/api/memory/trash/empty', ids ? { confirm: 'EMPTY', ids: [...ids] } : { confirm: 'EMPTY' });
+      // Trash rows of whole projects are `project:<slug>`; the backend takes them as `projects`.
+      const memories = ids?.filter(i => !i.startsWith('project:')) ?? []; const projects = ids?.filter(i => i.startsWith('project:')).map(i => i.slice(8)) ?? [];
+      const r = await this.req('POST', '/api/memory/trash/empty', ids ? { confirm: 'EMPTY', ...(memories.length ? { ids: memories } : {}), ...(projects.length ? { projects } : {}) } : { confirm: 'EMPTY' });
       this.publish({ busy: false });
       if (r.status !== 200) { this.say('Nothing was forgotten.'); return false; }
-      const n = (r.body as { forgotten: number }).forgotten;
-      this.say(`Forgot ${n} ${n === 1 ? 'memory' : 'memories'} for good.`);
+      const out = r.body as { forgotten: number; projects: number };
+      this.say(`Forgot ${out.forgotten} ${out.forgotten === 1 ? 'memory' : 'memories'}${out.projects ? ` and ${out.projects} ${out.projects === 1 ? 'project' : 'projects'}` : ''} for good.`);
       this.publish({ trashOpen: null });
       await this.loadTrash();
       return true;
@@ -171,10 +174,10 @@ export class MemoryDesktopController extends Store<DesktopState> {
   /** ⋯ › Move the whole project to Trash (undo restores it). */
   async trashProject(slug: string, name: string): Promise<boolean> {
     try {
-      const r = await this.req('POST', `/api/memory/scopes/projects/${encodeURIComponent(slug)}/trash`);
+      const r = await this.req('POST', `/api/memory/trash/projects/${encodeURIComponent(slug)}`);
       if (r.status === 404) { this.say('Moving a whole project to Trash arrives with the next backend update.'); return false; }
       if (r.status !== 200) { this.say('The project was not moved to Trash.'); return false; }
-      this.remember(`Moved the project ${name} to Trash.`, async () => (await this.req('POST', `/api/memory/scopes/projects/${encodeURIComponent(slug)}/restore`)).status === 200, 'trash');
+      this.remember(`Moved the project ${name} to Trash.`, async () => (await this.req('POST', `/api/memory/trash/projects/${encodeURIComponent(slug)}/restore`)).status === 200, 'trash');
       this.open('all');
       return true;
     } catch { this.say('The project was not moved to Trash (no connection).'); return false; }
@@ -347,18 +350,41 @@ export class MemoryDesktopController extends Store<DesktopState> {
       this.publish({ design: r.status === 200 ? r.body as ProjectDesign : r.status === 404 ? 'missing' : null });
     } catch { this.publish({ design: null }); }
   }
-  openLogo(path: string | null) { this.publish({ logoOpen: path }); }
-  async setLogo(slug: string, patch: { mainLogo?: string | null; notLogo?: string }): Promise<boolean> {
-    const before = this.getSnapshot().design;
+  openLogo(id: string | null) { this.publish({ logoOpen: id }); }
+  private async patchDesign(slug: string, patch: Record<string, unknown>, undoPatch: Record<string, unknown> | null, label: string): Promise<boolean> {
     try {
       const r = await this.req('PATCH', `/api/memory/projects/${encodeURIComponent(slug)}/design`, patch);
-      if (r.status !== 200) { this.say('The design was not changed.'); return false; }
-      this.publish({ design: r.body as ProjectDesign, logoOpen: patch.notLogo ? null : this.getSnapshot().logoOpen });
-      const prevMain = before && before !== 'missing' ? before.logos.find(l => l.main)?.path ?? null : null;
-      if (patch.mainLogo !== undefined) this.remember('Set as the main logo.', async () => (await this.req('PATCH', `/api/memory/projects/${encodeURIComponent(slug)}/design`, { mainLogo: prevMain })).status === 200 && (await this.loadDesign(slug), true));
-      else this.say('Not shown as a logo any more. Your file was not changed.');
+      if (r.status !== 200) { this.say(codeOf(r) === 'no_change' ? 'Nothing changed.' : 'The design was not changed.'); return false; }
+      this.publish({ design: r.body as ProjectDesign });
+      if (undoPatch) this.remember(label, async () => { const u = await this.req('PATCH', `/api/memory/projects/${encodeURIComponent(slug)}/design`, undoPatch); if (u.status === 200) this.publish({ design: u.body as ProjectDesign }); return u.status === 200; });
+      else this.say(label);
+      return true;
+    } catch { this.say('The design was not changed (no connection).'); return false; }
+  }
+  /** Logo inspector: set as the main logo (undo puts the old main back) or "not a logo" (the file never changes). */
+  setMainLogo(slug: string, id: string | null) {
+    const d = this.getSnapshot().design; const before = d && d !== 'missing' ? d.logos.find(l => l.main)?.id ?? null : null;
+    return this.patchDesign(slug, { mainLogo: id }, { mainLogo: before }, id ? 'Set as the main logo.' : 'Dpro picks the main logo again.');
+  }
+  notLogo(slug: string, id: string) { this.publish({ logoOpen: null }); return this.patchDesign(slug, { notLogo: id }, null, 'Not shown as a logo any more. Your file was not changed.'); }
+  setMainColour(slug: string, value: string) {
+    const d = this.getSnapshot().design; const before = d && d !== 'missing' ? d.colours.find(c => c.main)?.value : undefined;
+    return this.patchDesign(slug, { mainColour: value }, before ? { mainColour: before } : null, `Main colour: ${value}.`);
+  }
+  setWriteFile(slug: string, on: boolean) { return this.patchDesign(slug, { writeFile: on }, { writeFile: !on }, on ? 'DESIGN.md is kept in the project folder.' : 'DESIGN.md is kept only inside Dpro now.'); }
+  /** The last automatic design change goes back (the notice's Undo for "Found the design"). */
+  async undoDesign(slug: string): Promise<boolean> {
+    try {
+      const r = await this.req('POST', `/api/memory/projects/${encodeURIComponent(slug)}/design/undo`);
+      if (r.status !== 200) { this.say('Nothing to undo in the design.'); return false; }
+      this.publish({ design: r.body as ProjectDesign }); this.say('The last automatic design change went back.');
       return true;
     } catch { return false; }
+  }
+  /** Needs you: two main colours found in a project (board M31 J4). */
+  async designConflicts(): Promise<Array<{ project: string; question: string; options: Array<{ name: string; value: string; source: string }> }>> {
+    const r = await this.read<{ conflicts: Array<{ project: string; question: string; options: Array<{ name: string; value: string; source: string }> }> }>('/api/memory/projects/design-conflicts');
+    return r?.conflicts ?? [];
   }
   async loadDatabases(slug: string) {
     try {
@@ -368,15 +394,17 @@ export class MemoryDesktopController extends Store<DesktopState> {
     } catch { this.publish({ databases: null }); }
   }
   openDatabase(id: string | null) { this.publish({ databaseOpen: id }); }
-  async setLevel(slug: string, databaseId: string, level: DatabaseLevel): Promise<boolean> {
+  /** What one agent may do with this project's databases (null = back to the default). */
+  async setLevel(slug: string, agentId: string, level: DatabaseLevel | null): Promise<boolean> {
     const d = this.getSnapshot().databases;
-    const before = d && d !== 'missing' ? d.databases.find(x => x.id === databaseId)?.level : undefined;
+    const before = d && d !== 'missing' ? d.access.find(a => a.agentId === agentId)?.level ?? null : null;
     try {
-      const r = await this.req('PATCH', `/api/memory/projects/${encodeURIComponent(slug)}/databases`, { databaseId, level });
+      const r = await this.req('PATCH', `/api/memory/projects/${encodeURIComponent(slug)}/databases`, { agentId, level });
       if (r.status !== 200) { this.say('The permission was not changed.'); return false; }
       await this.loadDatabases(slug);
-      if (before) this.remember('Changed what agents may do with this database.', async () => (await this.req('PATCH', `/api/memory/projects/${encodeURIComponent(slug)}/databases`, { databaseId, level: before })).status === 200 && (await this.loadDatabases(slug), true));
+      this.remember('Changed what this agent may do with the databases.', async () => (await this.req('PATCH', `/api/memory/projects/${encodeURIComponent(slug)}/databases`, { agentId, level: before })).status === 200 && (await this.loadDatabases(slug), true));
       return true;
     } catch { return false; }
   }
+
 }

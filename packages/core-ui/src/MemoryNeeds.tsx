@@ -11,10 +11,11 @@ import { ago, drawerName } from './memory-store';
 import { UiIcon } from './ui-icons';
 import type { UiIconName } from './ui-icons';
 import { IconButton, Popover, WithSwatches } from './desktop-ui';
+import type { MemoryDesktopController } from './memory-desktop';
 
 const KIND_ICON: Record<ReviewItem['kind'], UiIconName> = { conflict: 'diff', important: 'alert', agent: 'sparkle', imported: 'download', file: 'file', link: 'link' };
 
-export function NeedsYou({ c, mode, onOpenChat }: { c: MemoryReviewController; mode: 'one' | 'list'; onOpenChat?: (id: string) => void }) {
+export function NeedsYou({ c, mode, onOpenChat, design }: { c: MemoryReviewController; mode: 'one' | 'list'; onOpenChat?: (id: string) => void; design?: MemoryDesktopController }) {
   const s = useSyncExternalStore(c.subscribe, c.getSnapshot, c.getSnapshot);
   const ref = useRef<HTMLDivElement>(null);
   const visible = s.phase === 'ready' ? c.visible() : [];
@@ -23,7 +24,7 @@ export function NeedsYou({ c, mode, onOpenChat }: { c: MemoryReviewController; m
   useEffect(() => { ref.current?.focus(); }, [mode]);
   if (s.phase === 'error') return <div className="dk-empty"><p>{s.notice}</p><button type="button" onClick={() => void c.load()}>Try again</button></div>;
   if (s.phase !== 'ready') return <p className="dk-empty" role="status">Reading what waits for you…</p>;
-  if (!s.items.length) return <div className="dk-empty"><UiIcon name="check" size={20}/><p>Nothing needs you. Dpro saves routine facts on its own and asks only when something matters or disagrees.</p>{s.result && <p className="fine-print">{s.result}</p>}</div>;
+  if (!s.items.length) return <>{design && <DesignQuestions d={design}/>}<div className="dk-empty"><UiIcon name="check" size={20}/><p>Nothing needs you. Dpro saves routine facts on its own and asks only when something matters or disagrees.</p>{s.result && <p className="fine-print">{s.result}</p>}</div></>;
   function keys(e: KeyboardEvent<HTMLElement>) {
     if ((e.target as HTMLElement).closest('input, textarea, select')) return;
     const k = e.key.toLowerCase();
@@ -42,6 +43,7 @@ export function NeedsYou({ c, mode, onOpenChat }: { c: MemoryReviewController; m
       <span className="dk-toolbar-gap"/><IconButton icon="arrow-up" label="Previous" shortcut="K" onClick={() => c.step(-1)} disabled={index === 0}/><IconButton icon="arrow-down" label="Next" shortcut="J" onClick={() => c.step(1)} disabled={index >= visible.length - 1}/></p>
     {s.result && <p className="dk-inline-ok" role="status">{s.result}</p>}
     {s.notice && <p className="dk-inline-notice" role="alert">{s.notice}</p>}
+    {design && <DesignQuestions d={design}/>}
     <Question c={c} onOpenChat={onOpenChat}/>
     <p className="fine-print dk-needs-foot">Other questions here, one at a time: an agent wants to remember something important, a new link on the map, memories found on this computer, a change to a memory file.</p>
   </div>;
@@ -143,4 +145,18 @@ function NeedsList({ c, keys }: { c: MemoryReviewController; keys: (e: KeyboardE
       <div className="dk-split-detail"><Question c={c}/></div>
     </div>
   </div>;
+}
+
+/** Board M31 J4: only a real disagreement in a project's design asks (two main colours), one question each. */
+function DesignQuestions({ d }: { d: MemoryDesktopController }) {
+  const [list, setList] = useState<Awaited<ReturnType<MemoryDesktopController['designConflicts']>> | null>(null);
+  useEffect(() => { let live = true; void d.designConflicts().then(x => { if (live) setList(x); }); return () => { live = false; }; }, [d]);
+  if (!list?.length) return null;
+  const q = list[0];
+  return <article className="dk-question">
+    <h3><UiIcon name="palette" size={15}/>Two main colours for {q.project}</h3>
+    <div className="dk-versus">{q.options.slice(0, 2).map(o => <div key={o.value}><span className="fine-print">{o.source}</span><p><span className="dk-swatch dk-swatch-big" style={{ background: o.value }} aria-hidden="true"/> Main: {o.value}</p></div>)}</div>
+    <div className="actions">{q.options.map((o, i) => <button key={o.value} type="button" className={i === 0 ? 'primary' : undefined} onClick={() => void d.setMainColour(q.project, o.value).then(ok => { if (ok) setList(list.slice(1)); })}>Use {o.value}</button>)}</div>
+    <p className="fine-print">Only a real disagreement asks you. Everything else is added on its own.</p>
+  </article>;
 }

@@ -2357,3 +2357,5 @@ button.danger-solid { background:var(--danger); color:#fff; }
 .hire-works-row { display:flex; flex-wrap:wrap; gap:6px 14px; }
 .hire-works-row label { display:inline-flex !important; align-items:center; gap:6px; }
 .hire-works-save { display:flex !important; align-items:center; gap:8px; }
+.app-settings .mem-settings:has(.disc, .mem-access, .bridge) { max-inline-size:none; }
+.dk-pad-x { margin:8px 16px; } .dk-colour { text-align:start; background:transparent; justify-items:start; padding:4px; border-radius:8px; } .dk-colour:hover { background:var(--row-hover); }
