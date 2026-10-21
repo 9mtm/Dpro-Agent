@@ -28,7 +28,9 @@
  * cosine from 13/20 to 16/20.
  */
 
+import { createHash } from 'node:crypto';
 import type { IEmbeddingService } from './types.js';
+import { countCache } from './context/metrics.js';
 import { OLLAMA_URL } from '../llm/ollama.js';
 import { lexicalTokens, normalizeMemoryText } from './text-normalize.js';
 
@@ -151,7 +153,36 @@ class OllamaProvider implements EmbeddingProvider {
   }
 }
 
+/** Vectors of the semantic model kept in memory (MEM-CACHE-01), most recently used last. */
+export const EMBEDDING_CACHE_SIZE = 2000;
+
+/**
+ * Embedding cache by text hash + model id (MEM-CACHE-01). Keys are SHA-256
+ * hashes, never the text. Only vectors of the semantic model are cached
+ * (the hash fallback is cheaper than a lookup). Cleared by forget (CORE-07).
+ */
+export class EmbeddingCache {
+  private readonly map = new Map<string, number[]>();
+  constructor(private readonly size = EMBEDDING_CACHE_SIZE) {}
+  static key(model: string, text: string): string {
+    return createHash('sha256').update(model).update('\0').update(text).digest('hex');
+  }
+  get(key: string): number[] | undefined {
+    const v = this.map.get(key);
+    if (v) { this.map.delete(key); this.map.set(key, v); }
+    return v;
+  }
+  set(key: string, vector: number[]): void {
+    this.map.delete(key);
+    this.map.set(key, vector.slice());
+    while (this.map.size > this.size) this.map.delete(this.map.keys().next().value as string);
+  }
+  clear(): void { this.map.clear(); }
+  get entries(): number { return this.map.size; }
+}
+
 export class EmbeddingService implements IEmbeddingService {
+  readonly cache = new EmbeddingCache();
   private readonly hash = new HashProvider();
   private readonly preferred: EmbeddingProvider;
   private retryAt = 0;
@@ -185,7 +216,7 @@ export class EmbeddingService implements IEmbeddingService {
     let vectors: number[][] | null = null;
     if (this.preferred !== this.hash && Date.now() >= this.retryAt) {
       try {
-        vectors = await this.preferred.embedMany(inputs);
+        vectors = await this.cachedEmbedMany(inputs);
         provider = this.preferred;
         this.warned = false;
       } catch (err) {
@@ -201,6 +232,21 @@ export class EmbeddingService implements IEmbeddingService {
       this.models.set(vector, provider.id);
       return { vector, model: provider.id, dims: vector.length, semantic: provider.semantic };
     });
+  }
+
+  /** The preferred provider's vectors, reusing cached ones; only misses are sent to the model. */
+  private async cachedEmbedMany(inputs: string[]): Promise<number[][]> {
+    const keys = inputs.map((t) => EmbeddingCache.key(this.preferred.id, t));
+    const out: Array<number[] | undefined> = keys.map((k) => this.cache.get(k)?.slice());
+    const missing = [...new Set(inputs.filter((_, i) => !out[i]))];
+    for (let i = 0; i < inputs.length; i++) countCache('embedding', !!out[i]);
+    if (missing.length) {
+      const fresh = await this.preferred.embedMany(missing);
+      const byText = new Map(missing.map((t, i) => [t, fresh[i]]));
+      for (const t of missing) this.cache.set(EmbeddingCache.key(this.preferred.id, t), byText.get(t)!);
+      inputs.forEach((t, i) => { if (!out[i]) out[i] = byText.get(t)!.slice(); });
+    }
+    return out as number[][];
   }
 
   /**
@@ -245,6 +291,11 @@ export function getEmbeddingService(): EmbeddingService {
     embeddingService = new EmbeddingService();
   }
   return embeddingService;
+}
+
+/** Drop every cached vector (forget, model change). */
+export function clearEmbeddingCache(): void {
+  embeddingService?.cache.clear();
 }
 
 /** Tests / config reload: next getEmbeddingService() reads the env again. */

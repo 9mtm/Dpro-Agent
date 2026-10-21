@@ -58,6 +58,9 @@ export interface OllamaLoopOptions {
   maxTokens?: number;
   think?: boolean;
   maxSteps?: number;
+  /** MEM-CACHE-01: model window (num_ctx) and how long the model stays loaded (keep_alive). */
+  numCtx?: number;
+  keepAlive?: string | number;
   fetchImpl?: typeof fetch;
   now?: () => number;
 }
@@ -133,7 +136,8 @@ export async function runOllamaAgentLoop(o: OllamaLoopOptions): Promise<{ steps:
       body: JSON.stringify({
         model: o.model, messages, stream: true, tools,
         ...(o.think === undefined ? {} : { think: o.think }),
-        options: { ...(o.temperature === undefined ? {} : { temperature: o.temperature }), ...(o.maxTokens ? { num_predict: o.maxTokens } : {}) },
+        ...(o.keepAlive === undefined ? {} : { keep_alive: o.keepAlive }),
+        options: { ...(o.temperature === undefined ? {} : { temperature: o.temperature }), ...(o.maxTokens ? { num_predict: o.maxTokens } : {}), ...(o.numCtx ? { num_ctx: o.numCtx } : {}) },
       }),
     });
     if (!res.ok || !res.body) {

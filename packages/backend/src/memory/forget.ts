@@ -43,6 +43,8 @@ import { drawerRevisionStep, lockMemoryHistory } from './versions.js';
 import { renderDigest, type WeeklyDigest } from './weekly-summary.js';
 import { purgePgIndexStep } from './indexer-pg.js';
 import { forgetMemoryGraphStep } from './graph/store.js';
+import { dropContextCache } from './context/cache.js';
+import { clearEmbeddingCache } from './embedding.js';
 import { DEFAULT_MEMORY_CONFIG, type Memory, type MemoryType } from './types.js';
 import { v4 as uuidv4 } from 'uuid';
 
@@ -232,6 +234,9 @@ export async function forgetMemory(userId: string, memoryId: string, actor: stri
     return { drawer, types, cancelled };
   });
   if (!done) return null;
+  // MEM-CACHE-01: no cached context or vector keeps the forgotten text in RAM.
+  dropContextCache(userId);
+  clearEmbeddingCache();
 
   // Outside the database, after the commit: index file (SQLite), readable
   // copies, exports (best effort, but each is attempted; the DB no longer

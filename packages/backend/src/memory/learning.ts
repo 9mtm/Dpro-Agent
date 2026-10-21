@@ -40,9 +40,10 @@
 import { v4 as uuidv4 } from 'uuid';
 import { one, sql } from '../repositories/sql-steps.js';
 import { getMemoryStorage } from './storage.js';
-import { defaultDrawerForType, normalizeDrawer, sameDrawer, type DrawerRef } from './drawers.js';
+import { defaultDrawerForType, drawerId, normalizeDrawer, sameDrawer, type DrawerRef } from './drawers.js';
 import {
   createChangeProposal,
+  exportDrawerFileIfPresent,
   MemoryFileError,
   resolveFileAgent,
   type MemoryChange,
@@ -226,6 +227,54 @@ export async function updateVersioned(userId: string, id: string, updates: Parti
   const updated = (await storage.getOwned(userId, id))!;
   await recordVersion({ memoryId: id, userId, drawer: updated.drawer!, change: 'update', entry: versionEntryOf(updated), actor, reason });
   return updated;
+}
+
+/**
+ * The owner corrects a memory from a reply's trace (MEM-CACHE-01 "Correct"):
+ * the new text becomes a pending review proposal (source 'file': an owner
+ * edit), applied only when the owner approves it with its review hash.
+ * Null when the memory is not the user's; MemoryFileError when nothing
+ * changes or too many proposals wait.
+ */
+export async function ownerCorrection(input: { userId: string; memoryId: string; content: string; agentId?: string | null; reasons: string[]; note?: string | null }): Promise<MemoryProposal | null> {
+  const old = await getMemoryStorage().getOwned(input.userId, input.memoryId);
+  if (!old) return null;
+  const before = versionEntryOf(old);
+  const after = { ...before, content: input.content };
+  if (after.content.trim() === before.content.trim()) throw new MemoryFileError('Nothing to change');
+  return createChangeProposal({
+    userId: input.userId, agentId: await proposalAgent(input.agentId), drawer: old.drawer ?? defaultDrawerForType(old.type),
+    changes: [{ op: 'update', id: old.id, before, after }], source: 'file', reasons: input.reasons,
+    note: input.note ?? null, createdBy: input.userId,
+  });
+}
+
+/** A move that cannot be made (same drawer). */
+export class MoveError extends Error {
+  constructor(message: string, readonly code: string) { super(message); }
+}
+
+/**
+ * Move a memory to another drawer of its user, versioned (baseline + an
+ * `update` version in the new drawer whose reason names both drawers). The
+ * topic key stays and must be free in the new drawer (TopicKeyTakenError).
+ * Exported copies of both drawers are written again where they exist.
+ * Callers decide who may move (owner only; agents with both drawers open).
+ */
+export async function moveVersioned(userId: string, id: string, to: DrawerRef, actor: string, reason?: string | null): Promise<{ memory: Memory; from: DrawerRef } | null> {
+  const storage = getMemoryStorage();
+  const old = await storage.getOwned(userId, id);
+  if (!old) return null;
+  const target = normalizeDrawer(to);
+  const from = old.drawer ?? defaultDrawerForType(old.type);
+  if (sameDrawer(from, target)) throw new MoveError('The memory is already in that drawer', 'same_drawer');
+  await recordBaselineIfMissing(old, actor);
+  await storage.update(id, { drawer: target });
+  const moved = (await storage.getOwned(userId, id))!;
+  const note = typeof reason === 'string' && reason.trim() ? `: ${reason.trim().slice(0, 120)}` : '';
+  await recordVersion({ memoryId: id, userId, drawer: target, change: 'update', entry: versionEntryOf(moved), actor, reason: `move:${drawerId(from)}->${drawerId(target)}${note}` });
+  for (const d of [from, target]) await exportDrawerFileIfPresent(userId, d).catch(() => []);
+  return { memory: moved, from };
 }
 
 /**

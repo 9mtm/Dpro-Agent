@@ -41,6 +41,12 @@ import { OLLAMA_URL, DEFAULT_OLLAMA_MODEL, ollamaThinkOption } from '../../llm/o
 import { resolveLocalModel } from '../../llm/local-models.js';
 import { lmStudioApiUrl, lmStudioModelName, lmStudioNotRunningMessage } from '../../llm/lmstudio.js';
 import { runLmStudioAgentLoop } from '../../services/lmstudio-agent-loop.js';
+import { loadRunPermissions } from '../../tools/agent-permissions.js';
+import { contextPack, messageRecall, type ContextPack, type MessageRecall } from '../../memory/context/pack.js';
+import { budgetHistory, type BudgetedHistory, type HistoryTurn } from '../../memory/context/summaries.js';
+import { saveTrace, setTraceTtft } from '../../memory/context/trace.js';
+import { contextBudget, estimateTokens, keepAliveValue } from '../../memory/context/budget.js';
+import { recordTtft } from '../../memory/context/metrics.js';
 
 const DEFAULT_MODEL = DEFAULT_OLLAMA_MODEL;
 
@@ -245,6 +251,14 @@ export async function chatRoutes(fastify: FastifyInstance) {
     if (!messages || !Array.isArray(messages) || messages.length === 0) {
       return reply.status(400).send({ error: 'Messages array is required' });
     }
+    // CORE-03: a bad memoryScope is refused before any SSE stream opens (a
+    // channel turn opens no drawers, so its scope is never read).
+    if (!channelTurn) {
+      try { chatTurnDrawers(true, memoryScope); } catch (err) {
+        if (err instanceof DrawerInputError) return reply.status(400).send({ error: 'Invalid memoryScope' });
+        throw err;
+      }
+    }
 
     // BE-UI-01: turn ids on every frame/body; a repeated Idempotency-Key from
     // the same user within 10 minutes returns the first outcome instead of
@@ -283,7 +297,7 @@ export async function chatRoutes(fastify: FastifyInstance) {
     console.log('[Chat] Turn accepted', { runId: turn.ids.runId, agentId: agentId ?? null, messages: messages.length, stream });
 
     const input = { agentId, messages, stream, model, temperature, maxTokens, sessionId, systemPrompt, systemPromptAppend,
-      memoryContext: bodyMemoryContext, memoryScope, chatContext, userId, channelTurn };
+      memoryContext: bodyMemoryContext, memoryScope, chatContext, userId, channelTurn, runId: turn.ids.runId };
     if (!stream) return executeChatTurn(reply, input);
     // Legacy direct SSE uses the same privacy boundary as saved chat runs.
     // Its idempotency recorder sees checked frames only.
@@ -348,6 +362,43 @@ export interface ChatTurnInput {
   fileReadRoot?: string;
   /** CHAT-SPEC-01: which rich-answer components the page draws ('chat' = the new chat's display set). */
   uiSet?: 'full' | 'chat';
+  /** MEM-CACHE-01: the turn's run id (its recall trace is stored under it). */
+  runId?: string;
+  /**
+   * MEM-CACHE-01: a saved conversation's whole history (oldest first, the new
+   * message last). The turn keeps the newest turns in full and gives older
+   * ones as rolling summaries within the context budget; `messages` is then
+   * only the fallback.
+   */
+  conversation?: { turns: HistoryTurn[] };
+  /** CORE-MEM-HANDOFF: the newest handoff note of the conversation (part of the cached context pack). */
+  handoff?: { id: string; scope: string; text: string } | null;
+}
+
+/** Room for the tool definitions and instructions the turn adds after the system prompt (tokens). */
+const TOOLS_RESERVE_TOKENS = 3000;
+
+/** Drawers the agent may read automatically: the turn's drawers narrowed by its memory permissions (CORE-PERMS-01). */
+async function readableDrawers(agentId: string | undefined, drawers: DrawerRef[]): Promise<DrawerRef[]> {
+  if (!agentId || drawers.length === 0) return drawers;
+  const read = (await loadRunPermissions(agentId)).memoryRead;
+  return drawers.filter((d) => read.includes(d.kind));
+}
+
+/**
+ * MEM-CACHE-01: time to the first word of the reply (text or reasoning), from
+ * the moment the turn was accepted. Wraps the stream's write once.
+ */
+function watchFirstWord(raw: { write: (...args: any[]) => any }, startedAt: number, onFirst: (ms: number) => void): void {
+  const write = raw.write;
+  let seen = false;
+  raw.write = function (this: unknown, chunk: unknown, ...rest: unknown[]) {
+    if (!seen && typeof chunk === 'string' && chunk.startsWith('data:') && /"content":"[^"]/.test(chunk) && !/"type":"error"/.test(chunk)) {
+      seen = true;
+      try { onFirst(Date.now() - startedAt); } catch { /* metrics only */ }
+    }
+    return write.call(this, chunk, ...rest);
+  };
 }
 
 /**
@@ -463,6 +514,24 @@ export async function executeChatTurn(reply: FastifyReply, input: ChatTurnInput)
       resolvedSystemPrompt += `\n\n## Agent Memory\n${memoryFileContent}`;
     }
 
+    // MEM-CACHE-01: the context pack (this persona text + pinned facts, standing
+    // topics and the handoff note, cached per agent + drawers + revisions), then
+    // the memories that match this message. A turn for an outsider opens no
+    // drawers and gets no handoff note.
+    const turnStartedAt = Date.now();
+    let pack: ContextPack | null = null;
+    let recall: MessageRecall = { text: '', items: [], hit: false };
+    const lastUser = messages[messages.length - 1];
+    try {
+      const drawers = await readableDrawers(agentConfig?.id, memoryDrawers);
+      pack = await contextPack({ userId, agentId: agentConfig?.id ?? null, drawers, persona: resolvedSystemPrompt, handoff: includeAgentMemory && !channelTurn ? input.handoff ?? null : null });
+      resolvedSystemPrompt = pack.text;
+      recall = await messageRecall({ userId, drawers, query: messageText(lastUser?.content), pack });
+    } catch (err) {
+      safeConsole.log('[Chat] Memory context unavailable', safeErrorFields(err));
+      if (input.handoff?.text && includeAgentMemory && !channelTurn) resolvedSystemPrompt += `\n\n${input.handoff.text}`;
+    }
+
     // Add session memory context if available
     if (memoryContext) {
       resolvedSystemPrompt += `\n\n## Recent Context\nThe following information was recalled from previous interactions with this user:\n${memoryContext}`;
@@ -492,9 +561,63 @@ export async function executeChatTurn(reply: FastifyReply, input: ChatTurnInput)
       if (installed !== resolvedModel) safeConsole.log('[Chat] Local model not installed; using', installed, 'instead of', resolvedModel);
       resolvedModel = installed;
     }
+    // MEM-CACHE-01: a saved conversation keeps its newest turns in full and
+    // gives older ones as rolling summaries, within the context budget.
+    const budget = contextBudget();
+    let turnMessages: ChatMessage[] = messages;
+    let history: BudgetedHistory | null = null;
+    if (input.conversation?.turns.length) {
+      const fixed = estimateTokens(resolvedSystemPrompt) + estimateTokens(systemPromptAppend ?? '') + estimateTokens(uiSpecPrompt(input.uiSet ?? 'full'))
+        + estimateTokens(recall.text) + TOOLS_RESERVE_TOKENS + 200;
+      try {
+        history = await budgetHistory({
+          sessionId, userId, turns: input.conversation.turns,
+          historyTokens: Math.max(512, budget.promptTokens - fixed), summaryTokens: budget.summaryTokens,
+        });
+        turnMessages = history.messages;
+        if (history.summaryText) resolvedSystemPrompt += `\n\n${history.summaryText}`;
+      } catch (err) {
+        safeConsole.log('[Chat] Conversation summaries unavailable', safeErrorFields(err));
+      }
+    }
+    // The recalled memory goes with the new message (after the history), so the
+    // system text and the earlier turns stay a stable prefix for the model's cache.
+    if (recall.text) {
+      const last = turnMessages[turnMessages.length - 1];
+      if (last && last.role === 'user' && typeof last.content === 'string') {
+        turnMessages = [...turnMessages.slice(0, -1), { ...last, content: `${recall.text}\n\n${last.content}` }];
+      } else {
+        resolvedSystemPrompt += `\n\n${recall.text}`;
+      }
+    }
+
     // CORE-MODEL-02: the agent knows which model ("brain") answers this turn,
     // so it can name it when asked instead of guessing.
     resolvedSystemPrompt = `${resolvedSystemPrompt ? `${resolvedSystemPrompt}\n\n` : ''}${modelIdentityBlock(resolvedProvider, resolvedModel)}`;
+
+    // MEM-CACHE-01: the reply trace (never for a turn that answers an outsider).
+    const traceRun = !channelTurn && input.runId ? input.runId : undefined;
+    if (traceRun) {
+      const promptTokens = estimateTokens(resolvedSystemPrompt) + estimateTokens(systemPromptAppend ?? '')
+        + turnMessages.reduce((n, m) => n + estimateTokens(messageText(m.content)), 0);
+      await saveTrace({
+        runId: traceRun, userId, sessionId, agentId: agentConfig?.id ?? null,
+        items: [...(pack?.items ?? []), ...recall.items],
+        context: {
+          keptTurns: history?.keptTurns ?? turnMessages.length,
+          summarisedTurns: history?.summarisedTurns ?? 0,
+          summaries: (history?.summaries ?? []).map((u) => ({ id: u.id, turns: u.turns, source: u.source })),
+          droppedTurns: history?.droppedTurns ?? 0,
+          fromCache: { pack: !!pack?.hit, recall: recall.hit },
+          budgetTokens: budget.promptTokens, numCtx: budget.numCtx,
+        },
+        packHit: !!pack?.hit, packChars: pack?.memoryChars ?? 0, promptTokens,
+      }).catch((err) => safeConsole.log('[Chat] Recall trace not stored', safeErrorFields(err)));
+    }
+    if (stream) watchFirstWord(reply.raw as any, turnStartedAt, (ms) => {
+      recordTtft(ms);
+      if (traceRun) void setTraceTtft(traceRun, ms).catch(() => {});
+    });
     // CHAT-PRO-02 G: an LM Studio turn needs an LM Studio model id (`lmstudio:<name>`).
     if (resolvedProvider === 'lmstudio' && !lmStudioModelName(resolvedModel)) return reply.status(400).send({ error: 'Pick an LM Studio model', code: 'invalid_model' });
 
@@ -512,9 +635,9 @@ export async function executeChatTurn(reply: FastifyReply, input: ChatTurnInput)
 
     try {
       if (stream) {
-        return await streamChat(reply, resolvedModel, resolvedProvider, resolvedApiKey, messages, resolvedTemp, resolvedMaxTokens, sessionId, resolvedSystemPrompt, systemPromptAppend, userId, chatContext, toolPolicy, agentConfig?.id, memoryDrawers, input.fileReadRoot, input.uiSet);
+        return await streamChat(reply, resolvedModel, resolvedProvider, resolvedApiKey, turnMessages, resolvedTemp, resolvedMaxTokens, sessionId, resolvedSystemPrompt, systemPromptAppend, userId, chatContext, toolPolicy, agentConfig?.id, memoryDrawers, input.fileReadRoot, input.uiSet);
       } else {
-        const out = await nonStreamChat(reply, resolvedModel, resolvedProvider, resolvedApiKey, messages, resolvedTemp, resolvedMaxTokens, sessionId, resolvedSystemPrompt, systemPromptAppend, userId, chatContext, toolPolicy, agentConfig?.id, memoryDrawers);
+        const out = await nonStreamChat(reply, resolvedModel, resolvedProvider, resolvedApiKey, turnMessages, resolvedTemp, resolvedMaxTokens, sessionId, resolvedSystemPrompt, systemPromptAppend, userId, chatContext, toolPolicy, agentConfig?.id, memoryDrawers);
         // A plain result object goes through reply.send so it gets the turn ids.
         return (out as unknown) === reply ? reply : reply.send(out);
       }
@@ -890,6 +1013,9 @@ You: [Present results with \`\`\`spec blocks showing temperature, conditions, et
       temperature,
       maxTokens,
       ...ollamaThinkOption(),
+      // MEM-CACHE-01: a fixed window and a kept-loaded model let Ollama reuse the prompt prefix.
+      numCtx: contextBudget().numCtx,
+      keepAlive: keepAliveValue(),
     });
     console.log('[Chat] ✅ Local turn ended', { steps: result.steps, chars: result.answer.length, aborted: result.aborted, ms: Date.now() - startedAt });
   } catch (err) {

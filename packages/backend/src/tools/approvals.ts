@@ -43,6 +43,7 @@ export const APPROVAL_REQUIRED_TOOLS: Readonly<Record<string, ApprovalCategory>>
   // changing how memory is organised and who may read it
   memory_scope_apply: 'settings', // MEM-SCALE-01: project lifecycle, departments, pinned facts; the approval is the confirm
   memory_access_apply: 'settings', // MEM-SCALE-01: inherited access policies; the approval is the confirm
+  memory_move: 'other', // MEM-CACHE-01: moving a memory changes which turns may load it; the owner approves each move
   // spending money
   make_call: 'money',
   trading_execute: 'money',

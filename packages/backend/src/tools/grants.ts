@@ -64,6 +64,7 @@ export const DEFAULT_AGENT_TOOLS: readonly string[] = [
   'memory_scope_apply', // MEM-SCALE-01: project lifecycle, departments, pinned facts; every call needs owner approval
   'memory_access_apply', // MEM-SCALE-01: inherited access policies; every call needs owner approval
   'memory_scope_forget', // MEM-SCALE-01: forget a whole project; every call needs owner approval
+  'memory_move',   // MEM-CACHE-01: owner's runs, both drawers open; every call needs one-time owner approval
   'storage_search',
   // BOARD-02: the agent's own board cards only (list, comment, move)
   'board_my_cards',
