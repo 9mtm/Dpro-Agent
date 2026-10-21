@@ -2359,3 +2359,8 @@ button.danger-solid { background:var(--danger); color:#fff; }
 .hire-works-save { display:flex !important; align-items:center; gap:8px; }
 .app-settings .mem-settings:has(.disc, .mem-access, .bridge) { max-inline-size:none; }
 .dk-pad-x { margin:8px 16px; } .dk-colour { text-align:start; background:transparent; justify-items:start; padding:4px; border-radius:8px; } .dk-colour:hover { background:var(--row-hover); }
+.dk-segmented button { display:inline-flex; align-items:center; gap:5px; }
+.dk-segmented button svg { opacity:.75; }
+.dk-segmented button[aria-pressed="true"] svg { opacity:1; color:var(--accent); }
+.dk-files-bar { padding-inline:0; border:0; }
+.dk-file-text { padding:12px 16px; border-radius:8px; background:color-mix(in srgb,var(--text) 3%,transparent); font-size:12.5px; overflow:auto; }

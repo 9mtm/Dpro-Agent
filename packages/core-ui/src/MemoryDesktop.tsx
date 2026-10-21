@@ -20,7 +20,6 @@ import { MemoryHandoffsController } from './memory-handoffs';
 import { DiscoveryController } from './discovery-controller';
 import { KnowledgeMap } from './MemoryMap';
 import { HandoffsView } from './MemoryHandoffs';
-import { MemoryPanel } from './SessionPanels';
 import { ago, drawerName, oneLine } from './memory-store';
 import type { ExplorerItem, PinnedFact, ProjectAction, TreeProject, WeeklySummary } from './memory-pages-contract.js';
 import { memoryTypes } from './agent-card-contract.js';
@@ -29,7 +28,7 @@ import { Avatar, ContextMenu, IconButton, Notice, Popover, Sheet, Tile, WithSwat
 import type { MenuItem } from './desktop-ui';
 import type { ProjectGroup } from './memory-desktop-contract.js';
 import { NeedsYou } from './MemoryNeeds';
-import { DatabasesView, DesignView, GroupView, TrashView } from './MemoryPlaces';
+import { DatabasesView, DesignView, FilesView, GroupView, TrashView } from './MemoryPlaces';
 
 /** Where a memory came from, as a kind icon and a short word (board rule 13: show things, not codes). */
 export function kindOf(i: Pick<ExplorerItem, 'type' | 'source' | 'drawerId' | 'sourceAgentId'>): { icon: UiIconName; word: string } {
@@ -221,7 +220,7 @@ export function MemoryWindow({ client, active = false, focus, sidebarSlot, onOpe
 
   const content = ds.extra === 'map' ? <KnowledgeMap c={k.map} agents={ss.agents} onOpenMemories={name => { d.setExtra(null); d.open('all'); x.setQuery(name); void x.load(); }}/>
     : ds.extra === 'handoffs' ? <HandoffsView c={k.ho} onOpenChat={onOpenChat}/>
-    : ds.extra === 'files' ? <div className="dk-files"><MemoryPanel client={client} active={active}/><p className="fine-print">Edits in these files come back as questions in Needs you.</p></div>
+    : ds.extra === 'files' ? <FilesView client={client} agents={ss.agents} drawers={[{ id: 'owner', name: 'About you' }, { id: 'experience', name: 'Lessons' }, ...(ss.tree?.projects ?? []).filter(p => !p.archived && !p.mergedInto && !p.trashedAt).map(p => ({ id: `project:${p.slug}`, name: p.name }))]}/>
     : place === 'needs' ? <NeedsYou c={rv} mode={ds.needsMode} onOpenChat={onOpenChat} design={d}/>
     : place === 'trash' ? <TrashView d={d} me={client.getSnapshot().user?.id} onAsk={ids => setSheet({ kind: 'forget', ids })}/>
     : place.startsWith('group:') ? <GroupView d={d} sc={sc} groupId={place.slice(6)}/>
@@ -229,7 +228,7 @@ export function MemoryWindow({ client, active = false, focus, sidebarSlot, onOpe
     : place === 'archived' ? <ArchivedPlace projects={(ss.tree?.projects ?? []).filter(p => p.archived)} onOpen={slug => d.open(`project:${slug}`)} onBack={slug => projectAction(slug, 'unarchive')}/>
     : project && ds.projectView === 'design' ? <DesignView d={d} slug={project.slug}/>
     : project && ds.projectView === 'databases' ? <DatabasesView d={d} slug={project.slug} agents={ss.agents}/>
-    : project && ds.projectView === 'files' ? <div className="dk-files"><MemoryPanel client={client} active={active}/><p className="fine-print">Read-only. Edits in these files come back as questions in Needs you.</p></div>
+    : project && ds.projectView === 'files' ? <FilesView client={client} agents={ss.agents} drawers={[{ id: `project:${project.slug}`, name: project.name }]}/>
     : <MemoryList k={k} pinned={ds.pinned} showPinned={place === 'all' || !!project} onMenu={(e, i) => menu.at(e, memoryMenu(i))} onPinnedMenu={(e, f) => menu.at(e, [{ label: 'Edit…', icon: 'pencil', run: () => setSheet({ kind: 'edit-pinned', fact: f }) }, { label: 'Unpin', icon: 'pin', run: () => void d.unpin(f) }])}
       empty={project ? <><p>Nothing remembered here yet. Dpro remembers on its own while you chat. You can add something yourself too.</p><button type="button" className="primary" onClick={() => { x.startAdd(); setSheet({ kind: 'remember' }); }}>Remember</button></>
         : xs.query ? <p>No memory matches. Put words in "quotes" for exact words.</p> : <p>Nothing here yet. Dpro remembers on its own while you chat.</p>}/>;
@@ -250,7 +249,7 @@ export function MemoryWindow({ client, active = false, focus, sidebarSlot, onOpe
         </div>
         <ImportStatus client={client} active={active} onReview={() => d.open('needs')}/>
         {project && !ds.extra && <div className="dk-segmented" role="group" aria-label="Project views">
-          {(['memories', 'design', 'databases', 'files'] as const).map(v => <button key={v} type="button" aria-pressed={ds.projectView === v} onClick={() => d.setView(v)}>{v[0].toUpperCase() + v.slice(1)}</button>)}
+          {([['memories', 'layers'], ['design', 'palette'], ['databases', 'database'], ['files', 'file']] as const).map(([v, icon]) => <button key={v} type="button" aria-pressed={ds.projectView === v} title={`${v[0].toUpperCase() + v.slice(1)} of this project`} onClick={() => d.setView(v)}><UiIcon name={icon} size={13}/>{v[0].toUpperCase() + v.slice(1)}</button>)}
         </div>}
         <span className="dk-toolbar-gap"/>
         {listPlace && <span className="dk-anchor" data-popover-anchor><IconButton icon="filter" label="Filter" pressed={filters || filterCount > 0} badge={filterCount || undefined} onClick={() => setFilters(v => !v)}/>

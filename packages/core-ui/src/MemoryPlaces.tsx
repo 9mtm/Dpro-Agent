@@ -1,7 +1,10 @@
 // Places of the Memory window that are not a list of memories: Trash (M32),
 // a group of projects (M21 A3), a project's Design (M31) and Databases (M33).
 // Each shows a quiet list and the selected thing beside it.
-import { useEffect, useSyncExternalStore } from 'react';
+import { useEffect, useState, useSyncExternalStore } from 'react';
+import type { SessionClient } from './session';
+import { Markdown } from './markdown';
+import { readableDrawer } from './SessionPanels';
 import { UiIcon } from './ui-icons';
 import type { UiIconName } from './ui-icons';
 import { MemoryDesktopController } from './memory-desktop';
@@ -154,5 +157,41 @@ export function DatabasesView({ d, slug, agents }: { d: MemoryDesktopController;
       {others.length > 0 && <label className="dk-field">Let an agent see more<select value="" onChange={e => { if (e.target.value) void d.setLevel(slug, e.target.value, 'tables'); }}><option value="">Choose an agent…</option>{others.map(([id, n]) => <option key={id} value={id}>{n}</option>)}</select></label>}
       <p className="fine-print">These levels hold for all of this project's databases. Dpro reads only the table names, from a copy, never the rows. Passwords and connection keys are never shown or saved.</p>
     </div>}</aside>
+  </div>;
+}
+
+// ---------------------------------------------------------------- memory files (read-only)
+/** The readable memory file of one place as one agent sees it (board M24 D3): two small pickers, the file, nothing else. */
+export function FilesView({ client, drawers, agents }: { client: SessionClient; drawers: ReadonlyArray<{ id: string; name: string }>; agents: Readonly<Record<string, string>> }) {
+  const ids = Object.keys(agents);
+  const [drawer, setDrawer] = useState(drawers[0]?.id ?? 'owner');
+  const [agent, setAgent] = useState(ids.find(i => /main/i.test(i)) ?? ids[0] ?? '');
+  const [file, setFile] = useState<{ count: number; content: string } | null | 'none' | 'error'>(null);
+  useEffect(() => { if (!drawers.some(d => d.id === drawer) && drawers[0]) setDrawer(drawers[0].id); }, [drawers]);
+  useEffect(() => { if (!agent && ids[0]) setAgent(ids.find(i => /main/i.test(i)) ?? ids[0]); }, [ids.length]);
+  useEffect(() => {
+    if (!agent) return;
+    let live = true; setFile(null);
+    void (async () => {
+      try {
+        const r = await client.request({ method: 'GET', path: `/api/memory/files/${encodeURIComponent(drawer)}?agentId=${encodeURIComponent(agent)}` } as never);
+        if (!live) return;
+        const b = r.body as { count?: number; content?: string } | null;
+        setFile(r.status === 200 && b && typeof b.content === 'string' ? { count: b.count ?? 0, content: b.content } : r.status === 404 || r.status === 403 ? 'none' : 'error');
+      } catch { if (live) setFile('error'); }
+    })();
+    return () => { live = false; };
+  }, [client, drawer, agent]);
+  return <div className="dk-files">
+    <div className="dk-list-bar dk-files-bar">
+      {drawers.length > 1 && <label className="dk-field-inline">File<select value={drawer} onChange={e => setDrawer(e.target.value)}>{drawers.map(d => <option key={d.id} value={d.id}>{d.name}</option>)}</select></label>}
+      <label className="dk-field-inline">As read by<select value={agent} onChange={e => setAgent(e.target.value)}>{Object.entries(agents).map(([id, n]) => <option key={id} value={id}>{n}</option>)}</select></label>
+      <span className="dk-toolbar-gap"/>{file && typeof file === 'object' && <span className="fine-print">{file.count} {file.count === 1 ? 'entry' : 'entries'}</span>}
+    </div>
+    {file === null ? <p className="dk-empty" role="status">Reading the file…</p>
+      : file === 'none' ? <div className="dk-empty"><UiIcon name="file" size={20}/><p>{agents[agent] ?? 'This agent'} does not read this place, so it has no file here. Pick another agent.</p></div>
+      : file === 'error' ? <p className="dk-empty">The file could not be read.</p>
+      : <div className="dk-file-text" dir="auto"><Markdown text={readableDrawer(file.content)}/></div>}
+    <p className="fine-print">Read-only. Edits made in these files come back as questions in Needs you.</p>
   </div>;
 }
