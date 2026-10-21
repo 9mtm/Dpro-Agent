@@ -13,7 +13,7 @@
  */
 
 import type { Tool, ToolResult, ToolExecutionContext } from '../types.js';
-import { toolMemoryUser } from './scope.js';
+import { toolMemoryUser, toolOwnerTurn } from './scope.js';
 import { repositories } from '../../repositories/index.js';
 import { toolMemoryActor } from '../../repositories/actor.js';
 import { ScopeError } from '../../repositories/scope.js';
@@ -37,6 +37,7 @@ each call first. For an ordinary correction use memory_edit / memory_delete.`,
     const userId = toolMemoryUser(context);
     if (!userId) return fail('no user for this memory');
     if (context?.toolPolicy) return fail('not available when answering someone else');
+    if (!toolOwnerTurn(context)) return fail("only in the owner's own turn, not in a board task run");
     if (typeof params.id !== 'string' || !params.id) return fail('id is required');
     // B1-core: the memory repository allows only the run user's memories in
     // drawers open for this run (same rule as memory_edit / memory_delete);
