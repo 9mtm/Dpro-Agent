@@ -292,3 +292,43 @@ test('4. agent tools: decide a conflict, review a pending link, read its own rep
   const m = await T.memoryRecallTool.execute({ op: 'metrics' }, ctx);
   assert.ok(m.data.recent.turns >= 3);
 });
+
+test('6. bridge: activity log and "hide managed files from Git" through the API and the agent tools', async () => {
+  const D = await import(join(backendDir, 'src/memory/drawers.ts'));
+  const T = await import(join(backendDir, 'src/tools/memory/index.ts'));
+  const { approvalCategory } = await import(join(backendDir, 'src/tools/approvals.ts'));
+  const ctx = { workspaceDir: dir, userId: OWNER, agentId: 'mg-main', sessionId: conv.id, memoryDrawers: D.selectDrawers({ audience: 'owner', project: project.slug }) };
+  mkdirSync(join(folder, '.git', 'info'), { recursive: true });
+  assert.equal(approvalCategory({ name: 'memory_bridge_apply' }), 'settings');
+  assert.equal(approvalCategory({ name: 'memory_bridge' }), null);
+
+  // Default: the files Dpro would create are listed in .git/info/exclude.
+  const before = await T.memoryBridgeTool.execute({ action: 'preview_files', project_id: project.id }, ctx);
+  assert.ok(before.data.files.some((f) => f.relative.endsWith('exclude')), before.content[0].text);
+  const off = await T.memoryBridgeApplyTool.execute({ action: 'set_git_exclude', project_id: project.id, enabled: false }, ctx);
+  assert.ok(off.data?.success, off.error);
+  assert.equal(off.data.gitExclude, false);
+  const after = await T.memoryBridgeTool.execute({ action: 'preview_files', project_id: project.id }, ctx);
+  assert.ok(!after.data.files.some((f) => f.relative.endsWith('exclude')));
+  assert.equal((await ok('GET', '/api/memory-bridge')).projects.find((p) => p.projectId === project.id).gitExclude, false);
+  assert.ok((await T.memoryBridgeApplyTool.execute({ action: 'set_git_exclude', project_id: project.id, enabled: 'yes' }, ctx)).error);
+  assert.ok((await T.memoryBridgeApplyTool.execute({ action: 'set_git_exclude', project_id: project.id, enabled: true }, { ...ctx, userId: 'mg-user' })).error);
+  assert.ok((await T.memoryBridgeApplyTool.execute({ action: 'set_git_exclude', project_id: project.id, enabled: true }, { ...ctx, toolPolicy: { channel: 'telegram', allowedTools: [] } })).error);
+  await ok('PATCH', `/api/memory-bridge/projects/${project.id}`, { gitExclude: true });
+
+  // Activity log: the settings changes, filtered by project or CLI; owner only.
+  const log = await T.memoryBridgeTool.execute({ action: 'activity', project_id: project.id }, ctx);
+  assert.ok(log.data.entries.length >= 2, log.content[0].text);
+  assert.ok(log.data.entries.every((e) => e.projectId === project.id));
+  assert.match(log.content[0].text, /folder-settings project .*gitExclude.*false.*agent:mg-main/);
+  await ok('PUT', '/api/memory-bridge/clients/codex', { enabled: false });
+  const codexOnly = (await ok('GET', '/api/memory-bridge/audit?client=codex&limit=5')).entries;
+  assert.ok(codexOnly.length >= 1 && codexOnly.every((e) => e.client === 'codex'));
+  const byProject = (await ok('GET', `/api/memory-bridge/audit?projectId=${project.id}`)).entries;
+  assert.ok(byProject.length >= 2 && byProject.every((e) => e.projectId === project.id));
+  assert.equal((await call(OWNER, 'GET', '/api/memory-bridge/audit?client=nope')).statusCode, 400);
+  assert.equal((await call(OWNER, 'GET', '/api/memory-bridge/audit?projectId=nope')).statusCode, 404);
+  assert.equal((await call(OWNER, 'GET', '/api/memory-bridge/audit?limit=0')).statusCode, 400);
+  assert.equal((await call('mg-user', 'GET', '/api/memory-bridge/audit')).statusCode, 403);
+  assert.ok((await T.memoryBridgeTool.execute({ action: 'activity' }, { ...ctx, userId: 'mg-user' })).error);
+});

@@ -149,6 +149,19 @@ export async function registrationUndo(ownerId: string, id: unknown, actor = 'ow
   return r;
 }
 
+/** The bridge's activity log for the owner (API and tool): newest first, optionally one CLI or one project. */
+export async function activity(ownerId: string, input: { limit?: unknown; client?: unknown; projectId?: unknown } = {}) {
+  const limit = input.limit === undefined ? 100 : Number(input.limit);
+  if (!Number.isInteger(limit) || limit < 1 || limit > 500) throw new BridgeError('limit must be 1-500');
+  const c = input.client === undefined ? undefined : client(input.client);
+  let projectId: string | undefined;
+  if (input.projectId !== undefined) {
+    if (typeof input.projectId !== 'string' || !(await findProject(ownerId, input.projectId))) throw new BridgeError('Not found', 404, 'not_found');
+    projectId = input.projectId;
+  }
+  return auditLog(ownerId, limit, { client: c, projectId });
+}
+
 export { auditLog };
 
 /**
