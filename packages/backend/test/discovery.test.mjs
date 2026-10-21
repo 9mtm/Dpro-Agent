@@ -159,6 +159,29 @@ test('a project folder can stop being watched; settings are checked', async () =
   assert.deepEqual((await call('PUT', `${BASE}/settings`, { watch: false, intervalMinutes: 15 })).json().settings, { watch: false, intervalMinutes: 15 });
 });
 
+test('only what this page added can be removed; a skill with a taken name is not replaced', async () => {
+  // An MCP server that was already in Dpro: importing it again only links it, and Remove refuses.
+  const docs = find(v, 'mcp', 'docs'); let p = await previewOf(docs);
+  assert.ok((await call('POST', `${BASE}/import`, { items: [{ id: p.id, previewHash: p.previewHash }] })).json().results[0].ok);
+  const before = db.prepare('SELECT COUNT(*) AS n FROM mcp_servers').get().n;
+  w(join(home, '.codex', 'config.toml'), '[mcp_servers.docs]\ncommand = "node"\nargs = ["docs.js"]\n\n[mcp_servers.docs2]\ncommand = "node"\nargs = ["docs.js"]\n');
+  v = (await call('POST', `${BASE}/scan`)).json();
+  p = await previewOf(find(v, 'mcp', 'docs2'));
+  const dup = (await call('POST', `${BASE}/import`, { items: [{ id: p.id, previewHash: p.previewHash }] })).json().results[0];
+  assert.ok(dup.ok, 'same launch configuration: linked, not added twice');
+  assert.equal(db.prepare('SELECT COUNT(*) AS n FROM mcp_servers').get().n, before);
+  assert.equal((await call('POST', `${BASE}/items/${p.id}/remove`)).json().code, 'not_imported', 'the existing server is never removed from here');
+  assert.equal(db.prepare('SELECT COUNT(*) AS n FROM mcp_servers').get().n, before);
+  // A different skill named "writer" already in Dpro (added elsewhere): blocked, not replaced.
+  db.prepare("UPDATE discovery_items SET ref = NULL WHERE kind = 'skill'").run();
+  w(join(home, '.claude', 'skills', 'writer', 'SKILL.md'), '---\nname: writer\ndescription: "Write posts"\n---\n\nLonger posts now.\n');
+  db.prepare("DELETE FROM discovery_items WHERE kind = 'skill'").run();
+  v = (await call('POST', `${BASE}/scan`)).json();
+  p = await previewOf(find(v, 'skill', 'writer'));
+  assert.equal(p.blocked, 'skill_name_taken');
+  assert.equal((await call('POST', `${BASE}/import`, { items: [{ id: p.id, previewHash: p.previewHash }] })).json().results[0].code, 'skill_name_taken');
+});
+
 test('owner only; inputs checked', async () => {
   assert.equal((await call('GET', BASE, undefined, 'dc-user')).statusCode, 403);
   assert.equal((await call('POST', `${BASE}/import`, { items: [] })).statusCode, 400);
@@ -181,7 +204,7 @@ test('agent tools: listed, owner-only, apply needs approval', async () => {
   const { discoveryTool, discoveryApplyTool } = await loadFile(join(backendDir, 'src/tools/discovery.ts'));
   const { approvalCategory } = await loadFile(join(backendDir, 'src/tools/approvals.ts'));
   assert.equal(approvalCategory(discoveryApplyTool), 'settings');
-  assert.equal(approvalCategory(discoveryTool), null);
+  assert.equal(approvalCategory(discoveryTool), 'other', 'reading the computer is approved per call too');
   const refused = await discoveryTool.execute({ action: 'list' }, { toolPolicy: {} });
   assert.match(refused.error, /answering someone else/);
 });

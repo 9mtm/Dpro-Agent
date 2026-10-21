@@ -57,6 +57,7 @@ export const APPROVAL_REQUIRED_TOOLS: Readonly<Record<string, ApprovalCategory>>
   // changing stored secrets / settings
   credentials_save: 'settings',
   memory_bridge_apply: 'settings', // MEM-BRIDGE-01: writes CLI configs / project files; the approval is the confirm
+  discovery: 'other', // DISCOVER-01: reads what is on this computer (redacted); the owner approves each read, like the page that works only on this computer
   discovery_apply: 'settings', // DISCOVER-01: imports memories, skills, MCP servers (tokens), SSH hosts from this computer; the approval is the confirm
   // handing work to the owner's signed-in coding app (CORE-ROUTE-01)
   ask_coding_app: 'other',

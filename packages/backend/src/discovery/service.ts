@@ -29,7 +29,7 @@ import yaml from 'js-yaml';
 import { q } from '../repositories/sql-steps.js';
 import { readRegularFile } from '../services/read-regular-file.js';
 import { redactImportText } from '../memory/import/redact.js';
-import { claudeFolderCwd, listLocalSessions, matchProject, projectRoot, rootDrawerKey } from '../memory/import/local-agents.js';
+import { claudeFolderCwd, listLocalSessions, matchProject, projectRoot, relocateGoneRoots, rootDrawerKey, type ProjectRoot } from '../memory/import/local-agents.js';
 import { registerProjectDocument } from '../memory/import/project-documents.js';
 import { startImport } from '../memory/import/local-import.js';
 import { listProjects, type Project } from '../repositories/chat-conversations.js';
@@ -52,6 +52,7 @@ type Found = {
   mcp?: FoundMcp & { secrets: string[] };
   ssh?: { alias: string; host: string | null; user: string | null; port: number | null; key: string | null };
   note?: { root: string };
+  skillTaken?: { agents: number };
 };
 export type DiscoveryItem = { id: string; kind: DiscoveryKind; name: string; from: string; rootId: string | null; to: string; state: DiscoveryState; updatedAt: string };
 export type DiscoveryRoot = { id: string; name: string; path: string | null; project: string | null; count: number; fresh: number; watch: boolean };
@@ -121,7 +122,7 @@ export async function decodeClaudeFolder(name: string, platformSep = path.sep): 
   };
   return walk(start, 0);
 }
-async function memoryFiles(home: string): Promise<Found[]> {
+async function memoryFiles(home: string, roots: Map<string, ProjectRoot>): Promise<Found[]> {
   const out: Found[] = [];
   const top = path.join(home, '.claude', 'projects');
   let dirs: string[]; try { dirs = await fs.readdir(top); } catch { return out; }
@@ -130,8 +131,11 @@ async function memoryFiles(home: string): Promise<Found[]> {
     if (!(await isDir(mem))) continue;
     let files: string[]; try { files = (await fs.readdir(mem)).filter((f) => f.endsWith('.md') && f !== 'MEMORY.md'); } catch { continue; }
     if (!files.length) continue;
-    const cwd = await claudeFolderCwd(path.join(top, d), home) ?? await decodeClaudeFolder(d);
-    const root = (await projectRoot(cwd, home))?.root ?? null;
+    // The Claude folder name is the folder on this computer; a conversation's folder may be from an older one.
+    const cwd = await decodeClaudeFolder(d) ?? await claudeFolderCwd(path.join(top, d), home);
+    const pr = await projectRoot(cwd, home);
+    if (pr) roots.set(pr.root, pr);
+    const root = pr?.root ?? null;
     for (const f of files.slice(0, 500)) {
       const file = path.join(mem, f);
       const t = await readText(file, MAX_MEMORY_FILE); if (!t) continue;
@@ -237,13 +241,22 @@ export async function scan(userId: string, opts: DiscoveryOptions = {}): Promise
     const t0 = Date.now(); const home = opts.home ?? os.homedir();
     const projects = await listProjects(userId).catch(() => [] as Project[]);
     const unwatched = new Set((await q.all<{ root_id: string }>('SELECT root_id FROM discovery_roots WHERE user_id = ? AND watch = 0', userId)).map((r) => r.root_id));
-    const mem = await memoryFiles(home);
+    const known = new Map<string, ProjectRoot>();
+    const mem = await memoryFiles(home, known);
     const roots = new Set<string>();
-    for (const m of mem) if (m.root && path.isAbsolute(m.root) && await isDir(m.root)) roots.add(m.root);
+    for (const r of known.values()) if (r.here) roots.add(r.root);
     for (const s of await listLocalSessions(home).catch(() => [])) if (s.root && path.isAbsolute(s.root) && await isDir(s.root)) roots.add(s.root);
     for (const p of projects) if (p.folder && await isDir(p.folder)) roots.add(p.folder);
+    // A folder from an older computer (or a removed worktree) joins the same project here.
+    const here = () => [...roots].map((r) => ({ root: r, name: path.basename(r), here: true }));
+    let moved = await relocateGoneRoots([...known.values(), ...here()], home);
+    for (const m of mem) { const to = m.root ? moved.get(m.root) : null; if (to) { m.root = to.root; roots.add(to.root); } }
     const list = [...roots].filter((r) => r !== home);
-    const found = [...mem, ...await notes(home, list), ...await skills(home, list), ...await mcpServers(home, list, mcpFor(opts)), ...await sshHosts(home)]
+    const mcp = await mcpServers(home, list, mcpFor(opts));
+    const mcpRoots = await Promise.all([...new Set(mcp.map((m) => m.root).filter((r): r is string => !!r && !roots.has(r)))].map((r) => projectRoot(r, home)));
+    moved = await relocateGoneRoots([...mcpRoots, ...here()], home);
+    for (const m of mcp) { const to = m.root ? moved.get(m.root) : null; if (to) m.root = to.root; }
+    const found = [...mem, ...await notes(home, list), ...await skills(home, list), ...mcp, ...await sshHosts(home)]
       .filter((f) => !unwatched.has(rootId(f.root)));
     const s: Scan = { at: Date.now(), ms: Date.now() - t0, found };
     scans.set(userId, s);
@@ -254,8 +267,15 @@ export async function scan(userId: string, opts: DiscoveryOptions = {}): Promise
 }
 
 type Ctx = { projects: Project[]; home: string };
+/** A Dpro skill with this name, and whether this page added it (only then may it be replaced). */
+async function skillInDpro(userId: string, name: string, saved: Row | undefined) {
+  const s = await q.one<{ id: string; content_hash: string }>('SELECT id, content_hash FROM central_skills WHERE name = ?', name).catch(() => undefined);
+  if (!s) return null;
+  const agents = (await q.one<{ n: number }>('SELECT COUNT(*) AS n FROM central_agent_skills WHERE skill_id = ?', s.id).catch(() => undefined))?.n ?? 0;
+  return { ...s, agents: Number(agents), ours: saved?.ref === s.id };
+}
 /** Where an item goes in Dpro, and the memory drawer for memory files. */
-function destination(f: Pick<Found, 'kind' | 'root' | 'memory' | 'mcp'>, ctx: Ctx): { to: string; drawer: string } {
+function destination(f: Pick<Found, 'kind' | 'root' | 'memory' | 'mcp'> & { skillTaken?: { agents: number } }, ctx: Ctx): { to: string; drawer: string } {
   const project = f.root ? matchProject(f.root, f.root, ctx.projects) : undefined;
   const key = project?.slug ?? rootDrawerKey(f.root, ctx.home);
   const projectDrawer = key ? `project:${key}` : 'owner';
@@ -267,7 +287,7 @@ function destination(f: Pick<Found, 'kind' | 'root' | 'memory' | 'mcp'>, ctx: Ct
     return { to: label, drawer: projectDrawer };
   }
   if (f.kind === 'note') return { to: `${label} · read by the local model`, drawer: projectDrawer };
-  if (f.kind === 'skill') return { to: 'Skills · off until assigned', drawer: '' };
+  if (f.kind === 'skill') return { to: f.skillTaken ? `Skills · replaces the skill this page added${f.skillTaken.agents ? ` (used by ${f.skillTaken.agents} agent${f.skillTaken.agents === 1 ? '' : 's'})` : ''}` : 'Skills · off until assigned', drawer: '' };
   if (f.kind === 'mcp') return { to: `MCP · off${f.mcp?.secrets.length ? ' · secret → Credentials' : ''}`, drawer: '' };
   return { to: 'SSH hosts · names only', drawer: '' };
 }
@@ -336,7 +356,10 @@ export async function preview(userId: string, id: string, opts: DiscoveryOptions
   const f = foundItem(userId, id);
   const home = opts.home ?? os.homedir();
   const ctx: Ctx = { projects: await listProjects(userId).catch(() => []), home };
-  const dest = destination(f, ctx);
+  const saved = (await rows(userId)).get(id);
+  const inDpro = f.kind === 'skill' ? await skillInDpro(userId, f.name, saved) : null;
+  const taken = inDpro && inDpro.content_hash !== f.hash ? inDpro : null;
+  const dest = destination({ ...f, ...(taken?.ours ? { skillTaken: { agents: taken.agents } } : {}) }, ctx);
   let text = '';
   if (f.kind === 'memory') text = memoryContent(f);
   else if (f.kind === 'note') text = (await readText(f.file, MAX_NOTE))?.text ?? '';
@@ -346,11 +369,10 @@ export async function preview(userId: string, id: string, opts: DiscoveryOptions
     text = i ? JSON.stringify({ command: i.command, args: i.args, url: i.url, env: Object.fromEntries(Object.keys(i.env ?? {}).map((k) => [k, '••••••••'])), headers: Object.fromEntries(Object.keys(i.headers ?? {}).map((k) => [k, '••••••••'])) }, null, 2) : `Cannot be added: ${f.mcp?.issue?.replace(/_/g, ' ')}`;
   } else if (f.ssh) text = [`Host ${f.ssh.alias}`, f.ssh.host ? `  HostName ${f.ssh.host}` : '', f.ssh.user ? `  User ${f.ssh.user}` : '', f.ssh.port ? `  Port ${f.ssh.port}` : '', f.ssh.key ? `  IdentityFile ${f.ssh.key} (name only; the key is never read)` : ''].filter(Boolean).join('\n');
   const clean = redactImportText(text).text;
-  const saved = (await rows(userId)).get(id);
   return {
     id, kind: f.kind, name: redactImportText(f.name).text, from: redactImportText(f.from).text, to: dest.to, state: await stateOf(f, saved, mcpFor(opts)),
-    text: clean.slice(0, 20000), truncated: clean.length > 20000, secrets: f.mcp?.secrets ?? [], blocked: f.mcp?.issue ?? null,
-    previewHash: sha(`${f.kind}\0${f.id}\0${f.hash}\0${dest.to}`),
+    text: clean.slice(0, 20000), truncated: clean.length > 20000, secrets: f.mcp?.secrets ?? [], blocked: f.mcp?.issue ?? (taken && !taken.ours ? 'skill_name_taken' : null),
+    previewHash: sha(`${f.kind}\0${f.id}\0${f.hash}\0${dest.to}\0${inDpro?.content_hash ?? ''}`),
   };
 }
 
@@ -402,12 +424,16 @@ export async function importItems(userId: string, items: { id: string; previewHa
         noteDocs.push({ f, doc: await registerProjectDocument(userId, f.note!.root, f.file) });
         continue;
       } else if (f.kind === 'skill') {
-        const existing = await q.one<{ content_hash: string }>('SELECT content_hash FROM central_skills WHERE name = ?', f.name).catch(() => undefined);
+        const existing = await skillInDpro(userId, f.name, saved);
+        // Only a skill this page added may be replaced; another skill with the name stays as it is.
+        if (existing && existing.content_hash !== f.hash && !existing.ours) throw new DiscoveryError('skill_name_taken', 409);
         const r = await centralSkills().installFolder(f.file, f.skill!.origin, f.hash, existing && existing.content_hash !== f.hash ? existing.content_hash : undefined);
-        await save(userId, f, 'imported', r.skill.id, f.hash);
+        // Remove may later delete only what this page added, never a skill that was already there.
+        await save(userId, f, 'imported', r.duplicate && !existing?.ours ? null : r.skill.id, f.hash);
       } else if (f.kind === 'mcp') {
         const r = await mcp.importFound(userId, f.mcp!, f.mcp!.hash ?? '', it.secret !== 'leave');
-        await save(userId, f, 'imported', r.id, f.hash);
+        // A server that was already in Dpro is not this page's to remove later.
+        await save(userId, f, 'imported', r.duplicate ? null : r.id, f.hash);
       } else {
         const h = f.ssh!;
         await q.run(`INSERT INTO ssh_hosts (user_id, alias, host, login, port, key_name, created_at) VALUES (?, ?, ?, ?, ?, ?, ?)

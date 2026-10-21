@@ -27,6 +27,7 @@ const CODE_TEXT: Record<string, string> = {
   preview_changed: 'the file changed since you opened it', import_running: 'another import is not finished yet', name_conflict: 'an MCP server with this name exists',
   version_conflict: 'the skill changed in Dpro', skill_in_use: 'an agent still uses this skill', not_removable: 'project notes cannot be taken out one by one',
   inline_secret_requires_manual_setup: 'it has a secret in its command; add it by hand', memory_refused: 'memory refused the change',
+  not_imported: 'it was already in Dpro before this page; change it on its own page', skill_name_taken: 'Dpro already has another skill with this name',
 };
 export const codeText = (code?: string) => (code ? CODE_TEXT[code] ?? code.replace(/_/g, ' ') : 'it could not be done');
 

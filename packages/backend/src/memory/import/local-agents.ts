@@ -442,6 +442,40 @@ async function everySession(home?: string): Promise<[string, Found][]> {
   return [...byId].sort((a, b) => b[1].mtime - a[1].mtime);
 }
 
+/**
+ * Folders that are gone (an older computer, a removed worktree) mapped to the
+ * same project here: the same last two folder names, a Codex worktree's repo
+ * name, or the same path under a folder named like one of its parents.
+ */
+export async function relocateGoneRoots(roots: (ProjectRoot | null)[], home: string): Promise<Map<string, ProjectRoot | null>> {
+  // A folder that is gone (older computer, removed worktree) joins the project here with the same last two folder names.
+  const hereByTail = new Map<string, ProjectRoot | null>();
+  for (const r of roots) if (r?.here) { const k = tailKey(r.root); const prev = hereByTail.get(k); hereByTail.set(k, prev === undefined || prev?.root === r.root ? r : null); }
+  // …or the same folder found on this computer under a folder with the same name as one of its parents (e.g. C:\MAMP\htdocs\shop → ~/…/htdocs/shop).
+  const anchors = new Map<string, Set<string>>();
+  for (const r of roots) if (r?.here) for (let d = path.dirname(r.root), i = 0; i < 3 && d !== home && d !== path.dirname(d); d = path.dirname(d), i++) {
+    const k = path.basename(d).toLowerCase(); if (!anchors.has(k)) anchors.set(k, new Set()); anchors.get(k)!.add(d);
+  }
+  const byName = new Map<string, ProjectRoot | null>();
+  for (const r of roots) if (r?.here) { const k = r.name.toLowerCase(); const prev = byName.get(k); byName.set(k, prev === undefined || prev?.root === r.root ? r : null); }
+  const moved = new Map<string, ProjectRoot | null>();
+  for (const r of roots) if (r && !r.here && !moved.has(r.root)) {
+    const gone = r.root;
+    let found: ProjectRoot | null = goneKeys(gone).map(k => hereByTail.get(k)).find(Boolean) ?? null;
+    const codexRepo = CODEX_WORKTREE.exec(gone)?.[1];
+    if (!found && codexRepo) found = byName.get(codexRepo.toLowerCase()) ?? null;
+    const parts = segs(gone);
+    for (let i = parts.length - 2; !found && i >= Math.max(0, parts.length - 5); i--) {
+      for (const a of anchors.get(parts[i].toLowerCase()) ?? []) {
+        const candidate = path.join(a, ...parts.slice(i + 1));
+        if (await isDir(candidate)) { found = await projectRoot(candidate, home); break; }
+      }
+    }
+    moved.set(gone, found?.here ? found : null);
+  }
+  return moved;
+}
+
 /** Every conversation on this computer, newest first, with its project root (title = start of the first human message). */
 export async function listLocalSessions(home?: string): Promise<LocalSession[]> {
   const found = (await everySession(home)).filter(([, f]) => f.size <= MAX_SESSION_BYTES);
@@ -456,32 +490,7 @@ export async function listLocalSessions(home?: string): Promise<LocalSession[]> 
     const cwd = h.cwd ?? (f.source === 'claude-code' ? dirCwd.get(path.dirname(f.file)) ?? null : null);
     return { id, f, h, cwd, root: await rootOf(cwd) };
   }));
-  // A folder that is gone (older computer, removed worktree) joins the project here with the same last two folder names.
-  const hereByTail = new Map<string, ProjectRoot | null>();
-  for (const r of rows) if (r.root?.here) { const k = tailKey(r.root.root); const prev = hereByTail.get(k); hereByTail.set(k, prev === undefined || prev?.root === r.root.root ? r.root : null); }
-  // …or the same folder found on this computer under a folder with the same name as one of its parents (e.g. C:\MAMP\htdocs\shop → ~/…/htdocs/shop).
-  const anchors = new Map<string, Set<string>>();
-  const top = home ?? os.homedir();
-  for (const r of rows) if (r.root?.here) for (let d = path.dirname(r.root.root), i = 0; i < 3 && d !== top && d !== path.dirname(d); d = path.dirname(d), i++) {
-    const k = path.basename(d).toLowerCase(); if (!anchors.has(k)) anchors.set(k, new Set()); anchors.get(k)!.add(d);
-  }
-  const byName = new Map<string, ProjectRoot | null>();
-  for (const r of rows) if (r.root?.here) { const k = r.root.name.toLowerCase(); const prev = byName.get(k); byName.set(k, prev === undefined || prev?.root === r.root.root ? r.root : null); }
-  const moved = new Map<string, ProjectRoot | null>();
-  for (const r of rows) if (r.root && !r.root.here && !moved.has(r.root.root)) {
-    const gone = r.root.root;
-    let found: ProjectRoot | null = goneKeys(gone).map(k => hereByTail.get(k)).find(Boolean) ?? null;
-    const codexRepo = CODEX_WORKTREE.exec(gone)?.[1];
-    if (!found && codexRepo) found = byName.get(codexRepo.toLowerCase()) ?? null;
-    const parts = segs(gone);
-    for (let i = parts.length - 2; !found && i >= Math.max(0, parts.length - 5); i--) {
-      for (const a of anchors.get(parts[i].toLowerCase()) ?? []) {
-        const candidate = path.join(a, ...parts.slice(i + 1));
-        if (await isDir(candidate)) { found = await projectRoot(candidate, top); break; }
-      }
-    }
-    moved.set(gone, found?.here ? found : null);
-  }
+  const moved = await relocateGoneRoots(rows.map(r => r.root), home ?? os.homedir());
   return rows.map(({ id, f, h, cwd, root }) => {
     const r = root && !root.here ? moved.get(root.root) ?? root : root;
     return { id, legacyId: legacySessionId(f.source, f.file, f.key), source: f.source, cwd, root: r?.root ?? null, rootName: r?.name ?? null, title: h.title, startedAt: h.startedAt, updatedAt: new Date(f.mtime).toISOString(), bytes: f.size, turns: h.turns };

@@ -38,7 +38,7 @@ export function allowedDiscovery(method, path, body) {
     && new Set(body.items.map(i => i.id)).size === body.items.length;
 }
 
-const CODES = { 400: ['invalid_input'], 403: ['not_loopback', 'forbidden'], 404: ['not_found'], 409: ['preview_changed', 'not_imported', 'not_removable', 'skill_in_use'] };
+const CODES = { 400: ['invalid_input'], 403: ['not_loopback', 'forbidden'], 404: ['not_found'], 409: ['preview_changed', 'not_imported', 'not_removable', 'skill_in_use', 'skill_name_taken'] };
 const settings = s => (record(s) && typeof s.watch === 'boolean' && [15, 30, 60].includes(s.intervalMinutes) ? { watch: s.watch, intervalMinutes: s.intervalMinutes } : null);
 function item(x) {
   if (!record(x) || !ID.test(x.id) || !DISCOVERY_KINDS.includes(x.kind) || !DISCOVERY_STATES.includes(x.state)) return null;
