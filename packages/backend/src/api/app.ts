@@ -15,7 +15,6 @@ import multipart from '@fastify/multipart';
 import rateLimit from '@fastify/rate-limit';
 import { RATE_LIMIT_PLUGIN_OPTIONS } from './rate-limit-config.js';
 import helmet from '@fastify/helmet';
-import fastifyStatic from '@fastify/static';
 import path from 'path';
 import { fileURLToPath } from 'url';
 import { sessionsRoutes } from './routes/sessions.js';
@@ -117,7 +116,7 @@ import { registerHttpsEnforcement } from '../middleware/https-enforcement.js';
 import { registerHostCheck } from '../middleware/host-check.js';
 import type { FastifyInstance, FastifyServerOptions } from 'fastify';
 import { registerAuthGate } from '../auth/auth-gate.js';
-import { isPublicStaticPath } from './static-access.js';
+import { registerPublicStatic } from './static-access.js';
 import { registerGlobalErrorHandler } from './error-handler.js';
 import { registerLaunchToken } from './launch-token.js';
 
@@ -217,13 +216,10 @@ export async function buildServer(options: BuildServerOptions = {}): Promise<Fas
   const __dirname = path.dirname(__filename);
   const publicDir = path.join(__dirname, '..', '..', '..', '..', 'public');
 
-  await fastify.register(fastifyStatic, {
-    root: publicDir,
-    prefix: '/', // Serve files at root level (e.g., /avatars/user/1/abc/avatar.glb)
-    // SECURITY (S0-A.7): runtime data zones under public/storage are not
-    // served statically; see src/api/static-access.ts.
-    allowedPath: (pathName, root) => isPublicStaticPath(pathName, root),
-  });
+  // Files at root level (e.g. /avatars/user/1/abc/avatar.glb). SECURITY
+  // (S0-A.7): runtime data zones under public/storage are not served
+  // statically, and every refusal is a 404; see src/api/static-access.ts.
+  await registerPublicStatic(fastify, publicDir);
 
   fastify.log.info(`[Server] ✅ Static files served from: ${publicDir}`);
 

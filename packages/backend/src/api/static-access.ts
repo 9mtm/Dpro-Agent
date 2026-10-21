@@ -20,6 +20,8 @@
 
 import fs from 'node:fs';
 import path from 'node:path';
+import fastifyStatic from '@fastify/static';
+import type { FastifyInstance } from 'fastify';
 
 export const PUBLIC_STORAGE_SUBTREES: readonly string[] = [];
 
@@ -69,4 +71,20 @@ export function isPublicStaticPath(pathName: string, root: string): boolean {
   const rel = path.relative(realRoot, real);
   if (rel === '..' || rel.startsWith(`..${path.sep}`) || path.isAbsolute(rel)) return false;
   return allowedRelative(rel);
+}
+
+/**
+ * Serve `root` at `/` with the allow-list above. Registered in its own scope:
+ * @fastify/static answers 403 for non-canonical or differently-cased
+ * spellings of a real file, which would tell a caller that the file exists.
+ * Here every refusal answers 404, like any path outside the allow-list.
+ */
+export async function registerPublicStatic(fastify: FastifyInstance, root: string): Promise<void> {
+  await fastify.register(async scope => {
+    scope.setErrorHandler((error: { statusCode?: number }, _request, reply) => {
+      if (error.statusCode === 403) return reply.callNotFound();
+      throw error;
+    });
+    await scope.register(fastifyStatic, { root, prefix: '/', allowedPath: (pathName, base) => isPublicStaticPath(pathName, base) });
+  });
 }

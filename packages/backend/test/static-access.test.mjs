@@ -8,9 +8,8 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 
 const backendDir = process.cwd();
-const { isPublicStaticPath } = await import(join(backendDir, 'src/api/static-access.ts'));
+const { isPublicStaticPath, registerPublicStatic } = await import(join(backendDir, 'src/api/static-access.ts'));
 const { default: Fastify } = await import('fastify');
-const { default: fastifyStatic } = await import('@fastify/static');
 
 const root = mkdtempSync(join(tmpdir(), 'ap-static-'));
 for (const rel of ['storage/cache/screenshots/s.png', 'storage/cdn/files/f.txt', 'storage/extensions/trading/d.json',
@@ -27,7 +26,7 @@ writeFileSync(join(outside, 'secret.txt'), 'secret');
 symlinkSync(outside, join(root, 'icons/out'));
 
 const app = Fastify();
-await app.register(fastifyStatic, { root, prefix: '/', allowedPath: (p, r) => isPublicStaticPath(p, r) });
+await registerPublicStatic(app, root); // same registration as src/api/app.ts
 await app.ready();
 test.after(async () => {
   await app.close();
