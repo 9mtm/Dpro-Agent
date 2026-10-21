@@ -20,6 +20,10 @@ import { MemoryHealthController } from './memory-health';
 import { HealthView } from './MemoryHealth';
 import { MemoryAccessController } from './memory-access';
 import { AccessView } from './MemoryAccess';
+import { MemoryHandoffsController } from './memory-handoffs';
+import { HandoffsView } from './MemoryHandoffs';
+import { MemoryBridgeController } from './memory-bridge';
+import { BridgeView } from './MemoryBridge';
 
 const KIND_LABEL: Record<string, string> = { owner: 'About you', experience: 'Lessons', project: 'Project', task: 'Task', people: 'Person' };
 const KIND_PLURAL: Record<string, string> = { project: 'Projects', task: 'Tasks', people: 'People' };
@@ -61,8 +65,8 @@ export function MemoryCard({ item, actions, children, focused }: { item: MemoryI
  * archived) and the open scope on the right with its views: Overview (the
  * memory home for Everything), Review, Explorer and Import.
  */
-export type MemoryTab = 'home' | 'review' | 'explorer' | 'map' | 'access' | 'health' | 'import';
-export function MemoryPage({ client, active = false, focus }: { client: SessionClient; active?: boolean; focus?: MemoryFocus | null }) {
+export type MemoryTab = 'home' | 'review' | 'explorer' | 'map' | 'handoffs' | 'access' | 'health' | 'bridge' | 'import';
+export function MemoryPage({ client, active = false, focus, onOpenChat, onOpenProjects }: { client: SessionClient; active?: boolean; focus?: MemoryFocus | null; onOpenChat?: (conversationId: string) => void; onOpenProjects?: () => void }) {
   const [tab, setTab] = useState<MemoryTab>('home');
   const owner = useSyncExternalStore(client.subscribe, client.getSnapshot, client.getSnapshot).user?.role === 'owner';
   const [c, setC] = useState<MemoryExplorerController>();
@@ -79,6 +83,12 @@ export function MemoryPage({ client, active = false, focus }: { client: SessionC
   useEffect(() => { if (active && health && owner && tab === 'health') void health.load(); }, [active, health, owner, tab]);
   useEffect(() => { const x = new MemoryMapController(client); setMap(x); return () => x.dispose(); }, [client]);
   useEffect(() => { if (active && map && owner && tab === 'map') void map.load(); }, [active, map, owner, tab]);
+  const [handoffs, setHandoffs] = useState<MemoryHandoffsController>();
+  useEffect(() => { const x = new MemoryHandoffsController(client); setHandoffs(x); return () => x.dispose(); }, [client]);
+  useEffect(() => { if (active && handoffs && owner && tab === 'handoffs') void handoffs.load(); }, [active, handoffs, owner, tab]);
+  const [bridge, setBridge] = useState<MemoryBridgeController>();
+  useEffect(() => { const x = new MemoryBridgeController(client); setBridge(x); return () => x.dispose(); }, [client]);
+  useEffect(() => { if (active && bridge && owner && tab === 'bridge') void bridge.load(); }, [active, bridge, owner, tab]);
   const [explorerView, setExplorerView] = useState<'table' | 'files'>('table');
   useEffect(() => { if (!scopes) return; const x = new MemoryReviewController(client, () => void scopes.load(true)); setReview(x); return () => x.dispose(); }, [client, scopes]);
   useEffect(() => { if (active && scopes && owner) void scopes.load(); }, [active, scopes, owner]);
@@ -107,7 +117,7 @@ export function MemoryPage({ client, active = false, focus }: { client: SessionC
   }
   const waiting = s?.tree?.company.pendingReviews;
   const tabs: { value: MemoryTab; label: string }[] = [
-    { value: 'home', label: s && s.scope !== 'company' ? 'Overview' : 'Home' }, { value: 'review', label: waiting ? `Review · ${waiting}` : 'Review' }, { value: 'explorer', label: 'Explorer' }, { value: 'map', label: 'Map' }, { value: 'access', label: 'Access' }, { value: 'health', label: 'Health & rules' },
+    { value: 'home', label: s && s.scope !== 'company' ? 'Overview' : 'Home' }, { value: 'review', label: waiting ? `Review · ${waiting}` : 'Review' }, { value: 'explorer', label: 'Explorer' }, { value: 'map', label: 'Map' }, { value: 'handoffs', label: 'Handoffs' }, { value: 'access', label: 'Access' }, { value: 'health', label: 'Health & rules' }, { value: 'bridge', label: 'Coding apps' },
     ...(owner ? [{ value: 'import' as const, label: 'Import' }] : []),
   ];
   return <section className="mem" aria-label="Memory">
@@ -138,6 +148,8 @@ export function MemoryPage({ client, active = false, focus }: { client: SessionC
         {tab === 'map' && map && <KnowledgeMap c={map} onOpenMemories={name => { if (!c) return; setTab('explorer'); setExplorerView('table'); c.setQuery(name); c.setScope('company'); }}/>}
         {tab === 'access' && access && <AccessView c={access} scope={s?.scope.startsWith('project:') || s?.scope.startsWith('department:') ? s.scope : 'company'} tree={s?.tree ?? null}/>}
         {tab === 'health' && health && <HealthView c={health} conflicts={s?.tree ? s.tree.company.conflicts : null} onReview={() => setTab('review')} onFiles={() => { setTab('explorer'); setExplorerView('files'); }}/>}
+        {tab === 'handoffs' && handoffs && <HandoffsView c={handoffs} onOpenChat={onOpenChat}/>}
+        {tab === 'bridge' && bridge && <BridgeView c={bridge} onChangeFolder={onOpenProjects ? () => onOpenProjects() : undefined}/>}
         {tab === 'import' && <LocalImport client={client} active={active} onReview={() => setTab('review')}/>}
         {tab === 'review' && review && <ReviewInbox c={review}/>}
       </div>

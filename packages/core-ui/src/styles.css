@@ -1883,3 +1883,75 @@ button.status-item:hover { background:var(--row-hover); color:var(--text); }
 .mem-sample { margin:0; padding-inline-start:18px; font-size:12px; display:grid; gap:2px; }
 .mem-exception { gap:10px; }
 @container (max-width: 900px) { .mem-access-body { grid-template-columns:minmax(0,1fr); } .mem-templates { grid-template-columns:repeat(2,minmax(0,1fr)); } }
+
+/* MEM-FINISH-01 · M12 Handoffs */
+.mem-link-text { color:var(--mem-link); }
+.mem-dot[data-health="link"] { background:var(--mem-link); }
+.mem-handoffs { display:grid; grid-template-columns:210px minmax(0,440px) minmax(0,1fr); min-block-size:0; border-block-start:1px solid var(--border); }
+.mem-handoffs-filters { display:grid; gap:12px; align-content:start; padding:14px 12px; border-inline-end:1px solid var(--border); }
+.mem-handoffs-kinds { display:grid; gap:2px; }
+.app-shell .page-ui .mem-handoffs-kinds button { display:flex; justify-content:space-between; padding:7px 9px; border-radius:7px; background:transparent; box-shadow:none; color:var(--text-2); font-size:13px; text-align:start; min-block-size:0; }
+.app-shell .page-ui .mem-handoffs-kinds button[aria-pressed="true"] { background:var(--row-active); color:var(--text); }
+.mem-handoffs-list { display:grid; align-content:start; border-inline-end:1px solid var(--border); min-inline-size:0; }
+.mem-handoffs-list-head { padding:10px 14px; border-block-end:1px solid var(--border); font-size:12.5px; color:var(--text-3); }
+.app-shell .page-ui .mem-handoff-row { display:grid; grid-template-columns:28px minmax(0,1fr); gap:10px; align-items:start; justify-content:normal; padding:10px 14px; border-radius:0; border-block-end:1px solid var(--border); background:transparent; box-shadow:none; text-align:start; min-block-size:0; }
+.app-shell .page-ui .mem-handoff-row[aria-current="true"] { background:var(--row-active); }
+.mem-handoff-mark { display:grid; place-items:center; inline-size:28px; block-size:28px; border-radius:999px; background:var(--canvas); box-shadow:inset 0 0 0 1px var(--border); font-size:11px; font-weight:700; }
+.mem-handoff-main { display:grid; gap:3px; min-inline-size:0; }
+.mem-handoff-title { display:flex; gap:8px; align-items:center; font-size:13px; font-weight:600; min-inline-size:0; }
+.mem-handoff-title > span:first-child { overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
+.mem-handoff-kind { flex:none; padding:1px 7px; border-radius:999px; font-size:10.5px; font-weight:500; background:var(--mem-link-bg); color:var(--mem-link); }
+.mem-handoff-kind[data-kind="task"] { background:var(--mem-warn-bg); color:var(--mem-warn); }
+.mem-handoff-kind[data-kind="coding"] { background:var(--canvas); color:var(--text-2); box-shadow:inset 0 0 0 1px var(--border); }
+.mem-handoff-line { font-size:12px; color:var(--text-2); overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
+.mem-handoff-edit { display:grid; gap:14px; align-content:start; padding:20px 24px; min-inline-size:0; }
+.mem-handoff-edit-head { display:flex; justify-content:space-between; align-items:flex-start; gap:12px; }
+.mem-handoff-edit-head > div { display:grid; gap:4px; }
+.mem-handoff-edit-head h3 { margin:0; font-size:18px; }
+.mem-handoff-fields { display:grid; grid-template-columns:repeat(2,minmax(0,1fr)); gap:12px; }
+.mem-handoff-field { display:grid; gap:6px; padding:12px; border-radius:10px; background:var(--surface); box-shadow:inset 0 0 0 1px var(--border); }
+.mem-handoff-field > span { font-size:12.5px; font-weight:600; }
+.mem-handoff-field textarea { resize:vertical; border:0; background:transparent; color:var(--text); font:inherit; font-size:13px; line-height:1.55; }
+.mem-handoff-field p { margin:0; white-space:pre-line; font-size:13px; line-height:1.55; }
+.mem-handoff-history-head { margin:4px 0 0; font-size:13px; color:var(--text-3); }
+.mem-handoff-history { list-style:none; margin:0; padding:0; display:grid; gap:10px; }
+.mem-handoff-history li { display:grid; grid-template-columns:12px minmax(0,1fr) auto; gap:10px; align-items:start; font-size:12.5px; }
+.mem-handoff-history li > span:nth-child(2) { display:grid; gap:2px; }
+.mem-handoff-history .mem-dot { margin-block-start:4px; }
+.mem-handoff-foot { margin-block-start:auto; padding:10px 12px; border-radius:8px; background:var(--surface); box-shadow:inset 0 0 0 1px var(--border); }
+@media (max-width: 1100px) { .mem-handoffs { grid-template-columns:minmax(0,1fr); } .mem-handoff-fields { grid-template-columns:minmax(0,1fr); } }
+.mem-handoff-history .mem-dot { inline-size:10px; block-size:10px; background:var(--stroke-3); }
+.mem-handoff-history .mem-dot[data-health="link"] { background:var(--mem-link); }
+
+/* MEM-FINISH-01 · M11 Coding apps */
+.mem-bridge { display:grid; grid-template-columns:minmax(0,1fr) 470px; min-block-size:0; border-block-start:1px solid var(--border); }
+.mem-bridge-main { display:grid; gap:16px; align-content:start; padding:20px; border-inline-end:1px solid var(--border); min-inline-size:0; }
+.mem-bridge-head { display:grid; gap:4px; }
+.mem-bridge-head h3 { margin:0; font-size:18px; font-weight:600; }
+.mem-bridge-apps { display:grid; grid-template-columns:repeat(2,minmax(0,1fr)); gap:12px; }
+.mem-bridge-app { display:grid; gap:10px; padding:14px; border-radius:10px; background:var(--surface); box-shadow:inset 0 0 0 1px var(--border); }
+.mem-bridge-app[data-selected] { box-shadow:inset 0 0 0 1px var(--accent); }
+.mem-bridge-app-head { display:flex; align-items:center; gap:10px; }
+.mem-bridge-mark { border-radius:8px; inline-size:30px; block-size:30px; font-size:12px; }
+.mem-bridge-app-name { display:grid; flex:1; min-inline-size:0; font-size:14px; font-weight:600; }
+.mem-bridge-app-name .fine-print { font-weight:400; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
+.mem-pill-quiet { background:var(--canvas); color:var(--text-3); box-shadow:inset 0 0 0 1px var(--border); }
+.mem-bridge-row { display:grid; grid-template-columns:120px minmax(0,1fr) 150px 92px 150px 128px; gap:10px; align-items:center; padding:6px 0; font-size:12.5px; border-block-end:1px solid var(--border); }
+.mem-bridge-row-head { font-size:11.5px; color:var(--text-3); }
+.mem-bridge-project { font-weight:600; }
+.mem-bridge-folder { display:flex; gap:6px; align-items:center; min-inline-size:0; }
+.mem-bridge-folder > span { overflow:hidden; text-overflow:ellipsis; white-space:nowrap; color:var(--text-2); }
+.mem-bridge-back { display:flex; gap:8px; align-items:center; }
+.mem-bridge-side { display:grid; gap:14px; align-content:start; padding:20px; background:var(--canvas); min-inline-size:0; }
+.mem-bridge-step { display:grid; gap:4px; }
+.mem-bridge-step h3 { margin:0; font-size:17px; }
+.mem-diff { margin:0; padding:12px 14px; border-radius:10px; background:var(--surface); box-shadow:inset 0 0 0 1px var(--border); font-family:ui-monospace, SFMono-Regular, Menlo, monospace; font-size:12px; line-height:1.7; white-space:pre-wrap; overflow:auto; max-block-size:320px; color:var(--text-3); }
+.mem-diff [data-line="add"] { color:var(--mem-ok); }
+.mem-diff [data-line="del"] { color:var(--mem-bad); }
+.mem-bridge-notes { display:grid; gap:6px; font-size:12.5px; }
+.mem-bridge-warn { margin:0; padding:10px 12px; border-radius:8px; background:var(--mem-warn-bg); box-shadow:inset 0 0 0 1px var(--mem-warn-line); font-size:12px; color:var(--mem-warn); }
+.mem-bridge-file { display:grid; gap:6px; }
+.mem-bridge-file-name { font-size:12.5px; font-weight:600; }
+.mem-bridge-audit { list-style:none; margin:0; padding:0; display:grid; gap:8px; }
+.mem-bridge-audit li { display:grid; grid-template-columns:70px minmax(0,1fr); gap:8px; font-size:12px; }
+@media (max-width: 1100px) { .mem-bridge { grid-template-columns:minmax(0,1fr); } .mem-bridge-apps { grid-template-columns:minmax(0,1fr); } .mem-bridge-row { grid-template-columns:repeat(2,minmax(0,1fr)); } }
