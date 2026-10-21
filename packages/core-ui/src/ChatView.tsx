@@ -55,7 +55,7 @@ const SUGGESTIONS = [
  * finished turn folds its work into "Worked for …". Behaviour lives in
  * ConversationsController; this file is layout and local view state only.
  */
-export function ChatView({ controller, mode, productName = 'Dpro Agent', client, onAddConnector, onOpenCard, onOpenMemory, onChooseContext, terminalRequest = 0 }: { controller: ConversationsController; mode: 'live' | 'mock'; productName?: string; terminalRequest?: number; client?: SessionClient; onChooseContext?:()=>void; onAddConnector?: () => void; onOpenCard?: (boardId: string, cardId: string) => void; onOpenMemory?: (drawerId: string, memoryId: string) => void }) {
+export function ChatView({ controller, mode, productName = 'Dpro Agent', client, onAddConnector, onOpenCard, onOpenMemory, onChooseContext, terminalRequest = 0, active = true }: { controller: ConversationsController; mode: 'live' | 'mock'; productName?: string; terminalRequest?: number; client?: SessionClient; onChooseContext?:()=>void; onAddConnector?: () => void; onOpenCard?: (boardId: string, cardId: string) => void; onOpenMemory?: (drawerId: string, memoryId: string) => void; active?: boolean }) {
   const s = useSyncExternalStore(controller.subscribe, controller.getSnapshot, controller.getSnapshot);
   const thread = useRef<HTMLDivElement>(null);
   const input = useRef<HTMLTextAreaElement>(null);
@@ -175,6 +175,14 @@ export function ChatView({ controller, mode, productName = 'Dpro Agent', client,
   const [memCtl, setMemCtl] = useState<ChatMemoryController | null>(null);
   useEffect(() => { if (!client) return; const m = new ChatMemoryController(client); setMemCtl(m); return () => m.dispose(); }, [client]);
   useEffect(() => { memCtl?.setConversation(s.activeId); setRemember(null); }, [memCtl, s.activeId]);
+  // A memory decided elsewhere (Memory › Review, Approvals, another window) shows here when the chat is seen again.
+  useEffect(() => { if (active) void memCtl?.refresh(); }, [active, memCtl]);
+  useEffect(() => {
+    if (!memCtl || typeof document === 'undefined') return;
+    const again = () => { if (document.visibilityState === 'visible' && active) void memCtl.refresh(); };
+    document.addEventListener('visibilitychange', again); window.addEventListener('focus', again);
+    return () => { document.removeEventListener('visibilitychange', again); window.removeEventListener('focus', again); };
+  }, [memCtl, active]);
   const mem = useSyncExternalStore(memCtl ? memCtl.subscribe : noopSubscribe, memCtl ? memCtl.getSnapshot : nullSnapshot, memCtl ? memCtl.getSnapshot : nullSnapshot);
   // MEM-UI-01 (board M5): what each reply remembered, and the conversation's handoff.
   const [recallCtl, setRecallCtl] = useState<ChatRecallController | null>(null);

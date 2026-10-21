@@ -135,7 +135,7 @@ export function SignedInShell({ client, notice }: { client: SessionClient; notic
     <main id="content" className="page-area">
       {notice && <p className="page-notice" role="status">{notice}</p>}
       <section className="page page-chat" aria-label="Chat" hidden={page !== 'chat'}>
-        {chat ? <ChatView onChooseContext={newChat} terminalRequest={terminalRequest} controller={chat} mode={mode} client={client} onAddConnector={() => { setConnectorsFocus(n => n + 1); setPage('agents'); }}
+        {chat ? <ChatView active={page === 'chat'} onChooseContext={newChat} terminalRequest={terminalRequest} controller={chat} mode={mode} client={client} onAddConnector={() => { setConnectorsFocus(n => n + 1); setPage('agents'); }}
           onOpenCard={(boardId, cardId) => { setPage('board'); void board?.reveal(boardId, cardId); }}
           onOpenMemory={(drawerId, memoryId) => { setMemoryFocus(f => ({ drawerId, memoryId, n: (f?.n ?? 0) + 1 })); setPage('memory'); }}/> : null}
       </section>
