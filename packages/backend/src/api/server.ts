@@ -24,6 +24,7 @@ import { LAUNCH_TOKEN_ENV } from './launch-token.js';
 import { assertSafeIsolatedTree } from '../config/isolated-tree.js';
 import { flushAuditWritesWithin, SHUTDOWN_AUDIT_FLUSH_MS } from '../services/audit-logger.js';
 import { startAutomaticProjectImports, stopAutomaticProjectImports } from '../memory/import/automatic-project-import.js';
+import { startDiscoveryWatch, stopDiscoveryWatch } from '../discovery/service.js';
 import { resumePendingImports, stopLocalImports } from '../memory/import/local-import.js';
 import { getOrchestrator } from '../multi-agent/orchestrator.js';
 
@@ -79,7 +80,7 @@ async function start() {
     }
 
     if (summary.background) {
-      void resumePendingImports().catch(() => console.warn('[Memory import] Saved progress unavailable; no new import started.')).finally(() => startAutomaticProjectImports());
+      void resumePendingImports().catch(() => console.warn('[Memory import] Saved progress unavailable; no new import started.')).finally(() => { startAutomaticProjectImports(); startDiscoveryWatch(); });
     }
 
     const pythonStatus = summary.background ? await probePython() : '— (background off)';
@@ -127,6 +128,7 @@ async function shutdown(): Promise<void> {
   try {
     // Closing Fastify runs channel transport shutdown hooks before process exit.
     await stopAutomaticProjectImports();
+    stopDiscoveryWatch();
     await stopLocalImports();
     await fastify.close();
     // B2.2b-2: audit rows still being written (PostgreSQL inserts are not

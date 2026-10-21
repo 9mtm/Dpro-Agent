@@ -85,6 +85,14 @@ function fingerprint(input: ServerInput) {
  return digest({startupTimeoutMs:input.startupTimeoutMs??30000,transport:input.transport,command:input.command??null,args:input.args??[],url:input.url??null,allowRemote:input.allowRemote===true,env:sorted(input.env as any),headers:sorted(input.headers as any)});
 }
 type Source={id:string;name:string;origin:string;file:string;key:string;project?:string;input?:ServerInput;issue?:string;hash?:string};
+/** An MCP server entry found in a config file (DISCOVER-01); nothing is stored. */
+export type FoundMcp=Omit<Source,'id'>;
+/** Claude Desktop's config file on macOS, Windows and Linux. */
+export function claudeDesktopConfig(home:string,platform:NodeJS.Platform=process.platform){
+ if(platform==='darwin')return path.join(home,'Library','Application Support','Claude','claude_desktop_config.json');
+ if(platform==='win32')return path.join(home,'AppData','Roaming','Claude','claude_desktop_config.json');
+ return path.join(home,'.config','Claude','claude_desktop_config.json');
+}
 type Scan={id:string;owner:string;sources:Source[];skipped:number};
 export class LocalMcpImport {
  private scans=new Map<string,Scan>(); private queue: Promise<unknown>=Promise.resolve();
@@ -100,20 +108,39 @@ export class LocalMcpImport {
  private async configurations(file:string):Promise<any> {const text=await this.read(file);return file.endsWith('.toml')?{mcpServers:parseMcpToml(text)}:JSON.parse(text);}
  async scan(owner:string) {
   const scan:Scan={id:randomUUID(),owner,sources:[],skipped:0};
-  const files=[['Claude',path.join(this.home,'.claude.json')],['Claude Desktop',path.join(this.home,'Library/Application Support/Claude/claude_desktop_config.json')],['Codex',path.join(this.home,'.codex/config.toml')]];
-  for(const [origin,file]of files)try{
+  const found=await this.found();scan.skipped=found.skipped;scan.sources=found.servers.map(s=>({id:randomUUID(),...s}));
+  while(this.scans.size>=8)this.scans.delete(this.scans.keys().next().value!);this.scans.set(scan.id,scan);
+  return {id:scan.id,skipped:scan.skipped,sources:scan.sources.map(s=>({id:s.id,name:s.name,origin:s.origin,supported:!s.issue,issue:s.issue??null}))};
+ }
+ /** Every MCP server in the known config files, plus extra files such as a project's .mcp.json (DISCOVER-01). */
+ async found(extra:{origin:string;file:string}[]=[]):Promise<{servers:FoundMcp[];skipped:number}>{
+  const servers:FoundMcp[]=[];let skipped=0;
+  const files=[{origin:'Claude',file:path.join(this.home,'.claude.json')},{origin:'Claude Desktop',file:claudeDesktopConfig(this.home)},{origin:'Codex',file:path.join(this.home,'.codex','config.toml')},...extra];
+  for(const {origin,file} of files)try{
    const config=await this.configurations(file);
    const groups=[{project:undefined as string|undefined,servers:config.mcpServers}];
    if(object(config.projects))for(const [project,value]of Object.entries(config.projects).slice(0,100))if(object(value))groups.push({project,servers:value.mcpServers});
    for(const group of groups)if(object(group.servers))for(const [key,raw]of Object.entries(group.servers).slice(0,200)){
-    if(scan.sources.length>=500){scan.skipped++;continue;}
-    const source:Source={id:randomUUID(),name:redactImportText(key).text.slice(0,100),origin,file,key,project:group.project};
+    if(servers.length>=500){skipped++;continue;}
+    const source:FoundMcp={name:redactImportText(key).text.slice(0,100),origin,file,key,project:group.project};
     try{if(!object(raw))throw Error();source.input=normalized(raw,key);source.hash=fingerprint(source.input);}catch(e){source.issue=e instanceof LocalMcpError?e.code:'invalid_configuration';}
-    scan.sources.push(source);
+    servers.push(source);
    }
-  }catch{scan.skipped++;}
-  while(this.scans.size>=8)this.scans.delete(this.scans.keys().next().value!);this.scans.set(scan.id,scan);
-  return {id:scan.id,skipped:scan.skipped,sources:scan.sources.map(s=>({id:s.id,name:s.name,origin:s.origin,supported:!s.issue,issue:s.issue??null}))};
+  }catch{skipped++;}
+  return {servers,skipped};
+ }
+ /** The id of a Dpro MCP server with exactly this launch configuration, if any. */
+ existing(input:ServerInput){return this.duplicate(input);}
+ /** DISCOVER-01: add a found server, switched off; `keepSecrets` false leaves its env / header values out (the owner adds them later). */
+ async importFound(owner:string,found:FoundMcp,hash:string,keepSecrets=true){
+  const operation=this.queue.then(async()=>{
+   if(found.issue)throw new LocalMcpError(found.issue);
+   const input=await this.current({id:'',...found});if(hash!==found.hash||hash!==fingerprint(input))throw new LocalMcpError('preview_changed',409);
+   const existingId=await this.duplicate(input);if(existingId)return {id:existingId,duplicate:true};
+   const name=String(input.name);if((await listServerRows()).some(r=>r.name===name))throw new LocalMcpError('name_conflict',409);
+   const {env:_e,headers:_h,...bare}=input;
+   const server=await createServer(keepSecrets?input:bare,owner,{dormantImport:true});return {id:server.id,duplicate:false};
+  });this.queue=operation.catch(()=>{});return operation;
  }
  private source(owner:string,scanId:string,sourceId:string){const scan=this.scans.get(scanId);if(!scan||scan.owner!==owner)throw new LocalMcpError('scan_not_found',404);const source=scan.sources.find(s=>s.id===sourceId);if(!source)throw new LocalMcpError('source_not_found',404);return source;}
  private async current(source:Source) {

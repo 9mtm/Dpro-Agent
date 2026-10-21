@@ -58,6 +58,13 @@ export async function readProjectDocument(user: string,id: string) {
  const {text}=await read(entry);if(hash(text)!==entry.digest)throw Error('Document changed. Scan the folder again before importing.');
  return {entry,text};
 }
+/** DISCOVER-01: add one known project note to the private catalog (same checks as a folder scan); returns its document id. */
+export async function registerProjectDocument(user: string, root: string, file: string) {
+ const realRoot=await fs.realpath(root);const real=await fs.realpath(file);
+ if(!real.startsWith(realRoot+path.sep)||!eligible(path.relative(realRoot,real)))throw Error('Not a project document');
+ const entries=await catalog(user);const {text,stat}=await read({root:realRoot,file:real} as Entry);const digest=hash(text),id=hash(user+'\0'+digest).slice(0,32);
+ entries[id]={id,root:realRoot,file:real,digest,relative:path.relative(realRoot,real),bytes:stat.size,updatedAt:stat.mtime.toISOString()};await save(user,entries);return id;
+}
 export async function previewProjectDocument(user: string,id: string) {
  const doc=await readProjectDocument(user,id);if(!doc)return null;
  const clean=redactImportText(doc.text).text;

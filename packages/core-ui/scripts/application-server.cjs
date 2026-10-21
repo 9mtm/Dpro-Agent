@@ -27,6 +27,7 @@ const { memoryResponse } = require('./memory-response.cjs');
 const { allowedMemoryPages, memoryPagesRoute, memoryPagesResponse } = require('../src/memory-pages-contract.js');
 const { allowedMemoryRecall, memoryRecallRoute, memoryRecallResponse } = require('../src/memory-recall-contract.js');
 const { allowedMemoryBridge, memoryBridgeRoute, memoryBridgeResponse } = require('../src/memory-bridge-contract.js');
+const { allowedDiscovery, discoveryRoute, discoveryResponse } = require('../src/discovery-contract.js');
 const { validChatBody, validKey, validId, chatError, SSEParser, CHAT_BYTES, CHAT_DEADLINE_MS, CHAT_IDLE_MS } = require('../src/chat-protocol.js');
 const http = require('node:http');
 const { performance } = require('node:perf_hooks');
@@ -70,6 +71,7 @@ function allowed(method, target, body) {
   if (memoryPagesRoute(target)) return allowedMemoryPages(method, target, body);
   if (memoryRecallRoute(target)) return allowedMemoryRecall(method, target, body);
   if (memoryBridgeRoute(target)) return allowedMemoryBridge(method, target, body);
+  if (discoveryRoute(target)) return allowedDiscovery(method, target, body);
   if (allowedGenVR(method, target, body) || allowedChannel(method, target, body) || allowedPersonality(method, target, body) || allowedHire(method, target, body) || allowedBoard(method, target, body) || allowedConversation(method, target, body) || allowedAgentCard(method, target, body) || allowedTerminal(method, target, body) || allowedConnector(method, target, body) || allowedLocalImport(method, target, body) || allowedChatBoard(method, target, body) || allowedChatMemory(method, target, body) || allowedChatSearch(method, target, body) || allowedChatExport(method, target, body) || allowedChatSecrets(method, target, body)) return true;
   const id = /^\/api\/agents\/([^/?#]+)$/.exec(target)?.[1];
   if (method === 'PUT') return agentId(id) && record(body) && Object.keys(body).length === 2 && Object.keys(body).every(k => k === 'name' || k === 'expectedVersion') && name(body.name) && version(body.expectedVersion);
@@ -139,6 +141,7 @@ function project(target, status, body) {
   if (memoryPagesRoute(target)) return memoryPagesResponse(target, status, body);
   if (memoryRecallRoute(target)) return memoryRecallResponse(target, status, body);
   if (memoryBridgeRoute(target)) return memoryBridgeResponse(target, status, body);
+  if (discoveryRoute(target)) return discoveryResponse(target, status, body);
   if (target === '/api/agents' || (target.startsWith('/api/agents/') && target !== '/api/agents/name-suggestion')) {
     if (status === 200 && target === '/api/agents') {
       if (!Array.isArray(body?.agents) || body.agents.length > 10000) throw Error();

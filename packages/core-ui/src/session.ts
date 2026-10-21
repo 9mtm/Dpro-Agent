@@ -18,6 +18,7 @@ import { allowedChatSecrets, chatSecretsRoute, chatSecretsResponse, CLEANUP_PATH
 import { allowedMemoryPages, memoryPagesRoute, memoryPagesResponse } from './memory-pages-contract.js';
 import { allowedMemoryRecall, memoryRecallRoute, memoryRecallResponse } from './memory-recall-contract.js';
 import { allowedMemoryBridge, memoryBridgeRoute, memoryBridgeResponse } from './memory-bridge-contract.js';
+import { allowedDiscovery, discoveryRoute, discoveryResponse } from './discovery-contract.js';
 import { allowedTerminal, terminalPath, terminalRoute, terminalResponse, TerminalEventParser, TERMINAL_STREAM_MS } from './terminal-contract.js';
 import type { TerminalFrame } from './terminal-contract.js';
 import { allowedConversation, conversationPath, conversationRoute, conversationResponse, RunEventParser, RUN_IDLE_MS, RUN_STREAM_MS } from './conversation-contract.js';
@@ -75,6 +76,7 @@ export function allowedRequest(method: string, path: string, body?: unknown): bo
   if (memoryPagesRoute(path)) return allowedMemoryPages(method, path, body);
   if (memoryRecallRoute(path)) return allowedMemoryRecall(method, path, body);
   if (memoryBridgeRoute(path)) return allowedMemoryBridge(method, path, body);
+  if (discoveryRoute(path)) return allowedDiscovery(method, path, body);
   if (allowedGenVR(method, path, body) || allowedChannel(method, path, body) || allowedPersonality(method, path, body) || allowedHire(method, path, body) || allowedBoard(method, path, body) || allowedConversation(method, path, body) || allowedAgentCard(method, path, body) || allowedTerminal(method, path, body) || allowedConnector(method, path, body) || allowedLocalImport(method, path, body) || allowedChatBoard(method, path, body) || allowedChatMemory(method, path, body) || allowedChatSearch(method, path, body) || allowedChatExport(method, path, body) || allowedChatSecrets(method, path, body)) return true;
   const agentId = /^\/api\/agents\/([^/?#]+)$/.exec(path)?.[1];
   if (method === 'PUT') return validAgentId(agentId) && record(body) && Object.keys(body).length === 2 && Object.keys(body).every(k => k === 'name' || k === 'expectedVersion') && typeof body.name === 'string' && validatedDisplayName(body.name) === body.name && validVersion(body.expectedVersion);
@@ -147,6 +149,7 @@ function projectResponse(path: string, response: WireResponse): WireResponse {
   if (memoryPagesRoute(path)) return { status: response.status, body: memoryPagesResponse(path, response.status, response.body) };
   if (memoryRecallRoute(path)) return { status: response.status, body: memoryRecallResponse(path, response.status, response.body) };
   if (memoryBridgeRoute(path)) return { status: response.status, body: memoryBridgeResponse(path, response.status, response.body) };
+  if (discoveryRoute(path)) return { status: response.status, body: discoveryResponse(path, response.status, response.body) };
   if (path === '/api/agents' || (path.startsWith('/api/agents/') && path !== '/api/agents/name-suggestion')) return agentResponse(path, response);
   if (response.status === 200 && (path === '/api/auth/login' || path === '/api/auth/me')) {
     if (!record(response.body)) throw new SessionFailure('unavailable');
@@ -392,7 +395,7 @@ export class SessionClient {
     if ((conversationRoute(request.path) || chatSearchRoute(request.path) || chatExportRoute(request.path) || chatSecretsRoute(request.path)) && this.#state.user?.role === 'guest') throw new SessionFailure('blocked');
     if (request.path === CLEANUP_PATH && this.#state.user?.role !== 'owner') throw new SessionFailure('blocked');
     if ((request.path === '/api/chat/project-folders' || approvalRoute(request.path) || connectionsRoute(request.path) || templatePath(request.path) || mcpImportPath(request.path) || channelRoute(request.path) || connectorRoute(request.path) || localImportRoute(request.path) || chatBoardRoute(request.path) || chatMemoryRoute(request.path)) && this.#state.user?.role !== 'owner') throw new SessionFailure('blocked');
-    if ((memoryPagesRoute(request.path) || memoryRecallRoute(request.path) || memoryBridgeRoute(request.path)) && this.#state.user?.role !== 'owner') throw new SessionFailure('blocked');
+    if ((memoryPagesRoute(request.path) || memoryRecallRoute(request.path) || memoryBridgeRoute(request.path) || discoveryRoute(request.path)) && this.#state.user?.role !== 'owner') throw new SessionFailure('blocked');
     if (terminalRoute(request.path) && (this.#state.user?.role !== 'owner' || terminalPath(request.path)?.kind === 'stream')) throw new SessionFailure('blocked');
     if (request.method === 'PUT' && !conversationRoute(request.path) && this.#state.user?.role !== 'owner') throw new SessionFailure('blocked');
     if (request.method === 'POST' && request.path.startsWith('/api/memory/') && this.#state.user?.role !== 'owner') throw new SessionFailure('blocked');

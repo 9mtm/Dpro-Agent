@@ -43,6 +43,7 @@ import { genvrRoutes } from './routes/genvr.js';
 import { connectionsRoutes } from './routes/connections.js';
 import { agentConnectRoutes } from './routes/agent-connect.js';
 import { memoryImportRoutes } from './routes/memory-import.js';
+import { discoveryRoutes } from './routes/discovery.js';
 import { credentialsRoutes } from './routes/credentials.js';
 // import { onboardingRoutes } from './routes/onboarding.js'; // S0-Q.14: disabled, see below
 import { onboardingWebRoutes } from './routes/onboarding-web.js'; // F-05: web wizard after first owner login
@@ -323,6 +324,7 @@ export async function buildServer(options: BuildServerOptions = {}): Promise<Fas
   await fastify.register(genvrRoutes);
   await fastify.register(connectionsRoutes);
   await fastify.register(memoryImportRoutes); // CLI-02: owner-only safe import (preview -> quarantine proposals)
+  await fastify.register(discoveryRoutes); // DISCOVER-01: what coding agents left on this computer (owner, this computer only)
   await fastify.register(credentialsRoutes); // 🔐 Credentials System
   // SECURITY (S0-Q.14): the /api/onboarding/* routes started the interactive
   // terminal wizard inside the server process for any caller. They are disabled

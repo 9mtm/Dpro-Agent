@@ -43,6 +43,8 @@ async function bundle(directory:string):Promise<Bundle>{
  await visit(physical,0);files.sort((a,b)=>a.path<b.path?-1:a.path>b.path?1:0);const main=files.find(f=>f.path==='SKILL.md');if(!main)throw new SkillLibraryError('invalid_skill');
  const meta=metadata(main.content);return {...meta,files,hash:hash(JSON.stringify(files)),redactions,omitted};
 }
+/** DISCOVER-01: a skill folder's checked bundle (name, description, files, content hash). */
+export const skillBundle = (directory: string) => bundle(directory);
 export class CentralSkills {
  private scans=new Map<string,Scan>();private tail:Promise<unknown>=Promise.resolve();
  constructor(private home=os.homedir(),private root=dataPath('skill-library'),private roots?:{directory:string;origin:string}[]){}
@@ -89,6 +91,10 @@ export class CentralSkills {
  }
  async preview(owner:string,scanId:string,sourceId:string){const source=this.getScan(owner,scanId).sources.find(s=>s.id===sourceId);if(!source)throw new SkillLibraryError('source_not_found',404);const b=await bundle(source.directory),existing=await q.one<SkillRow>('SELECT * FROM central_skills WHERE name=? OR content_hash=?',b.name,b.hash);return {name:b.name,description:b.description,version:b.version,hash:b.hash,redactions:b.redactions,omitted:b.omitted,files:b.files,existing:existing?{id:existing.id,hash:existing.content_hash,identical:existing.content_hash===b.hash}:null};}
  async importSource(owner:string,scanId:string,sourceId:string,previewHash:string,replaceHash?:string){const source=this.getScan(owner,scanId).sources.find(s=>s.id===sourceId);if(!source)throw new SkillLibraryError('source_not_found',404);const b=await bundle(source.directory);if(b.hash!==previewHash)throw new SkillLibraryError('preview_changed',409);return this.store(b,source.origin,replaceHash);}
+ /** DISCOVER-01: add or update one skill folder found on this computer; no agent gets it until the owner assigns it. */
+ async installFolder(directory:string,origin:string,previewHash:string,replaceHash?:string){await this.initialize();const b=await bundle(directory);if(b.hash!==previewHash)throw new SkillLibraryError('preview_changed',409);return this.store(b,origin,replaceHash);}
+ /** DISCOVER-01: remove a skill from the library; refused while an agent has it. */
+ async remove(id:string){await this.initialize();if(await q.one('SELECT agent_id FROM central_agent_skills WHERE skill_id=?',id))throw new SkillLibraryError('skill_in_use',409);await q.run('DELETE FROM central_skills WHERE id=?',id);}
  async assignments(agentId:string){const row=await q.one<{revision:number}>('SELECT revision FROM central_skill_assignments WHERE agent_id=?',agentId);return {revision:row?.revision??0,selected:(await q.all<{skill_id:string}>('SELECT skill_id FROM central_agent_skills WHERE agent_id=? ORDER BY skill_id',agentId)).map(r=>r.skill_id)};}
  async assign(agentId:string,ids:string[],revision:number){return sql().tx(function*():Step<{revision:number}>{
   const current=yield* one<{revision:number}>('SELECT revision FROM central_skill_assignments WHERE agent_id=?',agentId);if((current?.revision??0)!==revision)throw new SkillLibraryError('version_conflict',409);

@@ -341,7 +341,7 @@ async function headOf(f: Found, home?: string): Promise<Head | null> {
   return head;
 }
 /** A Claude Code log without a folder: the folder another conversation in the same Claude project folder ran in. */
-async function claudeFolderCwd(dir: string, home?: string): Promise<string | null> {
+export async function claudeFolderCwd(dir: string, home?: string): Promise<string | null> {
   let names: string[]; try { names = await fs.readdir(dir); } catch { return null; }
   for (const name of names.filter(n => n.endsWith('.jsonl')).sort()) {
     const file = path.join(dir, name); const st = await statOf(file);
@@ -420,7 +420,7 @@ const TEMPORARY = /(^|[\\/])(tmp|temp|var[\\/]folders|scratchpad)([\\/]|$)/i;
  * folder, a drive or user folder, or a temporary folder.
  */
 export function rootDrawerKey(root: string | null, home = os.homedir()): string | null {
-  if (!root || root === home || segs(root).length < 3 || /^(?:[a-z]:)?[\\/]*(?:users|home)[\\/][^\\/]+[\\/]*$/i.test(root)) return null;
+  if (!root || root === home || segs(root).length < 3 || segs(root).at(-1)!.startsWith('.') || /^(?:[a-z]:)?[\\/]*(?:users|home)[\\/][^\\/]+[\\/]*$/i.test(root)) return null;
   const rel = path.relative(home, root);
   if (TEMPORARY.test(rel && !rel.startsWith('..') && !path.isAbsolute(rel) ? rel : root)) return null;
   const key = (segs(root).at(-1) ?? '').normalize('NFKD').toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-+|-+$/g, '').slice(0, 48);

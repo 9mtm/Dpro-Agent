@@ -311,7 +311,7 @@ async function runImport(job: SavedImport, extract: ExtractFn, home: string | un
       //   A folder no project claims gets its own project drawer (by folder name), never the owner's drawer.
       const root = (await projectRoot(s.cwd, home ?? os.homedir()))?.root ?? null;
       const project = matchProject(realCwd, root, projects);
-      const projectKey = project?.slug ?? (document ? null : rootDrawerKey(root, home ?? os.homedir()));
+      const projectKey = project?.slug ?? rootDrawerKey(root, home ?? os.homedir());
       const checkpoint: SessionCheckpoint = { id, source: found.source, archive: archiveName, dropped: dropped + (prior?.dropped ?? 0), previews: prior?.previews.filter(p => p.count !== undefined) ?? [] };
       const groups: [string | null, typeof memories][] = [[projectKey ? `project:${projectKey}` : null, memories.filter(m => m.scope === 'project')], [null, memories.filter(m => m.scope === 'owner')]];
       for (const [drawer, list] of groups) {

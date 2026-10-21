@@ -100,6 +100,7 @@ import { boardCheckTool, boardChecklistTool, boardCommentTool, boardMoveTool, bo
 import {
   skillInstallTool,
 } from './skill-install.js';
+import { discoveryTool, discoveryApplyTool } from './discovery.js';
 
 import { getMcpTools, getMcpToolsSync, isMcpToolName } from '../mcp-client/index.js';
 
@@ -116,6 +117,7 @@ const CORE_TOOLS: Tool[] = [
   memoryDoctorTool, memoryDoctorFixTool, memoryMoveTool,
   memoryScopesTool, memoryScopeApplyTool, memoryAccessApplyTool, memoryScopeForgetTool,
   memoryBridgeTool, memoryBridgeApplyTool, // MEM-BRIDGE-01: owner-only; apply needs owner approval
+  discoveryTool, discoveryApplyTool, // DISCOVER-01: what coding agents left on this computer; owner-only; apply needs owner approval
   memoryReviewTool, memoryReviewDecideTool, memoryReviewRoutineTool, memoryGraphReviewTool, memoryGraphTopicTool, memoryGraphSyncTool, memoryRecallTool, // owner's review inbox, topics + reply trace; decisions need owner approval
   desktopControlTool,
   storageSaveTool, storageSearchTool, storageDeleteTool,

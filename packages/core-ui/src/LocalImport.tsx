@@ -3,6 +3,7 @@ import { ViewTabs } from './ViewTabs';
 import { LocalImportController } from './local-import';
 import { AutomaticProjectImport } from './AutomaticProjectImport';
 import { ProjectFilesImport } from './ProjectFilesImport';
+import { Discovery } from './Discovery';
 import { LOCAL_SOURCES } from './local-import-contract.js';
 import type { LocalSession, LocalSource } from './local-import-contract.js';
 import type { SessionClient } from './session';
@@ -26,7 +27,7 @@ export function LocalImport({ client, active, onReview }: { client: SessionClien
 
 export function LocalImportView({ controller: c, active, onReview, client }: { controller: LocalImportController; active: boolean; onReview: () => void; client?: SessionClient }) {
   const s = useSyncExternalStore(c.subscribe, c.getSnapshot, c.getSnapshot);
-  const [importKind,setImportKind]=useState<'conversations'|'files'>('files');
+  const [importKind,setImportKind]=useState<'found'|'conversations'|'files'>(client ? 'found' : 'files');
   const [source, setSource] = useState<'all' | LocalSource>('all');
   const [query, setQuery] = useState('');
   const [onlyNew, setOnlyNew] = useState(true);
@@ -42,9 +43,10 @@ export function LocalImportView({ controller: c, active, onReview, client }: { c
       <div><h3>Import from other agents</h3>
         <p className="fine-print">Choose conversations or project documents from this computer using the tabs below. Secrets are removed first, a private copy is kept in <code>{s.archive || '~/.dpro/imports'}</code>, and the local model suggests lasting memories. Manual imports wait for your approval. Automatic import saves directly when enabled. The original files are never changed.</p></div>
     </div>
-    <ViewTabs id="import-source" label="Import source type" value={importKind} onChange={setImportKind} tabs={[{value:'conversations',label:'Conversations'},{value:'files',label:'Project files'}]}/>
+    <ViewTabs id="import-source" label="Import source type" value={importKind} onChange={setImportKind} tabs={[{value:'found',label:'Found on this computer'},{value:'conversations',label:'Conversations'},{value:'files',label:'Project files'}]}/>
     <div id="import-source-panel" role="tabpanel" aria-labelledby={`import-source-${importKind}`}>
-    <p className="fine-print">{importKind === 'conversations' ? 'Saved conversations from Claude Code, Codex and other agents.' : 'Project notes: CLAUDE.md, AGENTS.md and handoff files.'}</p>
+    {importKind !== 'found' && <p className="fine-print">{importKind === 'conversations' ? 'Saved conversations from Claude Code, Codex and other agents.' : 'Project notes: CLAUDE.md, AGENTS.md and handoff files.'}</p>}
+    {client && importKind === 'found' && <Discovery client={client} active={active}/>}
     {client && importKind==='files' && <><AutomaticProjectImport client={client}/><ProjectFilesImport client={client} controller={c} busy={!!running}/></>}
     {s.progress && <p role="status">Processed {s.progress.done} of {s.progress.total} selected sources · {s.progress.proposed} {s.job?.automatic?'memories processed automatically.':'memories proposed for review.'}</p>}
     {s.job && <div className="local-import-job" role="status" data-status={s.job.status}>

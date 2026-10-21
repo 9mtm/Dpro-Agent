@@ -1,0 +1,16 @@
+export type DiscoveryKind = 'memory' | 'note' | 'skill' | 'mcp' | 'ssh';
+export type DiscoveryState = 'new' | 'changed' | 'decision' | 'imported' | 'ignored' | 'gone';
+export type DiscoveryItem = { id: string; kind: DiscoveryKind; name: string; from: string; rootId: string | null; to: string; state: DiscoveryState; updatedAt: string };
+export type DiscoveryRoot = { id: string; name: string; path: string | null; project: string | null; count: number; fresh: number; watch: boolean };
+export type DiscoverySettings = { watch: boolean; intervalMinutes: 15 | 30 | 60 };
+export type DiscoveryView = { scannedAt: string | null; ms: number; settings: DiscoverySettings; roots: DiscoveryRoot[]; items: DiscoveryItem[] };
+export type DiscoveryPreview = { id: string; kind: DiscoveryKind; name: string; from: string; to: string; state: DiscoveryState; text: string; truncated: boolean; secrets: string[]; blocked: string | null; previewHash: string };
+export type DiscoveryResult = { id: string; ok: boolean; state?: DiscoveryState; code?: string; jobId?: string };
+export const DISCOVERY_PATH: '/api/memory/import/discovery';
+export const DISCOVERY_KINDS: readonly DiscoveryKind[];
+export const DISCOVERY_STATES: readonly DiscoveryState[];
+export const MAX_DISCOVERY_IMPORT: number;
+export function discoveryPath(path: string): { kind: 'list' | 'scan' | 'settings' | 'import' } | { kind: 'root' | 'item' | 'ignore' | 'remove' | 'keep'; id: string } | null;
+export function discoveryRoute(path: string): boolean;
+export function allowedDiscovery(method: string, path: string, body?: unknown): boolean;
+export function discoveryResponse(path: string, status: number, body: unknown): unknown;
