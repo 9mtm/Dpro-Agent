@@ -111,7 +111,7 @@ export async function removePinnedFact(ownerId: string, id: string): Promise<Pin
 /** The pinned facts of one reply: the prompt block and which facts it holds (for the reply trace). */
 export interface ReplyPinnedFacts {
   text: string;
-  facts: Array<{ id: string; scope: string; updatedAt: string }>;
+  facts: Array<{ id: string; scope: string; text: string; updatedAt: string }>;
 }
 
 /**
@@ -157,7 +157,7 @@ export async function pinnedFactsForReply(ownerId: string | null | undefined, pr
     const add = (title: string, lines: Array<{ line: string; fact: PinnedFact }>) => {
       if (!lines.length) return;
       sections.push({ title, facts: lines.map((l) => l.line) });
-      for (const l of lines) used.push({ id: l.fact.id, scope: l.fact.scope, updatedAt: l.fact.updatedAt });
+      for (const l of lines) used.push({ id: l.fact.id, scope: l.fact.scope, text: l.fact.text, updatedAt: l.fact.updatedAt });
     };
     add('Company', companyLines);
     if (dept) add(dept.title, deptLines);

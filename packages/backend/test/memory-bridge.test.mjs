@@ -184,7 +184,14 @@ test('MCP: switched off -> refused; on -> read tools serve the project of the fo
   assert.equal(brief.isError, false, brief.text);
   assert.match(brief.text, /Alpha deploys with the release script/);
   assert.ok(!brief.text.includes(SECRET));
-  assert.match((await claude.tool('pinned_facts')).text, /release script/);
+  // pinned_facts = the owner's scope facts (MEM-SCALE-01), not the drawer's memories.
+  assert.match((await claude.tool('pinned_facts')).text, /not pinned facts for this project yet/);
+  assert.equal((await call(OWNER, 'POST', '/api/memory/scopes/pinned', { scope: 'company', text: 'We review every change.' })).statusCode, 201);
+  assert.equal((await call(OWNER, 'POST', '/api/memory/scopes/pinned', { scope: `project:${project.slug}`, text: `Alpha ships weekly. ${SECRET}` })).statusCode, 201);
+  const pinned = (await claude.tool('pinned_facts')).text;
+  assert.match(pinned, /We review every change\.[\s\S]*Alpha ships weekly\./);
+  assert.ok(!pinned.includes('release script') && !pinned.includes(SECRET));
+  assert.match((await claude.tool('project_brief')).text, /### Pinned facts\n- We review every change\.\n- Alpha ships weekly\.[\s\S]*### Approved project memory\n[\s\S]*release script/);
   assert.match((await claude.tool('memory_search', { query: 'release script' })).text, /release script/);
   await claude.close();
 
@@ -204,7 +211,7 @@ test('MCP write tools: a proposal lands in review (not in memory); a Codex hando
   assert.match(p.text, /owner reviews it/);
   const list = await pending();
   assert.equal(list.length, before + 1);
-  assert.ok(!(await codex.tool('pinned_facts')).text.includes('PostgreSQL 17'), 'not memory before approval');
+  assert.ok(!(await codex.tool('project_brief')).text.includes('PostgreSQL 17'), 'not memory before approval');
   const h = await codex.tool('handoff_write', { done: ['Migrated the users table'], next: [`Run the backfill with ${SECRET}`] });
   assert.equal(h.isError, false, h.text);
   await codex.close();
@@ -218,7 +225,7 @@ test('MCP write tools: a proposal lands in review (not in memory); a Codex hando
 
   await approveAll();
   const again = await mcp('codex', folder);
-  assert.match((await again.tool('pinned_facts')).text, /PostgreSQL 17/);
+  assert.match((await again.tool('project_brief')).text, /PostgreSQL 17/);
   await again.close();
 });
 

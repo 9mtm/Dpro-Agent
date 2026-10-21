@@ -30,8 +30,8 @@ const INSTANCE_CONTEXT = 'agent-player-instance-v1';
 
 const list = (what: string) => ({ type: 'array', items: { type: 'string' }, description: `${what} (up to 8 short lines)` });
 export const BRIDGE_TOOL_DEFINITIONS = [
-  { name: 'project_brief', description: "The Dpro project brief for the folder you work in: the owner's approved facts for this project and the newest handoff note from any agent. Read it at the start of a session.", inputSchema: { type: 'object', properties: {} } },
-  { name: 'pinned_facts', description: "The owner's approved facts for this project (most important first).", inputSchema: { type: 'object', properties: {} } },
+  { name: 'project_brief', description: "The Dpro project brief for the folder you work in: the owner's pinned facts (company, department, project), the approved project memory and the newest handoff note from any agent. Read it at the start of a session.", inputSchema: { type: 'object', properties: {} } },
+  { name: 'pinned_facts', description: "The facts the owner pinned for this work: company rules, the project's department and the project itself. They hold unless the owner changes them.", inputSchema: { type: 'object', properties: {} } },
   { name: 'latest_handoff', description: 'The newest done / left / next note left in this project by any agent (Dpro, Claude Code, Codex, Gemini, Antigravity).', inputSchema: { type: 'object', properties: {} } },
   { name: 'memory_search', description: "Search this project's approved Dpro memory.", inputSchema: { type: 'object', properties: { query: { type: 'string' }, limit: { type: 'integer', minimum: 1, maximum: 20 } }, required: ['query'] } },
   { name: 'memory_propose', description: 'Propose a lasting fact, decision or correction for this project. It is NOT saved directly: the owner reviews it in Dpro first. One idea per call; never include keys, passwords or tokens.', inputSchema: { type: 'object', properties: { content: { type: 'string', maxLength: 4000 } }, required: ['content'] } },

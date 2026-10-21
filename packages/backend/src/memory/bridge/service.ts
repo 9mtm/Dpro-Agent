@@ -212,11 +212,11 @@ export async function mcpCall(c: unknown, token: unknown, cwd: unknown, tool: un
   switch (tool as McpTool) {
     case 'project_brief': {
       const b = await projectBrief(ownerId, project);
-      return { text: briefMarkdown(b), data: { project: { id: project.id, name: b.name }, facts: b.facts.length, handoff: !!b.handoff } };
+      return { text: briefMarkdown(b), data: { project: { id: project.id, name: b.name }, facts: b.facts.length, memories: b.memories.length, handoff: !!b.handoff } };
     }
     case 'pinned_facts': {
       const facts = await pinnedFacts(ownerId, project);
-      return { text: facts.length ? facts.map((f) => `- ${f.content}`).join('\n') : 'No approved facts for this project yet.', data: { facts } };
+      return { text: facts.length ? facts.map((f) => `- ${f.content}`).join('\n') : 'The owner has not pinned facts for this project yet.', data: { facts } };
     }
     case 'latest_handoff': {
       const h = await projectHandoff(ownerId, project.id);
