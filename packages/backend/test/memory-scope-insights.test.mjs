@@ -488,6 +488,12 @@ test('7. review inbox at scale: groups, accept all routine (preview -> confirm),
   assert.deepEqual(assigned.data.groups.map((x) => x.key), [`department:${mkt.id}`]);
   assert.deepEqual((await T.memoryReviewTool.execute({ op: 'assigned' }, ctxFor('ms-main'))).data.groups, []);
   await T.memorySaveTool.execute({ content: 'Alpha posts tag the brand', type: 'fact', importance: 4, drawer: PD }, writer);
+  // A run sees and accepts only reviews of drawers open in it (and kinds it may write).
+  const ownerOnly = ctxFor('ms-main', [{ kind: 'owner' }]);
+  assert.ok(!(await T.memoryReviewTool.execute({ op: 'groups', by: 'scope' }, ownerOnly)).data.groups.some((x) => x.key === PD));
+  assert.equal((await T.memoryReviewTool.execute({ op: 'preview_routine', scope: PD }, ownerOnly)).data.count, 0);
+  const readOnly = { ...ctxFor('ms-main'), permissions: { ...(await loadRunPermissions('ms-main')), memoryWrite: ['owner'] } };
+  assert.equal((await T.memoryReviewTool.execute({ op: 'preview_routine', scope: PD }, readOnly)).data.count, 0, 'may not write the project drawer');
   const tp = await T.memoryReviewTool.execute({ op: 'preview_routine', scope: PD }, ctxFor('ms-main'));
   assert.equal(tp.data.count, 1);
   assert.ok((await T.memoryReviewRoutineTool.execute({ scope: PD, preview_hash: tp.data.previewHash }, { ...ctxFor('ms-main'), userId: MEMBER })).error);

@@ -37,6 +37,11 @@ import { ScopeInputError, acceptRoutine, assignedReviews, previewAcceptRoutine, 
 
 const fail = (tool: string, msg: string): ToolResult => ({ content: [{ type: 'text', text: `${tool} refused: ${msg}` }], error: msg });
 const ok = (text: string, data: Record<string, unknown>): ToolResult => ({ content: [{ type: 'text', text }], data: { success: true, ...data } } as ToolResult);
+/** The run's review view: open drawers, and the drawer kinds it may write (MEM-GAPS-02). */
+const runLimit = (context?: ToolExecutionContext) => {
+  const write = toolMemoryWriteKinds(context);
+  return { drawers: toolMemoryDrawers(context).map(drawerId), ...(write ? { writeKinds: write } : {}) };
+};
 const oneLine = (s: string, n = 300) => { const t = String(s ?? '').replace(/\s+/g, ' ').trim(); return t.length > n ? `${t.slice(0, n - 1)}…` : t; };
 
 /** The owner's id when this is the owner's own turn, else a refusal text. */
@@ -82,7 +87,7 @@ Only the memory drawers open for this conversation are read.`,
   input_schema: {
     type: 'object',
     properties: {
-      op: { type: 'string', enum: ['conflicts', 'groups', 'assigned', 'preview_routine'], description: 'conflicts (default); groups: waiting reviews by scope / department / agent (counts); assigned: departments you review; preview_routine: what "accept all routine" would approve' },
+      op: { type: 'string', enum: ['conflicts', 'groups', 'assigned', 'preview_routine'], description: 'conflicts (default); groups: waiting reviews by scope / department / agent (counts; drawers open here only); assigned: departments you review; preview_routine: what "accept all routine" would approve' },
       by: { type: 'string', enum: ['scope', 'department', 'agent'], description: 'groups: how to group' },
       scope: { type: 'string', description: 'preview_routine: a drawer id, company or department:<id>' },
       agent: { type: 'string', description: 'preview_routine: only reviews this agent made' },
@@ -94,19 +99,19 @@ Only the memory drawers open for this conversation are read.`,
     if (typeof owner !== 'string') return fail('memory_review', owner.refused);
     try {
       if (params?.op === 'groups') {
-        const g = await reviewGroups(owner, params.by ?? 'scope');
+        const g = await reviewGroups(owner, params.by ?? 'scope', runLimit(context));
         const text = g.groups.length
           ? g.groups.map((x) => `- ${x.key}: ${x.count} waiting (${x.conflicts} conflicts, ${x.routine} routine)${x.reviewerAgentId ? `, reviewer ${x.reviewerAgentId}` : ''}`).join('\n')
           : 'Nothing waiting for review.';
         return ok(text, g as unknown as Record<string, unknown>);
       }
       if (params?.op === 'assigned') {
-        const groups = context?.agentId ? await assignedReviews(owner, context.agentId) : [];
+        const groups = context?.agentId ? await assignedReviews(owner, context.agentId, runLimit(context)) : [];
         const text = groups.length ? groups.map((x) => `- ${x.key}: ${x.count} waiting (${x.conflicts} conflicts, ${x.routine} routine)`).join('\n') : 'You review no department, or nothing waits there.';
         return ok(text, { groups });
       }
       if (params?.op === 'preview_routine') {
-        const p = await previewAcceptRoutine(owner, { scope: params.scope, agent: params.agent });
+        const p = await previewAcceptRoutine(owner, { scope: params.scope, agent: params.agent }, runLimit(context));
         return ok(`${p.count} routine review(s) would be accepted. To accept them, call memory_review_routine with the same scope/agent and previewHash ${p.previewHash} (the owner approves the call).`, p as unknown as Record<string, unknown>);
       }
     } catch (err) {
@@ -181,7 +186,7 @@ important facts, imports and file edits are never accepted this way.`,
     if (typeof owner !== 'string') return fail('memory_review_routine', owner.refused);
     try {
       // The owner's approval of this call is the explicit confirm; the previewHash binds it to the list shown.
-      const out = await acceptRoutine(owner, { scope: params.scope, agent: params.agent, expectedPreviewHash: params.preview_hash }, `agent:${context?.agentId ?? 'unknown'}`);
+      const out = await acceptRoutine(owner, { scope: params.scope, agent: params.agent, expectedPreviewHash: params.preview_hash }, `agent:${context?.agentId ?? 'unknown'}`, runLimit(context));
       audit(context, 'memory_proposal.accept_routine', 'memory_proposal', owner, { approved: out.approved.length, skipped: out.skipped.length });
       return ok(`Accepted ${out.approved.length} routine review(s)${out.skipped.length ? `; ${out.skipped.length} changed meanwhile and were left` : ''}.`, out as unknown as Record<string, unknown>);
     } catch (err) {
