@@ -38,8 +38,9 @@ import { LocalMcpImport, LocalMcpError, type FoundMcp } from '../mcp-client/loca
 import { deleteServer } from '../mcp-client/service.js';
 import { approveProposal, createChangeProposal, MemoryFileError, resolveFileAgent, type MemoryChange } from '../memory/memory-files.js';
 import { parseDrawerId, type DrawerRef } from '../memory/drawers.js';
+import * as P from './places.js';
 
-export const DISCOVERY_KINDS = ['memory', 'note', 'skill', 'mcp', 'ssh'] as const;
+export const DISCOVERY_KINDS = ['memory', 'note', 'tool', 'skill', 'mcp', 'ssh'] as const;
 export type DiscoveryKind = (typeof DISCOVERY_KINDS)[number];
 export type DiscoveryState = 'new' | 'changed' | 'decision' | 'imported' | 'ignored' | 'gone';
 export class DiscoveryError extends Error { constructor(readonly code: string, readonly status = 400) { super(code); } }
@@ -52,10 +53,11 @@ type Found = {
   mcp?: FoundMcp & { secrets: string[] };
   ssh?: { alias: string; host: string | null; user: string | null; port: number | null; key: string | null };
   note?: { root: string };
+  tool?: { type: 'command' | 'sub-agent'; skillName: string; content: string };
   skillTaken?: { agents: number };
 };
 export type DiscoveryItem = { id: string; kind: DiscoveryKind; name: string; from: string; rootId: string | null; to: string; state: DiscoveryState; updatedAt: string };
-export type DiscoveryRoot = { id: string; name: string; path: string | null; project: string | null; count: number; fresh: number; watch: boolean };
+export type DiscoveryRoot = { id: string; name: string; path: string | null; project: string | null; count: number; fresh: number; watch: boolean; group?: { members: { id: string; name: string; path: string }[] }; hidden?: string[] };
 type Row = { item_id: string; kind: DiscoveryKind; name: string; root: string | null; state: 'imported' | 'ignored' | 'kept'; ref: string | null; hash: string | null };
 type Scan = { at: number; ms: number; found: Found[]; leftOut: number };
 
@@ -76,7 +78,8 @@ function init() {
   })().catch((e) => { ready = undefined; throw e; });
 }
 
-const homeRel = (home: string, file: string) => { const r = path.relative(home, file); return r && !r.startsWith('..') && !path.isAbsolute(r) ? `~${path.sep}${r}` : file; };
+const homeRel = (home: string, file: string) => { if (!path.isAbsolute(file)) return file; // a path from another system (e.g. C:\\… on a Mac) as it is
+  const r = path.relative(home, file); return r && !r.startsWith('..') && !path.isAbsolute(r) ? `~${path.sep}${r}` : file; };
 const isDir = async (p: string) => (await fs.lstat(p).catch(() => null))?.isDirectory() === true;
 const isFile = async (p: string) => (await fs.lstat(p).catch(() => null))?.isFile() === true;
 async function readText(file: string, max: number): Promise<{ text: string; mtime: string } | null> {
@@ -151,21 +154,27 @@ async function memoryFiles(home: string, roots: Map<string, ProjectRoot>): Promi
 const NOT_OURS = /(^|\/)(\.local-runtime|[^/]*-archive[^/]*|archives?|worktrees|[^/]*-wt|external|external-sources|other-programs|references?|third[_-]party|examples?|fixtures?|tmp|backups?|_migration)(\/|$)|\/docs\/code\//i;
 const WALK_SKIP = new Set(['node_modules', 'vendor', '.git', 'dist', 'build', '.next', 'storage', 'public', '__pycache__', 'venv', '.venv', 'target', 'coverage', 'Pods', '.cache', 'Library', '.Trash', 'Applications', 'Pictures', 'Movies', 'Music']);
 const NOTE_FILE = new Set([...NOTE_NAMES, 'CLAUDE.local.md', 'MEMORY.md']);
-/** Where people keep projects, on macOS, Windows and Linux. */
-const PROJECT_PLACES = ['Documents', 'Desktop', 'Developer', 'Projects', 'projects', 'code', 'Code', 'src', 'work', 'repos', 'Sites', 'dev', 'source'];
 /**
  * Every project note of the owner's own projects: CLAUDE / AGENTS / GEMINI / HANDOFF / … .md anywhere in a
  * project (also sub-packages), GitHub Copilot instructions and Cursor rules. Each belongs to its git root.
  */
-async function projectNotes(home: string, extra: string[]): Promise<{ found: Found[]; leftOut: number }> {
+async function projectNotes(home: string, known: string[], allowed: { allow: string[]; exclude: string[] }, kinds: P.Kinds): Promise<{ found: Found[]; leftOut: number }> {
   const out: Found[] = []; let leftOut = 0, visited = 0; const until = Date.now() + 30_000;
-  // Known project folders first, then the usual places; a folder already walked is not walked again.
-  const starts = [...new Set([...extra, ...PROJECT_PLACES.map((p) => path.join(home, p))])];
+  // The projects the owner already works on with agents, then the folders the owner allowed; nothing else.
+  const starts = [...new Set([...known, ...allowed.allow])];
   const walked = new Set<string>();
   const seen = new Set<string>(); const roots = new Map<string, string>();
-  const rootOf = async (dir: string) => { if (!roots.has(dir)) roots.set(dir, (await projectRoot(dir, home))?.root ?? dir); return roots.get(dir)!; };
+  // A file belongs to its git project; outside git, to the nearest project Dpro already knows, else to its own folder.
+  const knownRoots = [...known].sort((x, y) => y.length - x.length);
+  const rootOf = async (dir: string) => {
+    if (roots.has(dir)) return roots.get(dir)!;
+    const pr = await projectRoot(dir, home);
+    const git = pr && pr.root !== dir ? pr.root : (await fs.lstat(path.join(dir, '.git')).catch(() => null)) ? dir : null;
+    const root = git ?? knownRoots.find((k) => dir === k || dir.startsWith(k + path.sep)) ?? dir;
+    roots.set(dir, root); return root;
+  };
   const walk = async (dir: string, depth: number): Promise<void> => {
-    if (depth > 12 || visited > 600_000 || out.length >= 2000 || Date.now() > until || walked.has(dir)) return;
+    if (depth > 12 || visited > 600_000 || out.length >= 2000 || Date.now() > until || walked.has(dir) || P.isExcluded(dir, allowed.exclude)) return;
     walked.add(dir);
     let entries; try { entries = await fs.readdir(dir, { withFileTypes: true }); } catch { return; }
     visited += entries.length;
@@ -173,16 +182,27 @@ async function projectNotes(home: string, extra: string[]): Promise<{ found: Fou
     for (const e of entries) {
       const p = path.join(dir, e.name);
       if (e.isSymbolicLink()) continue;
-      if (e.isDirectory()) { if (!WALK_SKIP.has(e.name) && (!e.name.startsWith('.') || e.name === '.github' || e.name === '.cursor' || e.name === 'rules' && slash.endsWith('/.cursor'))) await walk(p, depth + 1); continue; }
+      if (e.isDirectory()) {
+        const toolDir = slash.endsWith('/.claude') && (e.name === 'commands' || e.name === 'agents');
+        if (!WALK_SKIP.has(e.name) && (!e.name.startsWith('.') || e.name === '.github' || e.name === '.cursor' || e.name === '.claude') || toolDir) await walk(p, depth + 1);
+        continue;
+      }
       if (!e.isFile()) continue;
-      const hit = NOTE_FILE.has(e.name) || (e.name === 'copilot-instructions.md' && slash.endsWith('/.github')) || (slash.endsWith('/.cursor/rules') && /\.mdc?$/i.test(e.name));
-      if (!hit || seen.has(p)) continue;
+      const tool = /\/\.claude\/(commands|agents)$/.exec(slash)?.[1];
+      const isNote = !slash.includes('/.claude') && (NOTE_FILE.has(e.name) || (e.name === 'copilot-instructions.md' && slash.endsWith('/.github')) || (slash.endsWith('/.cursor/rules') && /\.mdc?$/i.test(e.name)));
+      const isTool = !!tool && /\.md$/i.test(e.name);
+      if ((!isNote || !kinds.notes) && (!isTool || !kinds.tools) || seen.has(p)) continue;
       seen.add(p);
       if (NOT_OURS.test(p.split(path.sep).join('/'))) { leftOut++; continue; }
-      const root = await rootOf(dir);
+      const root = await rootOf(isTool ? path.dirname(path.dirname(dir)) : dir);
       if (root === home) continue;
       const t = await readText(p, MAX_NOTE); if (!t) continue;
-      out.push({ id: itemId('note', path.relative(home, p)), kind: 'note', name: path.relative(root, p), from: 'project notes', root, file: p, hash: sha(t.text), updatedAt: t.mtime, note: { root } });
+      if (isTool) {
+        const type = tool === 'agents' ? 'sub-agent' as const : 'command' as const;
+        const stem = e.name.replace(/\.md$/i, '');
+        const skillName = `${path.basename(root)}-${stem}`.toLowerCase().replace(/[^a-z0-9._-]+/g, '-').replace(/^[^a-z0-9]+/, '').slice(0, 90);
+        out.push({ id: itemId('tool', path.relative(home, p)), kind: 'tool', name: `${stem} (${type})`, from: path.relative(root, p), root, file: p, hash: sha(t.text), updatedAt: t.mtime, tool: { type, skillName, content: t.text } });
+      } else out.push({ id: itemId('note', path.relative(home, p)), kind: 'note', name: path.relative(root, p), from: 'project notes', root, file: p, hash: sha(t.text), updatedAt: t.mtime, note: { root } });
     }
   };
   for (const s of starts) if (await isDir(s)) await walk(s, 0);
@@ -297,11 +317,13 @@ export async function scan(userId: string, opts: DiscoveryOptions = {}): Promise
     const mcpRoots = await Promise.all([...new Set(mcp.map((m) => m.root).filter((r): r is string => !!r && !roots.has(r)))].map((r) => projectRoot(r, home)));
     moved = await relocateGoneRoots([...mcpRoots, ...here()], home);
     for (const m of mcp) { const to = m.root ? moved.get(m.root) : null; if (to) m.root = to.root; }
-    const pn = await projectNotes(home, list);
+    const kinds = await P.kinds(userId);
+    const allowed = await P.allowedFolders(userId);
+    const pn = await projectNotes(home, list.filter((r) => !P.isExcluded(r, allowed.exclude)), allowed, kinds);
     for (const n of pn.found) if (n.root) roots.add(n.root);
-    const all = [...roots].filter((r) => r !== home);
-    const found = [...mem, ...await notes(home, all), ...pn.found, ...await skills(home, all), ...mcp, ...await sshHosts(home)]
-      .filter((f) => !unwatched.has(rootId(f.root)));
+    const all = [...roots].filter((r) => r !== home && !P.isExcluded(r, allowed.exclude));
+    const found = [...mem, ...(kinds.notes ? await notes(home, all) : []), ...pn.found, ...(kinds.skills ? await skills(home, all) : []), ...(kinds.mcp ? mcp : []), ...(kinds.ssh ? await sshHosts(home) : [])]
+      .filter((f) => !unwatched.has(rootId(f.root)) && !(f.root && P.isExcluded(f.root, allowed.exclude)));
     const s: Scan = { at: Date.now(), ms: Date.now() - t0, found, leftOut: pn.leftOut };
     scans.set(userId, s);
     return s;
@@ -310,7 +332,7 @@ export async function scan(userId: string, opts: DiscoveryOptions = {}): Promise
   return work;
 }
 
-type Ctx = { projects: Project[]; home: string };
+type Ctx = { projects: Project[]; home: string; groupOf?: Map<string, P.Group> };
 /** A Dpro skill with this name, and whether this page added it (only then may it be replaced). */
 async function skillInDpro(userId: string, name: string, saved: Row | undefined) {
   const s = await q.one<{ id: string; content_hash: string }>('SELECT id, content_hash FROM central_skills WHERE name = ?', name).catch(() => undefined);
@@ -320,8 +342,10 @@ async function skillInDpro(userId: string, name: string, saved: Row | undefined)
 }
 /** Where an item goes in Dpro, and the memory drawer for memory files. */
 function destination(f: Pick<Found, 'kind' | 'root' | 'memory' | 'mcp'> & { skillTaken?: { agents: number } }, ctx: Ctx): { to: string; drawer: string } {
-  const project = f.root ? matchProject(f.root, f.root, ctx.projects) : undefined;
-  const key = project?.slug ?? rootDrawerKey(f.root, ctx.home);
+  const group = f.root ? ctx.groupOf?.get(f.root) : undefined;
+  // A merged project: the first of its folders that is a Dpro project, else the merged project's own drawer.
+  const project = group ? group.roots.map((r) => matchProject(r, r, ctx.projects)).find(Boolean) : f.root ? matchProject(f.root, f.root, ctx.projects) : undefined;
+  const key = project?.slug ?? (group ? group.slug : rootDrawerKey(f.root, ctx.home));
   const projectDrawer = key ? `project:${key}` : 'owner';
   const label = key ? `Projects · ${project?.name ?? key}` : 'About you';
   if (f.kind === 'memory') {
@@ -331,6 +355,7 @@ function destination(f: Pick<Found, 'kind' | 'root' | 'memory' | 'mcp'> & { skil
     return { to: label, drawer: projectDrawer };
   }
   if (f.kind === 'note') return { to: `${label} · read by the local model`, drawer: projectDrawer };
+  if (f.kind === 'tool') return { to: 'Skills · off until assigned', drawer: '' };
   if (f.kind === 'skill') return { to: f.skillTaken ? `Skills · replaces the skill this page added${f.skillTaken.agents ? ` (used by ${f.skillTaken.agents} agent${f.skillTaken.agents === 1 ? '' : 's'})` : ''}` : 'Skills · off until assigned', drawer: '' };
   if (f.kind === 'mcp') return { to: `MCP · off${f.mcp?.secrets.length ? ' · secret → Credentials' : ''}`, drawer: '' };
   return { to: 'SSH hosts · names only', drawer: '' };
@@ -348,26 +373,37 @@ async function stateOf(f: Found, row: Row | undefined, mcp: LocalMcpImport): Pro
     return s ? (s.content_hash === f.hash ? 'imported' : 'decision') : 'decision';
   }
   if (f.kind === 'mcp') return f.mcp?.input && await mcp.existing(f.mcp.input) ? 'imported' : 'decision';
+  if (f.kind === 'tool') return 'decision';
   return 'new';
 }
 
-export type DiscoveryView = { scannedAt: string | null; ms: number; leftOut: number; settings: { watch: boolean; intervalMinutes: number }; roots: DiscoveryRoot[]; items: DiscoveryItem[] };
+export type DiscoveryView = { scannedAt: string | null; ms: number; leftOut: number; settings: { watch: boolean; intervalMinutes: number; kinds: P.Kinds }; allowedFolders: number; roots: DiscoveryRoot[]; items: DiscoveryItem[]; suggestions: { key: string; a: { id: string; name: string }; b: { id: string; name: string }; reason: string }[] };
 /** The page: projects, items and their state (scans first when nothing was read yet). */
 export async function view(userId: string, opts: DiscoveryOptions & { rescan?: boolean } = {}): Promise<DiscoveryView> {
   await init();
   const s = !opts.rescan && scans.get(userId) || await scan(userId, opts);
   const home = opts.home ?? os.homedir(); const mcp = mcpFor(opts);
-  const ctx: Ctx = { projects: await listProjects(userId).catch(() => []), home };
+  const gs = await P.groups(userId);
+  const groupOf = new Map<string, P.Group>(); for (const g of gs) for (const r of g.roots) groupOf.set(r, g);
+  const ctx: Ctx = { projects: await listProjects(userId).catch(() => []), home, groupOf };
+  // A merged project's folders show as one project (its group id).
+  const shownRoot = (root: string | null) => (root && groupOf.has(root) ? groupOf.get(root)!.id : root ? rootId(root) : null);
+  const hidden = await P.hiddenKinds(userId);
   const saved = await rows(userId);
   const items: DiscoveryItem[] = [];
   const seen = new Set<string>();
   for (const f of s.found) {
     seen.add(f.id);
-    items.push({ id: f.id, kind: f.kind, name: redactImportText(f.name).text, from: redactImportText(f.from).text, rootId: f.root ? rootId(f.root) : null, to: destination(f, ctx).to, state: await stateOf(f, saved.get(f.id), mcp), updatedAt: f.updatedAt });
+    const rid = shownRoot(f.root);
+    if (hidden.get(rid ?? 'computer')?.has(f.kind)) continue;
+    items.push({ id: f.id, kind: f.kind, name: redactImportText(f.name).text, from: redactImportText(f.from).text, rootId: rid, to: destination(f, ctx).to, state: await stateOf(f, saved.get(f.id), mcp), updatedAt: f.updatedAt });
   }
   const unwatched = new Set((await q.all<{ root_id: string }>('SELECT root_id FROM discovery_roots WHERE user_id = ? AND watch = 0', userId)).map((r) => r.root_id));
-  for (const r of saved.values()) if (!seen.has(r.item_id) && r.state === 'imported' && !unwatched.has(rootId(r.root))) {
-    items.push({ id: r.item_id, kind: r.kind, name: r.name, from: 'no longer on this computer', rootId: r.root ? rootId(r.root) : null, to: destination({ kind: r.kind, root: r.root }, ctx).to, state: 'gone', updatedAt: '' });
+  // A kind the owner turned off is not read, so it is not "gone" either.
+  const kindsOn = await P.kinds(userId);
+  const KIND_OF: Record<string, P.FileKind | null> = { memory: null, note: 'notes', tool: 'tools', skill: 'skills', mcp: 'mcp', ssh: 'ssh' };
+  for (const r of saved.values()) if (!seen.has(r.item_id) && r.state === 'imported' && !unwatched.has(rootId(r.root)) && !(KIND_OF[r.kind] && !kindsOn[KIND_OF[r.kind]!])) {
+    items.push({ id: r.item_id, kind: r.kind, name: r.name, from: 'no longer on this computer', rootId: shownRoot(r.root), to: destination({ kind: r.kind, root: r.root }, ctx).to, state: 'gone', updatedAt: '' });
   }
   const byRoot = new Map<string, { root: string | null; count: number; fresh: number }>();
   const rootPaths = new Map<string, string | null>([['computer', null]]);
@@ -377,14 +413,20 @@ export async function view(userId: string, opts: DiscoveryOptions & { rescan?: b
     const k = it.rootId ?? 'computer'; const g = byRoot.get(k) ?? { root: rootPaths.get(k) ?? null, count: 0, fresh: 0 };
     g.count++; if (it.state === 'new' || it.state === 'changed' || it.state === 'decision') g.fresh++; byRoot.set(k, g);
   }
+  for (const g of gs) rootPaths.set(g.id, g.roots[0] ?? null);
   const roots: DiscoveryRoot[] = [...byRoot].map(([id, g]) => {
-    const project = g.root ? matchProject(g.root, g.root, ctx.projects) : undefined;
-    const key = project ? null : rootDrawerKey(g.root, home);
-    return { id, name: g.root ? path.basename(g.root) || g.root : 'This computer', path: g.root ? homeRel(home, g.root) : null, project: project ? `Dpro project ${project.name}` : key ? `Projects · ${key}` : g.root ? 'About you' : 'not a project · SSH, user skills', count: g.count, fresh: g.fresh, watch: true };
+    const group = gs.find((x) => x.id === id);
+    const project = group ? group.roots.map((r) => matchProject(r, r, ctx.projects)).find(Boolean) : g.root ? matchProject(g.root, g.root, ctx.projects) : undefined;
+    const key = project ? null : group ? group.slug : rootDrawerKey(g.root, home);
+    const hiddenHere = [...(hidden.get(id) ?? [])];
+    return { id, name: group ? group.name : g.root ? path.basename(g.root) || g.root : 'This computer', path: group ? group.roots.map((r) => homeRel(home, r)).join('  +  ') : g.root ? homeRel(home, g.root) : null,
+      project: project ? `Dpro project ${project.name}` : key ? `Projects · ${key}` : g.root ? 'About you' : 'not a project · SSH, user skills', count: g.count, fresh: g.fresh, watch: true,
+      ...(group ? { group: { members: group.roots.map((r) => ({ id: rootId(r), name: path.basename(r) || r, path: homeRel(home, r) })) } } : {}), ...(hiddenHere.length ? { hidden: hiddenHere } : {}) };
   });
   for (const id of unwatched) roots.push({ id, name: 'Not watched', path: null, project: null, count: 0, fresh: 0, watch: false });
   roots.sort((a, b) => (a.id === 'computer' ? -1 : b.id === 'computer' ? 1 : b.count - a.count));
-  return { scannedAt: new Date(s.at).toISOString(), ms: s.ms, leftOut: s.leftOut, settings: await settings(userId), roots, items };
+  const suggestions = P.suggestMerges(roots.filter((r) => r.id !== 'computer' && r.watch && !r.group).map((r) => ({ id: r.id, name: r.name })), await P.dismissedPairs(userId));
+  return { scannedAt: new Date(s.at).toISOString(), ms: s.ms, leftOut: s.leftOut, settings: { ...await settings(userId), kinds: await P.kinds(userId) }, allowedFolders: (await P.allowedFolders(userId)).allow.length, roots, items, suggestions };
 }
 
 function foundItem(userId: string, id: string): Found {
@@ -401,11 +443,12 @@ export async function preview(userId: string, id: string, opts: DiscoveryOptions
   const home = opts.home ?? os.homedir();
   const ctx: Ctx = { projects: await listProjects(userId).catch(() => []), home };
   const saved = (await rows(userId)).get(id);
-  const inDpro = f.kind === 'skill' ? await skillInDpro(userId, f.name, saved) : null;
-  const taken = inDpro && inDpro.content_hash !== f.hash ? inDpro : null;
+  const inDpro = f.kind === 'skill' ? await skillInDpro(userId, f.name, saved) : f.kind === 'tool' ? await skillInDpro(userId, f.tool!.skillName, saved) : null;
+  const taken = inDpro && (f.kind === 'tool' || inDpro.content_hash !== f.hash) ? inDpro : null;
   const dest = destination({ ...f, ...(taken?.ours ? { skillTaken: { agents: taken.agents } } : {}) }, ctx);
   let text = '';
   if (f.kind === 'memory') text = memoryContent(f);
+  else if (f.kind === 'tool') text = f.tool!.content;
   else if (f.kind === 'note') text = (await readText(f.file, MAX_NOTE))?.text ?? '';
   else if (f.kind === 'skill') text = (await readText(path.join(f.file, 'SKILL.md'), 200_000))?.text ?? '';
   else if (f.kind === 'mcp') {
@@ -420,6 +463,13 @@ export async function preview(userId: string, id: string, opts: DiscoveryOptions
   };
 }
 
+/** A Claude Code command or sub-agent as a skill: its own text, with a skill header (name and description). */
+function toolSkill(f: Found): string {
+  const p = parseMemoryFile(f.tool!.content);
+  const first = p.body.split('\n').map((l) => l.replace(/^#+\s*/, '').trim()).find(Boolean) ?? f.name;
+  const desc = (p.description || first).replace(/["\\\n]/g, ' ').slice(0, 300) || f.name;
+  return `---\nname: ${f.tool!.skillName}\ndescription: "${desc}"\n---\n\n${p.body}\n`;
+}
 const MEMORY_TYPE: Record<string, string> = { user: 'preference', feedback: 'insight', project: 'fact', reference: 'fact' };
 function memoryContent(f: Found): string {
   const m = f.memory!;
@@ -473,6 +523,11 @@ export async function importItems(userId: string, items: { id: string; previewHa
         if (existing && existing.content_hash !== f.hash && !existing.ours) throw new DiscoveryError('skill_name_taken', 409);
         const r = await centralSkills().installFolder(f.file, f.skill!.origin, f.hash, existing && existing.content_hash !== f.hash ? existing.content_hash : undefined);
         // Remove may later delete only what this page added, never a skill that was already there.
+        await save(userId, f, 'imported', r.duplicate && !existing?.ours ? null : r.skill.id, f.hash);
+      } else if (f.kind === 'tool') {
+        const existing = await skillInDpro(userId, f.tool!.skillName, saved);
+        if (existing && !existing.ours) throw new DiscoveryError('skill_name_taken', 409);
+        const r = await centralSkills().installMarkdown(toolSkill(f), f.tool!.skillName, `claude-${f.tool!.type}`);
         await save(userId, f, 'imported', r.duplicate && !existing?.ours ? null : r.skill.id, f.hash);
       } else if (f.kind === 'mcp') {
         const r = await mcp.importFound(userId, f.mcp!, f.mcp!.hash ?? '', it.secret !== 'leave');
@@ -584,3 +639,73 @@ export function stopDiscoveryWatch() { clearInterval(timer); timer = undefined; 
 /** Tests: forget cached scans. */
 export function resetDiscoveryCache() { scans.clear(); }
 export const newOperationId = () => randomUUID();
+
+// ---- DISCOVER-02 (board M18): folders the owner allows, kinds, don't-show rules, merged projects ----
+const invalidate = (userId: string) => { scans.delete(userId); };
+const placeView = (home: string) => (p: P.Place) => ({ id: p.id, name: p.name, path: homeRel(home, p.path), kind: p.kind, state: p.state, inherited: p.inherited, hasChildren: p.hasChildren });
+export async function places(userId: string, parentId?: string, opts: DiscoveryOptions = {}) {
+  const home = opts.home ?? os.homedir();
+  let parent: string | undefined;
+  if (parentId !== undefined) { const r = await P.resolvePlace(userId, parentId, home); if (!r) throw new DiscoveryError('not_found', 404); parent = r; }
+  return { places: (await P.listPlaces(userId, parent, home)).map(placeView(home)) };
+}
+/** Allow several folders at once, take allowed ones back, leave subfolders out (by the ids the owner saw). */
+export async function setPlaces(userId: string, input: { allow?: string[]; deny?: string[]; exclude?: string[] }, opts: DiscoveryOptions = {}) {
+  const home = opts.home ?? os.homedir();
+  const resolve = async (ids: string[] = []) => { const out: string[] = []; for (const id of ids) { const p = await P.resolvePlace(userId, id, home); if (!p) throw new DiscoveryError('not_found', 404); out.push(p); } return out; };
+  const allow = await resolve(input.allow), deny = await resolve(input.deny), exclude = await resolve(input.exclude);
+  await P.setPlaces(userId, { allow, deny, exclude });
+  invalidate(userId);
+  return { allowed: allow.length, removed: deny.length, excluded: exclude.length };
+}
+export async function addPlace(userId: string, folder: unknown, opts: DiscoveryOptions = {}) {
+  let real: string;
+  try { real = await P.checkAddedFolder(folder); } catch (e) { if (e instanceof P.PlacesError) throw new DiscoveryError(e.code, e.status); throw e; }
+  await P.setPlaces(userId, { allow: [real] });
+  invalidate(userId);
+  return { place: { id: P.placeId(real), name: path.basename(real) || real, path: homeRel(opts.home ?? os.homedir(), real), state: 'allow' as const } };
+}
+export async function countPlace(userId: string, id: string, opts: DiscoveryOptions = {}) {
+  const p = await P.resolvePlace(userId, id, opts.home ?? os.homedir()); if (!p) throw new DiscoveryError('not_found', 404);
+  return { id, ...await P.countFolder(p) };
+}
+export async function setKinds(userId: string, input: unknown) {
+  try { const k = await P.setKinds(userId, input); invalidate(userId); return k; } catch (e) { if (e instanceof P.PlacesError) throw new DiscoveryError(e.code, e.status); throw e; }
+}
+/** Don't show one kind from one project (on), or show it again. */
+export async function hideKind(userId: string, root: string, kind: unknown, on: unknown) {
+  if (!/^(?:[a-f0-9]{32}|computer)$/.test(root) || !(DISCOVERY_KINDS as readonly unknown[]).includes(kind) || typeof on !== 'boolean') throw new DiscoveryError('invalid_input');
+  await P.setHidden(userId, root, kind as string, on);
+  return { id: root, kind, hidden: on };
+}
+/** The folder paths behind project ids (from the last scan and saved items). */
+async function rootPaths(userId: string): Promise<Map<string, string>> {
+  const m = new Map<string, string>();
+  for (const f of scans.get(userId)?.found ?? []) if (f.root) m.set(rootId(f.root), f.root);
+  for (const r of (await rows(userId)).values()) if (r.root) m.set(rootId(r.root), r.root);
+  for (const g of await P.groups(userId)) for (const r of g.roots) m.set(rootId(r), r);
+  return m;
+}
+/** Show several project folders as one project; the folders stay where they are. */
+export async function mergeRoots(userId: string, name: unknown, ids: unknown) {
+  if (!Array.isArray(ids) || ids.length < 2 || ids.length > 20 || ids.some((i) => typeof i !== 'string' || !/^[a-f0-9]{32}$/.test(i)) || new Set(ids).size !== ids.length) throw new DiscoveryError('invalid_input');
+  if (!scans.get(userId)) await scan(userId);
+  const paths = await rootPaths(userId);
+  const groupsNow = await P.groups(userId);
+  const roots: string[] = [];
+  for (const id of ids as string[]) {
+    const g = groupsNow.find((x) => x.id === id);
+    if (g) roots.push(...g.roots); else if (paths.has(id)) roots.push(paths.get(id)!); else throw new DiscoveryError('not_found', 404);
+  }
+  try { const g = await P.merge(userId, name, [...new Set(roots)]); return { group: { id: g.id, name: g.name, slug: g.slug, folders: g.roots.length } }; }
+  catch (e) { if (e instanceof P.PlacesError) throw new DiscoveryError(e.code, e.status); throw e; }
+}
+export async function separateGroup(userId: string, id: string) {
+  if (!/^[a-f0-9]{32}$/.test(id)) throw new DiscoveryError('invalid_input');
+  try { await P.separate(userId, id); } catch (e) { if (e instanceof P.PlacesError) throw new DiscoveryError(e.code, e.status); throw e; }
+  return { id, separated: true };
+}
+export async function dismissSuggestion(userId: string, key: string) {
+  try { await P.dismissPair(userId, key); } catch (e) { if (e instanceof P.PlacesError) throw new DiscoveryError(e.code, e.status); throw e; }
+  return { key, dismissed: true };
+}

@@ -25,8 +25,13 @@ const items = () => [
 ];
 function backend() {
   const calls = []; let list = items();
-  const view = () => ({ scannedAt: new Date().toISOString(), ms: 1900, leftOut: 261, settings: { watch: true, intervalMinutes: 30 }, file: '/secret/path',
-    roots: [{ id: 'computer', name: 'This computer', path: null, project: 'not a project · SSH, user skills', count: 2, fresh: 1, watch: true }, { id: R1, name: 'flowxtra', path: '~/work/flowxtra', project: 'Dpro project Flowxtra', count: 5, fresh: 3, watch: true }],
+  let kinds = { notes: true, tools: true, skills: true, mcp: true, ssh: true }; let groups = [];
+  const P = (n, name, extra) => ({ id: String(n).repeat(32).slice(0, 32), name, path: `~/${name}`, kind: 'home', state: null, inherited: null, hasChildren: true, ...extra });
+  const top = [P('a', 'Documents'), P('b', 'Desktop'), P('c', 'Work drive', { kind: 'drive', path: '/Volumes/Work drive' })];
+  const kids = [P('d', 'Projects', { kind: 'folder', inherited: 'allow' }), P('e', 'Personal', { kind: 'folder', inherited: 'allow' })];
+  const view = () => ({ scannedAt: new Date().toISOString(), ms: 1900, leftOut: 261, allowedFolders: 1, settings: { watch: true, intervalMinutes: 30, kinds }, file: '/secret/path',
+    suggestions: [{ key: 'f'.repeat(32), a: { id: R1, name: 'flowxtra' }, b: { id: '9'.repeat(32), name: 'landdingpage_flowxtra' }, reason: 'one name is inside the other' }],
+    roots: [{ id: 'computer', name: 'This computer', path: null, project: 'not a project · SSH, user skills', count: 2, fresh: 1, watch: true }, { id: R1, name: 'flowxtra', path: '~/work/flowxtra', project: 'Dpro project Flowxtra', count: 5, fresh: 3, watch: true }, { id: '9'.repeat(32), name: 'landdingpage_flowxtra', path: '~/work/landdingpage_flowxtra', project: 'Projects · landdingpage-flowxtra', count: 1, fresh: 1, watch: true }, ...groups],
     items: list });
   const client = { request: async r => {
     calls.push(r);
@@ -40,6 +45,14 @@ function backend() {
     const act = /items\/([a-f0-9]{32})\/(ignore|remove|keep)$/.exec(path);
     if (act) { list = list.map(x => (x.id === act[1] ? { ...x, state: act[2] === 'keep' ? 'imported' : 'ignored' } : x)); return out(act[2] === 'ignore' ? { id: act[1], ignored: r.body.on } : act[2] === 'remove' ? { id: act[1], removed: true } : { id: act[1], kept: true }); }
     if (path === `${BASE}/settings`) return out({ settings: r.body });
+    if (path === `${BASE}/places`) return out(r.method === 'GET' ? { places: top } : r.method === 'PUT' ? { allowed: (r.body.allow ?? []).length, removed: (r.body.deny ?? []).length, excluded: (r.body.exclude ?? []).length } : { place: P('z', 'Added', { kind: 'added', state: 'allow' }) });
+    if (path.startsWith(`${BASE}/places?parent=`)) return out({ places: kids });
+    if (/places\/[a-f0-9]{32}\/count$/.test(path)) return out({ id: path.split('/')[6], files: 18400, bytes: 12e9, capped: false });
+    if (path === `${BASE}/kinds`) { kinds = { ...kinds, ...r.body }; return out({ kinds }); }
+    if (/roots\/.+\/hidden$/.test(path)) return out({ id: path.split('/')[6], kind: r.body.kind, hidden: r.body.on });
+    if (path === `${BASE}/groups`) { groups = [{ id: '8'.repeat(32), name: r.body.name, path: '~/a  +  ~/b', project: 'Projects · x', count: 6, fresh: 4, watch: true, group: { members: r.body.roots.map(id => ({ id, name: id.slice(0, 4), path: '~/' + id.slice(0, 4) })) } }]; return out({ group: { id: '8'.repeat(32), name: r.body.name, slug: 'x', folders: 2 } }); }
+    if (/groups\/[a-f0-9]{32}$/.test(path)) { groups = []; return out({ id: path.split('/').pop(), separated: true }); }
+    if (/suggestions\/[a-f0-9]{32}\/dismiss$/.test(path)) return out({ key: path.split('/')[6], dismissed: true });
     if (path.startsWith(`${BASE}/roots/`)) return out({ id: path.split('/').pop(), watch: r.body.watch });
     return { status: 404, body: null };
   } };
@@ -127,4 +140,58 @@ test('a slow first read (504) is asked again, not shown as an error', async () =
   const c = new DiscoveryController(slow);
   await c.load();
   assert.equal(c.getSnapshot().phase, 'ready');
+});
+
+test('folders: tick several, allow them at once; leave a subfolder out; count; what to read (board M18)', async () => {
+  const { client, calls } = backend();
+  const c = new DiscoveryController(client);
+  await c.load(); await c.loadPlaces();
+  let html = renderToStaticMarkup(React.createElement(DiscoveryView, { c, active: false }));
+  for (const words of ['Folders Dpro may read', 'Documents', 'Work drive', 'drive', 'What to read', 'Agent notes (.md)', 'Agent commands and sub-agents', 'Word, PDF, Excel and images: later.', 'Never read, even in an allowed folder', '+ Add a drive or folder'])
+    assert.ok(html.includes(words), words);
+  const [docs, desk, work] = c.getSnapshot().places.top;
+  c.tick(docs, true); c.tick(work, true);
+  html = renderToStaticMarkup(React.createElement(DiscoveryView, { c, active: false }));
+  assert.ok(html.includes('Allow 2 folders'));
+  await c.applyPlaces();
+  assert.deepEqual(calls.find(r => r.path === `${BASE}/places` && r.method === 'PUT').body, { allow: [docs.id, work.id] });
+  assert.deepEqual(c.getSnapshot().places.ticks, {});
+  await c.openPlace(docs.id);
+  const personal = c.getSnapshot().places.children[docs.id].find(p => p.name === 'Personal');
+  assert.equal(c.ticked(personal), true, 'inside an allowed folder');
+  c.tick(personal, false); await c.applyPlaces();
+  assert.deepEqual(calls.filter(r => r.path === `${BASE}/places` && r.method === 'PUT').pop().body, { exclude: [personal.id] });
+  await c.count(desk.id);
+  assert.match(c.getSnapshot().places.counts[desk.id], /18,400 files · 12\.0 GB/);
+  await c.setFileKind('ssh', false);
+  assert.deepEqual(calls.find(r => r.path === `${BASE}/kinds`).body, { ssh: false });
+  await c.addPlace('/Volumes/Backup');
+  assert.deepEqual(calls.find(r => r.path === `${BASE}/places` && r.method === 'POST').body, { path: '/Volumes/Backup' });
+});
+
+test("don't show: one item, several, a kind from a project; merge two projects and separate; suggestions", async () => {
+  const { client, calls } = backend();
+  const c = new DiscoveryController(client);
+  await c.load();
+  let html = renderToStaticMarkup(React.createElement(DiscoveryView, { c, active: false })).replace(/&#x27;/g, "'");
+  for (const words of ["Don't show again", 'Merge with…', 'Suggested merges', 'flowxtra + landdingpage_flowxtra', 'Not the same']) assert.ok(html.includes(words), words);
+  c.toggle(I(1)); c.toggle(I(2)); await c.ignoreMany(c.getSnapshot().selected);
+  assert.equal(calls.filter(r => /\/ignore$/.test(r.path)).length, 2);
+  c.setKind('memory');
+  html = renderToStaticMarkup(React.createElement(DiscoveryView, { c, active: false })).replace(/&#x27;/g, "'");
+  assert.ok(html.includes("Don't show memory files from this project"));
+  await c.hideKind(R1, 'memory', true);
+  assert.deepEqual(calls.find(r => /hidden$/.test(r.path)).body, { kind: 'memory', on: true });
+  c.startMerge([R1, '9'.repeat(32)], 'Flowxtra all');
+  html = renderToStaticMarkup(React.createElement(DiscoveryView, { c, active: false })).replace(/&#x27;/g, "'");
+  for (const words of ['Show as one project', 'Merge 2 folders', 'The folders stay where they are', 'Merge into one project']) assert.ok(html.includes(words), words);
+  await c.merge();
+  assert.deepEqual(calls.find(r => r.path === `${BASE}/groups`).body, { name: 'Flowxtra all', roots: [R1, '9'.repeat(32)] });
+  assert.equal(c.getSnapshot().rootId, '8'.repeat(32), 'opens the merged project');
+  html = renderToStaticMarkup(React.createElement(DiscoveryView, { c, active: false })).replace(/&#x27;/g, "'");
+  assert.ok(html.includes('Separate again') && html.includes('One project made of'));
+  await c.separate('8'.repeat(32));
+  assert.ok(calls.some(r => r.method === 'DELETE'));
+  await c.dismissSuggestion(c.getSnapshot().view.suggestions[0]);
+  assert.ok(calls.some(r => /dismiss$/.test(r.path)));
 });

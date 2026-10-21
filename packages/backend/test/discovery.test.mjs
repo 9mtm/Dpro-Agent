@@ -57,6 +57,12 @@ w(join(shop, '.github', 'copilot-instructions.md'), 'Short answers.\n');
 w(join(shop, 'docs', 'code', 'someone-else', 'AGENTS.md'), '# Not ours\n');
 w(join(home, 'Documents', 'old-archive', 'shop', 'CLAUDE.md'), '# Old copy\n');
 w(join(home, 'Documents', 'tools', 'other-programs', 'x', 'CLAUDE.md'), '# Other program\n');
+// DISCOVER-02: a project in an allowed folder, one in a folder never allowed, commands / sub-agents.
+w(join(home, 'Documents', 'myshop', 'AGENTS.md'), '# My shop\nShip on Fridays.\n');
+w(join(home, 'Documents', 'myshop', 'private', 'CLAUDE.md'), '# Private\n');
+w(join(home, 'Other', 'secret-project', 'CLAUDE.md'), '# Never allowed\n');
+w(join(shop, '.claude', 'commands', 'deploy.md'), '---\ndescription: Deploy the shop\n---\n\nRun the checks, then deploy.\n');
+w(join(shop, '.claude', 'agents', 'reviewer.md'), '# Reviewer\nReview pull requests.\n');
 
 const { getDatabase, closeDatabase } = await loadFile(join(backendDir, 'src/db/database.ts'));
 const db = getDatabase();
@@ -76,6 +82,28 @@ const find = (v, kind, name) => v.items.find((i) => i.kind === kind && i.name ==
 const never = (text) => { for (const s of [KEY, ENV, TOKEN]) assert.ok(!text.includes(s), 'a secret or key leaked'); };
 
 let v;
+test('folders: nothing outside the allowed folders is read; several folders are allowed at once', async () => {
+  const top = (await call('GET', `${BASE}/places`)).json().places;
+  const docs = top.find((p) => p.name === 'Documents'), other = top.find((p) => p.name === 'Other');
+  assert.ok(docs && other && docs.state === null, JSON.stringify(top.map((p) => p.name)));
+  let first = (await call('GET', BASE)).json();
+  assert.ok(!first.items.some((i) => /myshop|Never allowed|secret-project/.test(i.name + i.from)), 'not allowed yet: not read');
+  assert.equal(first.allowedFolders, 0);
+  assert.equal((await call('PUT', `${BASE}/places`, { allow: [docs.id, other.id] })).statusCode, 200);
+  assert.equal((await call('PUT', `${BASE}/places`, { deny: [other.id] })).statusCode, 200, 'taken back');
+  const kids = (await call('GET', `${BASE}/places?parent=${docs.id}`)).json().places;
+  const myshop = kids.find((p) => p.name === 'myshop'); assert.equal(myshop.inherited, 'allow');
+  const priv = (await call('GET', `${BASE}/places?parent=${myshop.id}`)).json().places.find((p) => p.name === 'private');
+  assert.equal((await call('PUT', `${BASE}/places`, { exclude: [priv.id] })).statusCode, 200);
+  first = (await call('GET', BASE)).json();
+  assert.ok(first.items.some((i) => i.name === 'AGENTS.md' && first.roots.find((r) => r.id === i.rootId)?.name === 'myshop'), 'a folder in an allowed folder is its own project');
+  assert.ok(!first.items.some((i) => i.from.includes('Never allowed') || first.roots.some((r) => r.name === 'secret-project')), 'a folder taken back is not read');
+  assert.ok(!first.items.some((i) => i.name.includes(`private${sep}CLAUDE.md`)), 'a left-out subfolder is not read');
+  assert.equal(first.allowedFolders, 1);
+  const count = (await call('POST', `${BASE}/places/${docs.id}/count`)).json(); assert.ok(count.files >= 4);
+  assert.equal((await call('POST', `${BASE}/places`, { path: '/etc' })).statusCode >= 400, true, 'system folders are refused');
+});
+
 test('one scan finds every kind, grouped by project folder, with where each goes', async () => {
   const r = await call('GET', BASE); assert.equal(r.statusCode, 200, r.body); never(r.body);
   v = r.json();
@@ -85,9 +113,10 @@ test('one scan finds every kind, grouped by project folder, with where each goes
   assert.deepEqual([find(v, 'memory', 'owner-language').to, find(v, 'memory', 'brand-voices').to, find(v, 'memory', 'brand-colors').to], ['About you', 'Lessons', 'Projects · shop']);
   assert.equal(find(v, 'memory', 'brand-colors').rootId, shopRoot.id);
   assert.ok(!v.items.some((i) => i.name === 'MEMORY'), 'the index file is not a memory');
-  assert.deepEqual(v.items.filter((i) => i.kind === 'note').map((i) => i.name).sort(), ['CLAUDE.md', 'CLAUDE.md', `docs${sep}HANDOFF.md`, `packages${sep}api${sep}AGENTS.md`, `.cursor${sep}rules${sep}style.mdc`, `.github${sep}copilot-instructions.md`].sort());
+  assert.deepEqual(v.items.filter((i) => i.kind === 'note').map((i) => i.name).sort(), ['AGENTS.md', 'CLAUDE.md', 'CLAUDE.md', `docs${sep}HANDOFF.md`, `packages${sep}api${sep}AGENTS.md`, `.cursor${sep}rules${sep}style.mdc`, `.github${sep}copilot-instructions.md`].sort());
   assert.equal(v.leftOut, 3, 'copies, archives and other people\'s code are left out');
-  assert.ok(v.items.filter((i) => i.kind === 'note' && i.name !== 'CLAUDE.md' || i.rootId === shopRoot.id).every((i) => i.rootId === shopRoot.id || i.kind !== 'note'), 'sub-package notes belong to the project root');
+  assert.deepEqual(v.items.filter((i) => i.kind === 'tool').map((i) => i.name).sort(), ['deploy (command)', 'reviewer (sub-agent)']);
+  for (const n of [`packages${sep}api${sep}AGENTS.md`, `.cursor${sep}rules${sep}style.mdc`, `.github${sep}copilot-instructions.md`, `docs${sep}HANDOFF.md`]) assert.equal(v.items.find((i) => i.name === n).rootId, shopRoot.id, `${n} belongs to the project root`);
   assert.deepEqual(v.items.filter((i) => i.kind === 'skill').map((i) => [i.name, i.state]).sort(), [['shop-release', 'decision'], ['writer', 'decision']]);
   const mcp = find(v, 'mcp', 'shop-admin'); assert.match(mcp.from, /1 secret inside/); assert.equal(mcp.rootId, shopRoot.id); assert.match(mcp.to, /off · secret → Credentials/);
   assert.ok(find(v, 'mcp', 'docs'));
@@ -199,6 +228,43 @@ test('project notes, also a Cursor rules file, go to the project-files import (t
   assert.ok(r.ok && r.jobId, JSON.stringify(r));
 });
 
+test('a command becomes a skill for no agent; don\'t show a kind; kinds a scan reads', async () => {
+  v = (await call('GET', BASE)).json();
+  const deploy = v.items.find((i) => i.name === 'deploy (command)');
+  const p = await previewOf(deploy); assert.match(p.text, /Run the checks/);
+  const imp = (await call('POST', `${BASE}/import`, { items: [{ id: p.id, previewHash: p.previewHash }] })).json().results[0]; assert.ok(imp.ok, JSON.stringify(imp));
+  const sk = db.prepare("SELECT name, description FROM central_skills WHERE name = 'shop-deploy'").get();
+  assert.deepEqual(sk, { name: 'shop-deploy', description: 'Deploy the shop' });
+  const shopRoot = v.roots.find((r) => r.name === 'shop');
+  assert.equal((await call('PUT', `${BASE}/roots/${shopRoot.id}/hidden`, { kind: 'tool', on: true })).statusCode, 200);
+  v = (await call('GET', BASE)).json();
+  assert.ok(!v.items.some((i) => i.kind === 'tool' && i.rootId === shopRoot.id)); assert.deepEqual(v.roots.find((r) => r.id === shopRoot.id).hidden, ['tool']);
+  await call('PUT', `${BASE}/roots/${shopRoot.id}/hidden`, { kind: 'tool', on: false });
+  assert.deepEqual((await call('PUT', `${BASE}/kinds`, { ssh: false })).json().kinds, { notes: true, tools: true, skills: true, mcp: true, ssh: false });
+  assert.ok(!(await call('GET', BASE)).json().items.some((i) => i.kind === 'ssh'));
+  await call('PUT', `${BASE}/kinds`, { ssh: true });
+  assert.equal((await call('PUT', `${BASE}/kinds`, { pdf: true })).statusCode, 400);
+});
+
+test('merge two project folders into one project (the folders stay), then separate; suggestions', async () => {
+  v = (await call('GET', BASE)).json();
+  const shopRoot = v.roots.find((r) => r.name === 'shop'), my = v.roots.find((r) => r.name === 'myshop');
+  const r = await call('POST', `${BASE}/groups`, { name: 'Shop all', roots: [shopRoot.id, my.id] }); assert.equal(r.statusCode, 200, r.body);
+  v = (await call('GET', BASE)).json();
+  const g = v.roots.find((x) => x.name === 'Shop all');
+  assert.deepEqual(g.group.members.map((m) => m.name).sort(), ['myshop', 'shop']);
+  assert.ok(!v.roots.some((x) => x.id === shopRoot.id || x.id === my.id), 'shown once, as the merged project');
+  assert.ok(v.items.filter((i) => i.rootId === g.id).length >= 5);
+  const mem = find(v, 'memory', 'brand-colors'); assert.equal(mem.to, 'Projects · shop-all', 'no Dpro project among them: the merged project\'s own drawer');
+  assert.equal((await call('DELETE', `${BASE}/groups/${g.id}`)).statusCode, 200);
+  v = (await call('GET', BASE)).json();
+  assert.ok(v.roots.some((x) => x.id === shopRoot.id) && v.roots.some((x) => x.id === my.id));
+  const P = await loadFile(join(backendDir, 'src/discovery/places.ts'));
+  const s = P.suggestMerges([{ id: 'a', name: 'tel_agent' }, { id: 'b', name: 'telagent' }, { id: 'c', name: 'seo-agent' }, { id: 'd', name: 'seo-ai-Agent' }, { id: 'e', name: 'clinic_agent' }, { id: 'f', name: 'hr_agent' }, { id: 'g', name: 'landdingpage_flowxtra' }, { id: 'h', name: 'flowxtra' }], new Set());
+  assert.deepEqual(s.map((x) => `${x.a.name}+${x.b.name}`), ['tel_agent+telagent', 'seo-agent+seo-ai-Agent', 'landdingpage_flowxtra+flowxtra']);
+  assert.equal(P.suggestMerges([{ id: 'a', name: 'tel_agent' }, { id: 'b', name: 'telagent' }], new Set([P.pairKey('a', 'b')])).length, 0, '"not the same" is remembered');
+});
+
 test('owner only; inputs checked', async () => {
   assert.equal((await call('GET', BASE, undefined, 'dc-user')).statusCode, 403);
   assert.equal((await call('POST', `${BASE}/import`, { items: [] })).statusCode, 400);
@@ -215,6 +281,8 @@ test('parsers: memory front matter (also CRLF), ssh config, Claude Desktop path 
   assert.match(claudeDesktopConfig('/h', 'win32'), /AppData.Roaming.Claude.claude_desktop_config\.json$/);
   assert.match(claudeDesktopConfig('/h', 'linux'), /\.config.Claude.claude_desktop_config\.json$/);
   assert.equal(await D.decodeClaudeFolder(home.replace(/[\\/]/g, '-') + '-work-shop'), shop, 'a Claude folder name maps back to the folder');
+  const winRoot = (await call('GET', BASE)).json().roots.find((r) => r.path && r.path.startsWith('C:'));
+  if (winRoot) assert.ok(!winRoot.path.includes('~'), 'a path from another system is shown as it is');
 });
 
 test('agent tools: listed, owner-only, apply needs approval', async () => {

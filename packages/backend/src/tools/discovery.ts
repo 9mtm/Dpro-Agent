@@ -42,11 +42,13 @@ export const discoveryTool: Tool = {
 action "list" (optional kind: memory | note | skill | mcp | ssh, state: new | changed | decision | imported | ignored | gone, project_id, limit): items with where each would go in Dpro.
 action "scan": read the computer again now.
 action "preview" (item_id): the item's redacted text and its previewHash.
+action "places" (optional parent_id): the folders and drives the owner can allow, with their state (allowed, left out, inherited).
 Private keys, .env files and secrets are never read or shown. To import, ignore, remove or keep an item, call discovery_apply (the owner approves the call).`,
   input_schema: {
     type: 'object',
     properties: {
-      action: { type: 'string', enum: ['list', 'scan', 'preview'] },
+      action: { type: 'string', enum: ['list', 'scan', 'preview', 'places'] },
+      parent_id: { type: 'string' },
       kind: { type: 'string', enum: [...D.DISCOVERY_KINDS] },
       state: { type: 'string', enum: ['new', 'changed', 'decision', 'imported', 'ignored', 'gone'] },
       project_id: { type: 'string' },
@@ -64,6 +66,10 @@ Private keys, .env files and secrets are never read or shown. To import, ignore,
         const roots = v.roots.map((r) => `${r.name} (${r.id}) ${r.count} items, ${r.fresh} new`).join('; ');
         const text = `${v.items.length} items in ${v.roots.length} places. Projects: ${roots}\n${items.map((i) => `- ${i.id} [${i.kind}] ${i.name} · ${i.state} · → ${i.to}`).join('\n') || 'Nothing matches.'}`;
         return ok(text, { scannedAt: v.scannedAt, roots: v.roots, items });
+      }
+      if (params.action === 'places') {
+        const r = await D.places(owner, typeof params.parent_id === 'string' ? params.parent_id : undefined);
+        return ok(r.places.map((p) => `- ${p.id} ${p.path} · ${p.state ?? (p.inherited ? `${p.inherited} (inherited)` : 'not allowed')}`).join('\n') || 'No folders.', r);
       }
       if (params.action === 'preview') {
         if (typeof params.item_id !== 'string') return fail('item_id is required');
@@ -83,11 +89,28 @@ action "ignore" (item_id, on): ignore an item, or stop ignoring it.
 action "remove" (item_id): take an imported item out of Dpro; the file on the computer stays.
 action "keep" (item_id): an item gone from the computer stays in Dpro.
 action "set_watch" (enabled, interval_minutes 15 | 30 | 60): read the computer again on a schedule (nothing is imported on its own).
-action "set_project_watch" (project_id, enabled): stop or start watching one project folder.`,
+action "set_project_watch" (project_id, enabled): stop or start watching one project folder.
+action "set_places" (allow?, deny?, exclude?: place ids from discovery "places"): allow several folders at once, take allowed ones back, leave subfolders out.
+action "add_place" (path): allow a folder or drive by its full path.
+action "set_kinds" (kinds: { notes?, tools?, skills?, mcp?, ssh? }): which kinds a scan reads.
+action "hide_kind" (project_id, kind, on): don't show one kind from one project (or show it again).
+action "merge" (name, project_ids): show several project folders as one project (the folders stay where they are).
+action "separate" (group_id): show a merged project's folders apart again.
+action "dismiss_suggestion" (key): a suggested merge is not the same project.`,
   input_schema: {
     type: 'object',
     properties: {
-      action: { type: 'string', enum: ['import', 'ignore', 'remove', 'keep', 'set_watch', 'set_project_watch'] },
+      action: { type: 'string', enum: ['import', 'ignore', 'remove', 'keep', 'set_watch', 'set_project_watch', 'set_places', 'add_place', 'set_kinds', 'hide_kind', 'merge', 'separate', 'dismiss_suggestion'] },
+      allow: { type: 'array', items: { type: 'string' } },
+      deny: { type: 'array', items: { type: 'string' } },
+      exclude: { type: 'array', items: { type: 'string' } },
+      path: { type: 'string' },
+      kinds: { type: 'object' },
+      kind: { type: 'string' },
+      name: { type: 'string' },
+      project_ids: { type: 'array', items: { type: 'string' } },
+      group_id: { type: 'string' },
+      key: { type: 'string' },
       items: { type: 'array', description: '1-100 items', items: { type: 'object', properties: { id: { type: 'string' }, preview_hash: { type: 'string' }, secret: { type: 'string', enum: ['credentials', 'leave'] } }, required: ['id', 'preview_hash'] } },
       item_id: { type: 'string' },
       project_id: { type: 'string' },
@@ -113,6 +136,18 @@ action "set_project_watch" (project_id, enabled): stop or start watching one pro
         case 'keep': { const r = await D.keep(owner, String(params.item_id ?? '')); return ok('Kept in Dpro.', r); }
         case 'set_watch': { const s = await D.setSettings(owner, { watch: params.enabled, intervalMinutes: params.interval_minutes }); return ok(`Watching ${s.watch ? `every ${s.intervalMinutes} min` : 'off'}.`, { settings: s }); }
         case 'set_project_watch': { const r = await D.setRootWatch(owner, String(params.project_id ?? ''), params.enabled); return ok(r.watch ? 'Watching this folder again.' : 'This folder is no longer watched.', r); }
+        case 'set_places': {
+          const list = (x: unknown) => (x === undefined ? undefined : Array.isArray(x) && x.length <= 200 && x.every((i) => typeof i === 'string' && /^[a-f0-9]{32}$/.test(i)) ? x as string[] : null);
+          const allow = list(params.allow), deny = list(params.deny), exclude = list(params.exclude);
+          if (allow === null || deny === null || exclude === null || (!allow && !deny && !exclude)) return fail('allow / deny / exclude: lists of place ids');
+          const r = await D.setPlaces(owner, { allow, deny, exclude }); return ok(`${r.allowed} allowed, ${r.removed} taken back, ${r.excluded} left out.`, r);
+        }
+        case 'add_place': { const r = await D.addPlace(owner, params.path); return ok(`Allowed ${r.place.path}.`, r); }
+        case 'set_kinds': { const k = await D.setKinds(owner, params.kinds); return ok(`Kinds read: ${Object.entries(k).filter(([, v]) => v).map(([n]) => n).join(', ') || 'none'}.`, { kinds: k }); }
+        case 'hide_kind': { const r = await D.hideKind(owner, String(params.project_id ?? ''), params.kind, params.on); return ok(r.hidden ? 'Hidden for this project.' : 'Shown again.', r); }
+        case 'merge': { const r = await D.mergeRoots(owner, params.name, params.project_ids); return ok(`${r.group.folders} folders are now shown as "${r.group.name}".`, r); }
+        case 'separate': { const r = await D.separateGroup(owner, String(params.group_id ?? '')); return ok('Shown apart again.', r); }
+        case 'dismiss_suggestion': { const r = await D.dismissSuggestion(owner, String(params.key ?? '')); return ok('Not suggested again.', r); }
         default: return fail('unknown action');
       }
     });

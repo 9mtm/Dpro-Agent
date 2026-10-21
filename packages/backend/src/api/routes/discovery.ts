@@ -12,6 +12,17 @@
  *   POST /api/memory/import/discovery/items/:id/ignore { on }
  *   POST /api/memory/import/discovery/items/:id/remove take it out of Dpro (the file stays)
  *   POST /api/memory/import/discovery/items/:id/keep   gone from this computer: keep it in Dpro
+ *
+ * DISCOVER-02 (board M18):
+ *   GET  …/places[?parent=<id>]           folders and drives (top level, or one folder's subfolders)
+ *   PUT  …/places                         { allow?, deny?, exclude? } place ids (several at once)
+ *   POST …/places                         { path } add a folder or drive by its path (allowed)
+ *   POST …/places/:id/count               files and size under a folder (limited)
+ *   PUT  …/kinds                          { notes?, tools?, skills?, mcp?, ssh? }
+ *   PUT  …/roots/:id/hidden               { kind, on } don't show a kind from a project
+ *   POST …/groups                         { name, roots: [project ids] } show as one project
+ *   DELETE …/groups/:id                   separate again
+ *   POST …/suggestions/:key/dismiss       "not the same"
  */
 import type { FastifyInstance, FastifyReply, FastifyRequest } from 'fastify';
 import { actorOf } from '../../auth/auth-gate.js';
@@ -87,6 +98,55 @@ export async function discoveryRoutes(fastify: FastifyInstance, options: D.Disco
     const b = request.body;
     if (!record(b) || Object.keys(b).join(',') !== 'on' || typeof b.on !== 'boolean') return reply.code(400).send({ code: 'invalid_input' });
     try { const r = await D.ignore(a.userId!, request.params.id, b.on); audit(request, a, 'discovery.ignore', r.id, { on: r.ignored }); return r; } catch (e) { return fail(reply, e); }
+  });
+  const ids = (x: unknown) => Array.isArray(x) && x.length <= 200 && x.every((i) => typeof i === 'string' && ID.test(i));
+  fastify.get<{ Querystring: { parent?: string } }>(`${BASE}/places`, { config }, async (request, reply) => {
+    const a = owner(request, reply); if (!a) return reply;
+    const parent = request.query.parent;
+    if (parent !== undefined && !ID.test(parent)) return reply.code(400).send({ code: 'invalid_input' });
+    try { return await D.places(a.userId!, parent, options); } catch (e) { return fail(reply, e); }
+  });
+  fastify.put(`${BASE}/places`, { config }, async (request, reply) => {
+    const a = owner(request, reply); if (!a) return reply;
+    const b = request.body;
+    if (!record(b) || !Object.keys(b).length || Object.keys(b).some((k) => !['allow', 'deny', 'exclude'].includes(k)) || !Object.values(b).every(ids)) return reply.code(400).send({ code: 'invalid_input' });
+    try { const r = await D.setPlaces(a.userId!, b as { allow?: string[]; deny?: string[]; exclude?: string[] }, options); audit(request, a, 'discovery.places', '-', r); return r; } catch (e) { return fail(reply, e); }
+  });
+  fastify.post(`${BASE}/places`, { config }, async (request, reply) => {
+    const a = owner(request, reply); if (!a) return reply;
+    const b = request.body;
+    if (!record(b) || Object.keys(b).join(',') !== 'path') return reply.code(400).send({ code: 'invalid_input' });
+    try { const r = await D.addPlace(a.userId!, b.path, options); audit(request, a, 'discovery.place_add', r.place.id, {}); return r; } catch (e) { return fail(reply, e); }
+  });
+  fastify.post<{ Params: { id: string } }>(`${BASE}/places/:id/count`, { config }, async (request, reply) => {
+    const a = owner(request, reply); if (!a) return reply;
+    if (!ID.test(request.params.id)) return reply.code(400).send({ code: 'invalid_input' });
+    try { return await D.countPlace(a.userId!, request.params.id, options); } catch (e) { return fail(reply, e); }
+  });
+  fastify.put(`${BASE}/kinds`, { config }, async (request, reply) => {
+    const a = owner(request, reply); if (!a) return reply;
+    try { const k = await D.setKinds(a.userId!, request.body); audit(request, a, 'discovery.kinds', '-', k); return { kinds: k }; } catch (e) { return fail(reply, e); }
+  });
+  fastify.put<{ Params: { id: string } }>(`${BASE}/roots/:id/hidden`, { config }, async (request, reply) => {
+    const a = owner(request, reply); if (!a) return reply;
+    const b = request.body;
+    if (!record(b) || Object.keys(b).sort().join(',') !== 'kind,on') return reply.code(400).send({ code: 'invalid_input' });
+    try { const r = await D.hideKind(a.userId!, request.params.id, b.kind, b.on); audit(request, a, 'discovery.hide_kind', r.id, { kind: r.kind, hidden: r.hidden }); return r; } catch (e) { return fail(reply, e); }
+  });
+  fastify.post(`${BASE}/groups`, { config }, async (request, reply) => {
+    const a = owner(request, reply); if (!a) return reply;
+    const b = request.body;
+    if (!record(b) || Object.keys(b).sort().join(',') !== 'name,roots') return reply.code(400).send({ code: 'invalid_input' });
+    try { const r = await D.mergeRoots(a.userId!, b.name, b.roots); audit(request, a, 'discovery.merge', r.group.id, { folders: r.group.folders }); return r; } catch (e) { return fail(reply, e); }
+  });
+  fastify.delete<{ Params: { id: string } }>(`${BASE}/groups/:id`, { config }, async (request, reply) => {
+    const a = owner(request, reply); if (!a) return reply;
+    try { const r = await D.separateGroup(a.userId!, request.params.id); audit(request, a, 'discovery.separate', r.id, {}); return r; } catch (e) { return fail(reply, e); }
+  });
+  fastify.post<{ Params: { key: string } }>(`${BASE}/suggestions/:key/dismiss`, { config }, async (request, reply) => {
+    const a = owner(request, reply); if (!a) return reply;
+    if (request.body !== undefined && (!record(request.body) || Object.keys(request.body).length)) return reply.code(400).send({ code: 'invalid_input' });
+    try { return await D.dismissSuggestion(a.userId!, request.params.key); } catch (e) { return fail(reply, e); }
   });
   for (const action of ['remove', 'keep'] as const) fastify.post<{ Params: { id: string } }>(`${BASE}/items/:id/${action}`, { config }, async (request, reply) => {
     const a = owner(request, reply); if (!a) return reply;
