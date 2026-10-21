@@ -18,6 +18,7 @@ const trace = { runId: 'run-0b9c1d2e-0000-4000-8000-000000000001', messageId: MS
     { kind: 'memory', id: MID, drawer: 'owner', why: 'topic', state: 'active', preview: 'صار ما يشرب شاي، بس قهوة بدون سكر.' },
     { kind: 'memory', id: 'm-2', drawer: 'project:flowxtra', why: 'graph', state: 'active', preview: 'Ahmed works on Flowxtra and approves posts before 10:00.' },
     { kind: 'handoff', id: 'h-1', drawer: `conversation:${CONV}`, why: 'handoff', state: 'active' },
+    { kind: 'fact', id: 'pf-1', drawer: 'project:flowxtra', why: 'pinned', state: 'active', preview: 'Never name a competitor.' },
   ],
   context: { keptTurns: 12, summarisedTurns: 40, droppedTurns: 0, summaries: [], fromCache: { pack: true, recall: false }, budgetTokens: 3100, numCtx: 32768, packChars: 9000, promptTokens: 3000, ttftMs: 1400 } };
 const handoff = { id: 'h-1', agentId: '_main', kind: 'conversation', scopeId: CONV, projectId: null, version: 3, source: 'agent', createdAt: '2026-10-20T18:40:00.000Z', done: ['Tuesday posts drafted (3).'], left: ['Ahmed’s approval', 'image for post 2'], next: ['publish after approval'], questions: [] };
@@ -45,10 +46,10 @@ test('a reply shows "Remembered N" and what it used; Correct goes to review, For
   c.setConversation(CONV);
   await c.ensure(turn); await c.ensure(turn);
   assert.equal(calls.filter(r => r.path.endsWith(MSG)).length, 1, 'each trace is read once');
-  assert.match(renderToStaticMarkup(React.createElement(RecallChip, { c, turn })), /Remembered 3 ⌄/);
+  assert.match(renderToStaticMarkup(React.createElement(RecallChip, { c, turn })), /Remembered 4 ⌄/);
   c.toggle(MSG);
   const html = renderToStaticMarkup(React.createElement(RecallPanel, { c, turnKey: MSG }));
-  for (const words of ['What this reply used', 'About you · topic', 'صار ما يشرب شاي، بس قهوة بدون سكر.', 'Projects · flowxtra · map', 'Handoff', 'Correct', 'Forget', 'Drawers open for this reply: About you, Projects · flowxtra.'])
+  for (const words of ['What this reply used', 'About you · topic', 'صار ما يشرب شاي، بس قهوة بدون سكر.', 'Projects · flowxtra · map', 'Handoff', 'Pinned · flowxtra', 'Never name a competitor.', 'Correct', 'Forget', 'Drawers open for this reply: About you, Projects · flowxtra.'])
     assert.ok(html.includes(words), words);
   c.startCorrect(MSG, MID, 'Coffee without sugar.'); await c.correct();
   assert.deepEqual(calls.find(r => r.path.endsWith('/correct')).body, { memoryId: MID, content: 'Coffee without sugar.' });

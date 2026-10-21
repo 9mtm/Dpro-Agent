@@ -6,7 +6,12 @@ import { ago, drawerName, oneLine } from './memory-store';
 import type { RecallItem, RecallTrace } from './memory-recall-contract.js';
 
 const WHY: Record<string, string> = { pinned: 'pinned', topic: 'topic', graph: 'map', meaning: 'meaning', keyword: 'words', handoff: 'handoff' };
-const fromLabel = (i: RecallItem) => (i.kind === 'handoff' ? 'Handoff' : `${i.drawer ? drawerName(i.drawer) : 'Memory'} · ${WHY[i.why] ?? i.why}`);
+/** Where a used item came from: a handoff, a pinned scope fact (company / department / project) or a memory drawer. */
+function fromLabel(i: RecallItem): string {
+  if (i.kind === 'handoff') return 'Handoff';
+  if (i.kind === 'fact') return `Pinned · ${!i.drawer || i.drawer === 'company' ? 'company' : i.drawer.replace(/^(department|project):/, '')}`;
+  return `${i.drawer ? drawerName(i.drawer) : 'Memory'} · ${WHY[i.why] ?? i.why}`;
+}
 
 /** The chip under a finished reply; opens the list of what it used. */
 export function RecallChip({ c, turn }: { c: ChatRecallController; turn: { key: string; role: string; runId: string | null; pending?: boolean; status?: string } }) {
