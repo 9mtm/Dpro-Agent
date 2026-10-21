@@ -36,8 +36,8 @@ const pages: ReadonlyArray<{ key: Page; label: string; icon: IconName | 'board' 
 ];
 
 /**
- * The signed-in workspace: a left sidebar (new chat, pages, the current
- * conversation, the account), the page area and a status bar. Every page
+ * The signed-in workspace: a left sidebar for chats only (new chat, the
+ * conversations, the account; UI-SIDEBAR-01), every page in the status bar, the page area and a status bar. Every page
  * stays mounted and only the active one is shown, so a conversation or an
  * unsaved agent draft survives switching pages.
  */
@@ -119,21 +119,17 @@ export function SignedInShell({ client, notice }: { client: SessionClient; notic
       <button className="nav-item new-chat" onClick={newChat}>
         <UiIcon name="compose" size={15}/>New chat
       </button>
-      <nav aria-label="Workspace">{pages.filter(p=>p.key!=='genvr'&&(p.key!=='approvals'||user.role==='owner')).map(p =>
-        <button key={p.key} className="nav-item" aria-current={page === p.key ? 'page' : undefined} onClick={() => setPage(p.key)}>
-          {p.icon === 'board' ? <UiIcon name="board" size={14}/> : <Icon name={p.icon}/>}{p.key==='approvals'?approvalLabel:p.label}
-        </button>)}
-      </nav>
+      {/* UI-SIDEBAR-01: the sidebar is for chats only; every page is in the status bar (and ⌘K). */}
       <p className="section-label"><span className="checker" aria-hidden="true"/>Conversations</p>
       <div className="session-list">
         {chat && <ConversationList controller={chat} search={user.role === 'guest' ? undefined : search?.side} onOpen={() => setPage('chat')}/>}
       </div>
       <div className="sidebar-footer">
-        <nav aria-label="Tools">{tools.map(t=><button key={t.id} className="nav-item" onClick={t.run}>{t.icon}{t.label}</button>)}</nav>
         <details className="account-menu"><summary className="user-chip" title="Account">
           <span className="avatar" aria-hidden="true">{(displayName(user) || '?').slice(0, 1).toUpperCase()}</span>
           <span className="user-name"><bdi>{displayName(user)}</bdi><small>{user.role}</small></span>
         </summary><div><button onClick={() => setPage('account')}>Account & sessions</button><button onClick={() => setPage('settings')}>Settings</button><button onClick={() => client.cancel()}>Sign out on this device</button></div></details>
+        <button type="button" className="tool sidebar-settings" aria-label="Settings" title="Settings" onClick={() => setPage('settings')}><Icon name="settings"/></button>
       </div>
     </aside>
     <main id="content" className="page-area">
@@ -154,11 +150,13 @@ export function SignedInShell({ client, notice }: { client: SessionClient; notic
     <footer className="statusbar">
       <span className="statusbar-group">
         <span className="status-item"><span className={`status-dot ${mode}`} aria-hidden="true"/>{mode === 'mock' ? 'Offline practice — fictional data' : 'Connected · this installation'}</span>
-        <button type="button" className="status-item" onClick={() => setPage('agents')}><Icon name="user"/>Agents</button>
-        <button type="button" className="status-item" onClick={() => setPage('board')}>Board{typeof openCards === 'number' && boardState?.boards.length ? ` · ${openCards} cards` : ''}</button>
-        <button type="button" className="status-item" onClick={() => setPage('memory')}><Icon name="database"/>Memory</button>
-        {user.role==='owner'&&<button type="button" className="status-item" onClick={()=>setPage('approvals')}><Icon name="clock"/>{approvalLabel}</button>}
+        <button type="button" className="status-item" aria-current={page === 'chat' ? 'page' : undefined} onClick={() => setPage('chat')}><Icon name="message-circle"/>Chat</button>
+        <button type="button" className="status-item" aria-current={page === 'agents' ? 'page' : undefined} onClick={() => setPage('agents')}><Icon name="user"/>Agents</button>
+        <button type="button" className="status-item" aria-current={page === 'board' ? 'page' : undefined} onClick={() => setPage('board')}>Board{typeof openCards === 'number' && boardState?.boards.length ? ` · ${openCards} cards` : ''}</button>
+        <button type="button" className="status-item" aria-current={page === 'memory' ? 'page' : undefined} onClick={() => setPage('memory')}><Icon name="database"/>Memory</button>
+        {user.role==='owner'&&<button type="button" className="status-item" aria-current={page === 'approvals' ? 'page' : undefined} onClick={()=>setPage('approvals')}><Icon name="clock"/>{approvalLabel}</button>}
         {tools.map(t=><button key={t.id} type="button" className="status-item" onClick={t.run}>{t.icon}{t.label}</button>)}
+        <button type="button" className="status-item" aria-current={page === 'settings' ? 'page' : undefined} onClick={() => setPage('settings')}><Icon name="settings"/>Settings</button>
       </span>
       <span className="statusbar-group">
         <button type="button" className="status-item" onClick={() => setPalette(true)}>⌘K</button>

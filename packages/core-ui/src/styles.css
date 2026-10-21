@@ -1624,3 +1624,9 @@ button.status-item:hover { background:var(--row-hover); color:var(--text); }
 .chat-avatar-state.is-ready .dot { background:#3FCB7E; } .chat-avatar-state.is-thinking .dot, .chat-avatar-state.is-preparing .dot { background:#E3A93B; } .chat-avatar-state.is-speaking .dot { background:#3D7BFA; }
 .chat-avatar-voice { flex:1; min-width:0; color:#A3ABB9; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
 .chat-avatar-notice { position:absolute; left:10px; top:10px; right:10px; margin:0; padding:6px 10px; border-radius:8px; background:rgba(120,30,40,.9); color:#fff; font-size:12px; }
+
+/* UI-SIDEBAR-01: the status bar is the page navigation; the open page is marked. */
+.app-shell .statusbar .status-item[aria-current="page"] { color:var(--text); background:color-mix(in srgb,var(--accent) 14%,transparent); border-radius:4px; }
+.app-shell .sidebar-footer { display:flex; flex-direction:row; align-items:center; gap:4px; }
+.app-shell .sidebar-footer .account-menu { flex:1; min-width:0; }
+.app-shell .sidebar-settings { flex:none; }
