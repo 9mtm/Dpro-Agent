@@ -152,7 +152,7 @@ export function MemoryPage({ client, active = false, focus, onOpenChat, onOpenPr
           {explorerView === 'files' ? <><p className="fine-print">Agent files and reviews: each agent's readable memory files (MEMORY.md). Edits you make there come back as reviews.</p><MemoryPanel client={client} active={active && tab === 'explorer'}/></>
             : c ? <Explorer c={c} agents={s?.agents ?? {}} onMove={m => void mover?.open(m)}/> : null}
         </>}
-        {tab === 'map' && map && <KnowledgeMap c={map} onOpenMemories={name => { if (!c) return; setTab('explorer'); setExplorerView('table'); c.setQuery(name); c.setScope('company'); }}/>}
+        {tab === 'map' && map && <KnowledgeMap c={map} agents={s?.agents ?? {}} onOpenMemories={name => { if (!c) return; setTab('explorer'); setExplorerView('table'); c.setQuery(name); c.setScope('company'); }}/>}
         {tab === 'access' && access && <AccessView c={access} scope={s?.scope.startsWith('project:') || s?.scope.startsWith('department:') ? s.scope : 'company'} tree={s?.tree ?? null}/>}
         {tab === 'health' && health && <HealthView c={health} conflicts={s?.tree ? s.tree.company.conflicts : null} onReview={() => setTab('review')} onFiles={() => { setTab('explorer'); setExplorerView('files'); }}/>}
         {tab === 'handoffs' && handoffs && <HandoffsView c={handoffs} onOpenChat={onOpenChat}/>}

@@ -1980,3 +1980,32 @@ button.status-item:hover { background:var(--row-hover); color:var(--text); }
 .mem-speed-track > span[data-bar="Meaning index"] { background:var(--mem-link); }
 .mem-detail-facts { display:grid; gap:6px; }
 .mem-detail-facts .mem-chips { display:flex; flex-wrap:wrap; gap:6px; align-items:center; font-size:12px; color:var(--text-3); }
+
+/* MEM-FINISH-01 · M14 link review, clusters, topics */
+.mem-map-views { display:flex; flex-wrap:wrap; gap:6px; align-items:center; justify-content:flex-end; padding:8px 0; }
+.app-shell .page-ui .mem-map-views > button[aria-pressed] { background:transparent; box-shadow:none; color:var(--text-2); }
+.app-shell .page-ui .mem-map-views > button[aria-pressed="true"] { background:var(--mem-link-bg); color:var(--text); }
+.mem-map-as { margin:0 0 6px; }
+.mem-map-review { display:grid; grid-template-columns:430px minmax(0,1fr) 400px; min-block-size:0; border-block-start:1px solid var(--border); }
+.mem-links-waiting { display:grid; align-content:start; border-inline-end:1px solid var(--border); min-inline-size:0; }
+.mem-links-head { display:flex; align-items:center; gap:10px; padding:12px 14px; border-block-end:1px solid var(--border); }
+.mem-links-head b { margin-inline-end:auto; font-size:13.5px; }
+.mem-links-why { margin:0; padding:10px 14px; border-block-end:1px solid var(--border); }
+.mem-link-row { display:grid; grid-template-columns:18px minmax(0,1fr); gap:10px; align-items:start; padding:11px 14px; border-block-end:1px solid var(--border); }
+.mem-link-row[data-checked] { background:var(--row-active); }
+.mem-link-row > div { display:grid; gap:4px; min-inline-size:0; }
+.mem-link-text-row { font-size:13px; }
+.mem-link-from { overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
+.mem-cluster-canvas { position:relative; display:grid; grid-template-columns:repeat(2,minmax(0,1fr)); gap:18px; align-content:start; padding:24px 18px 56px; min-inline-size:0; }
+.mem-cluster-ring { position:relative; display:grid; place-items:center; min-block-size:220px; border-radius:999px; padding:28px; }
+.mem-cluster-label { position:absolute; inset-block-start:-10px; inset-inline-start:50%; transform:translateX(-50%); padding:1px 8px; border-radius:999px; background:var(--canvas); font-size:11.5px; white-space:nowrap; }
+.mem-cluster-nodes { display:flex; flex-wrap:wrap; gap:8px; justify-content:center; }
+.mem-node-static { position:static; }
+.mem-cluster-canvas .mem-map-foot { position:absolute; inset-inline-start:18px; inset-block-end:16px; display:flex; gap:8px; }
+.mem-topics { display:grid; gap:12px; align-content:start; padding:18px; border-inline-start:1px solid var(--border); background:var(--canvas); }
+.mem-topics h3 { margin:0; font-size:15px; }
+.mem-topic-card { display:grid; gap:8px; padding:12px; border-radius:10px; background:var(--surface); box-shadow:inset 0 0 0 1px var(--border); }
+.mem-topic-key { display:flex; align-items:center; gap:8px; font-size:12px; color:var(--text-3); }
+.mem-topic-key input { flex:1; font-family:ui-monospace, Menlo, monospace; font-size:12px; }
+.mem-topic-preview { display:grid; gap:6px; font-size:12.5px; }
+@media (max-width: 1200px) { .mem-map-review { grid-template-columns:minmax(0,1fr); } .mem-cluster-canvas { grid-template-columns:minmax(0,1fr); } }

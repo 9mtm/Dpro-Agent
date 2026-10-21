@@ -3,10 +3,14 @@
 // on screen; starts from a search or everything, 1–2 links deep around the
 // chosen node. Pending links (waiting for the owner) are dashed and can be
 // approved or rejected from the side panel.
-import { Store } from './memory-store';
+// MEM-FINISH-01 (board M14): the waiting links (one or selected, with the
+// text they came from), the map clustered by project, groups that could
+// become topics (preview -> make topic with the preview's hash, or "not a
+// topic"), Rebuild map; and (board M4) the map as one agent sees it.
+import { Store, codeOf } from './memory-store';
 import type { Requester } from './memory-store';
 import { ENTITY_KINDS, queryString } from './memory-pages-contract.js';
-import type { EntityDetail, EntityKind, GraphEntity, GraphLink } from './memory-pages-contract.js';
+import type { AgentView, EntityDetail, EntityKind, GraphCluster, GraphEntity, GraphLink, GraphSync, MemoryDetail, TopicPreview } from './memory-pages-contract.js';
 
 export const MAX_NODES = 150;
 export const KIND_COLOR: Record<EntityKind, string> = { person: '#F0C27A', project: '#4A84FE', topic: '#8FD6B0', agent: '#C79BFF', decision: '#F29BB0', place: '#7FD3E6', task: '#B8C2D6' };
@@ -18,6 +22,11 @@ export type MapState = Readonly<{
   selected: string | null; detail: EntityDetail | null;
   positions: Readonly<Record<string, readonly [number, number]>>;
   size: readonly [number, number];
+  view: 'map' | 'links' | 'clusters';
+  /** '' = the owner's whole map; else the map limited to what this agent may read. */
+  asAgent: string; agentView: AgentView | null;
+  linkText: Readonly<Record<string, string>>; checkedLinks: readonly string[];
+  clusters: readonly GraphCluster[] | null; keys: Readonly<Record<string, string>>; topic: TopicPreview | null; result?: string;
 }>;
 
 /** A small force layout (repel all pairs, pull along links, gentle pull to the middle); deterministic. */
@@ -56,7 +65,8 @@ export function layout(ids: readonly string[], links: ReadonlyArray<readonly [st
 export class MemoryMapController extends Store<MapState> {
   #ticket = 0;
   constructor(client: Requester) {
-    super({ phase: 'idle', busy: false, entities: [], links: [], kinds: [...ENTITY_KINDS], query: '', depth: 2, zoom: 1, selected: null, detail: null, positions: {}, size: [1000, 640] }, client);
+    super({ phase: 'idle', busy: false, entities: [], links: [], kinds: [...ENTITY_KINDS], query: '', depth: 2, zoom: 1, selected: null, detail: null, positions: {}, size: [1000, 640],
+      view: 'map', asAgent: '', agentView: null, linkText: {}, checkedLinks: [], clusters: null, keys: {}, topic: null }, client);
   }
 
   async load() {
@@ -71,9 +81,16 @@ export class MemoryMapController extends Store<MapState> {
       ]);
       if (t !== this.#ticket) return;
       if (e.status !== 200) { this.publish({ phase: 'error', notice: e.status === 401 || e.status === 403 ? 'Only the owner can open the map.' : 'The map could not be loaded.' }); return; }
-      const entities = (e.body as { entities: GraphEntity[] }).entities.slice(0, MAX_NODES);
-      const links = [...(active?.links ?? []), ...(pending?.links ?? [])];
-      this.publish({ phase: 'ready', entities, links });
+      let entities = (e.body as { entities: GraphEntity[] }).entities.slice(0, MAX_NODES);
+      let links = [...(active?.links ?? []), ...(pending?.links ?? [])];
+      let agentView: AgentView | null = null;
+      if (s.asAgent) {
+        agentView = await this.read<AgentView>(`/api/memory/graph/agent-view/${encodeURIComponent(s.asAgent)}` + queryString({ q: s.query.trim(), limit: MAX_NODES }));
+        if (t !== this.#ticket) return;
+        if (agentView) { entities = agentView.entities.slice(0, MAX_NODES); links = [...agentView.links, ...(pending?.links ?? []).filter(l => agentView!.entities.some(x => x.id === l.from.id) && agentView!.entities.some(x => x.id === l.to.id))]; }
+      }
+      this.publish({ phase: 'ready', entities, links, agentView });
+      if (s.view !== 'map') await this.loadReview();
       this.relayout();
       const sel = this.getSnapshot().selected;
       if (sel && entities.some(x => x.id === sel)) void this.select(sel);
@@ -135,4 +152,82 @@ export class MemoryMapController extends Store<MapState> {
       if (r.status === 200) await this.load();
     } catch { this.publish({ busy: false, notice: 'The link was not changed (no connection).' }); }
   }
+
+  // ---- board M14: waiting links, clusters → topics, rebuild; board M4: as one agent sees it ----
+  setView(view: MapState['view']) { this.publish({ view, result: undefined, notice: undefined }); if (view !== 'map') void this.loadReview(); }
+  setAgent(asAgent: string) { this.publish({ asAgent, selected: null, detail: null }); void this.load(); }
+  pending(): GraphLink[] { return this.getSnapshot().links.filter(l => l.status === 'pending'); }
+
+  /** The waiting links' source text and the topic suggestions. */
+  async loadReview() {
+    const s = this.getSnapshot();
+    const need = [...new Set(this.pending().map(l => l.memoryIds[0]).filter((id): id is string => !!id && !(id in s.linkText)))].slice(0, 30);
+    const [clusters, ...texts] = await Promise.all([
+      this.read<{ clusters: GraphCluster[] }>('/api/memory/graph/clusters?limit=50'),
+      ...need.map(id => this.read<{ memory: MemoryDetail }>(`/api/memory/scopes/memories/${encodeURIComponent(id)}`)),
+    ]);
+    const linkText = { ...this.getSnapshot().linkText };
+    need.forEach((id, i) => { const m = texts[i]?.memory; if (m) linkText[id] = m.content; });
+    const keys = { ...this.getSnapshot().keys };
+    for (const c of clusters?.clusters ?? []) if (!(c.id in keys)) keys[c.id] = c.suggestedTopicKey ?? '';
+    this.publish({ linkText, clusters: clusters?.clusters ?? [], keys });
+  }
+  toggleLink(id: string) { const x = this.getSnapshot().checkedLinks; this.publish({ checkedLinks: x.includes(id) ? x.filter(y => y !== id) : [...x, id] }); }
+  /** Approves or rejects every selected waiting link (one call each). */
+  async decideSelected(action: 'approve' | 'reject') {
+    const ids = this.getSnapshot().checkedLinks.filter(id => this.pending().some(l => l.id === id));
+    if (!ids.length) return;
+    this.publish({ busy: true, notice: undefined, result: undefined });
+    let done = 0;
+    for (const id of ids) {
+      try { const r = await this.req('POST', `/api/memory/graph/links/${encodeURIComponent(id)}/${action}`); if (r.status === 200) done++; } catch { /* counted below */ }
+    }
+    this.publish({ busy: false, checkedLinks: [], result: `${done} ${done === 1 ? 'link' : 'links'} ${action === 'approve' ? 'approved' : 'rejected'}${done < ids.length ? `; ${ids.length - done} could not be changed` : ''}.` });
+    await this.load();
+  }
+  showOnMap(entityId: string) { this.publish({ view: 'map' }); void this.select(entityId); }
+
+  setKey(clusterId: string, key: string) { this.publish({ keys: { ...this.getSnapshot().keys, [clusterId]: key }, topic: this.getSnapshot().topic?.cluster.id === clusterId ? null : this.getSnapshot().topic }); }
+  /** What making the group a topic would do (changes nothing). */
+  async previewTopic(clusterId: string) {
+    const key = this.getSnapshot().keys[clusterId]?.trim();
+    this.publish({ busy: true, notice: undefined, result: undefined, topic: null });
+    try {
+      const r = await this.req('POST', `/api/memory/graph/clusters/${clusterId}/topic-preview`, key ? { topicKey: key } : {});
+      this.publish({ busy: false, ...(r.status === 200 ? { topic: (r.body as { preview: TopicPreview }).preview } : { notice: codeOf(r) === 'not_found' ? 'This group changed; it is no longer suggested.' : 'Use a topic key of small letters, digits, dots or dashes.' }) });
+    } catch { this.publish({ busy: false, notice: 'The preview could not be made (no connection).' }); }
+  }
+  /** Gives the previewed memory the topic key (a new version); stops when anything changed since the preview. */
+  async makeTopic() {
+    const p = this.getSnapshot().topic;
+    if (!p || p.blocked || !p.target) return;
+    this.publish({ busy: true, notice: undefined });
+    try {
+      const r = await this.req('POST', `/api/memory/graph/clusters/${p.cluster.id}/topic`, { topicKey: p.topicKey, expectedPreviewHash: p.previewHash, confirm: true });
+      if (r.status !== 200) { const code = codeOf(r); this.publish({ busy: false, topic: null, notice: code === 'stale' ? 'The group changed since the preview. Preview it again.' : code === 'key_taken' ? 'Another memory of this drawer already has that key.' : 'The topic was not made.' }); return; }
+      this.publish({ busy: false, topic: null, result: `“${p.topicKey}” is now a topic: later saves on it update one memory with its history.` });
+      await this.loadReview();
+    } catch { this.publish({ busy: false, notice: 'The topic was not made (no connection).' }); }
+  }
+  cancelTopic() { this.publish({ topic: null }); }
+  async dismiss(clusterId: string) {
+    this.publish({ busy: true, notice: undefined, result: undefined });
+    try {
+      const r = await this.req('POST', `/api/memory/graph/clusters/${clusterId}/dismiss`);
+      if (r.status !== 200) { this.publish({ busy: false, notice: 'That did not work.' }); return; }
+      this.publish({ busy: false, clusters: (this.getSnapshot().clusters ?? []).filter(c => c.id !== clusterId), topic: null, result: 'Not a topic: it is not suggested again until it changes.' });
+    } catch { this.publish({ busy: false, notice: 'That did not work (no connection).' }); }
+  }
+  /** Rebuild map: index memories without a current map entry and remove leftovers. */
+  async rebuild() {
+    this.publish({ busy: true, notice: undefined, result: undefined });
+    try {
+      const r = await this.req('POST', '/api/memory/graph/sync', {});
+      if (r.status !== 200) { this.publish({ busy: false, notice: 'The map was not rebuilt.' }); return; }
+      const x = r.body as GraphSync;
+      this.publish({ busy: false, result: `Map rebuilt: ${x.indexed} memories read, ${x.pruned.links + x.pruned.entities} leftovers removed.` });
+      await this.load();
+    } catch { this.publish({ busy: false, notice: 'The map was not rebuilt (no connection).' }); }
+  }
 }
+
