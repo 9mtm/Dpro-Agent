@@ -137,7 +137,7 @@ test('tools are grouped by kind; a group turns on or off together (server-off to
   assert.equal(toolGroup('exec'), 'System');
   assert.equal(toolGroup('something_new'), 'Other');
   const c = new AgentCardController(await client(), 'sample-main'); t.after(() => c.dispose());
-  await c.load(); await c.openTab('permissions');
+  await c.load(); await c.openTab('mcp'); // board M6: tools live under Tools & MCP
   c.setTools(['web_fetch', 'telegram_send', 'exec'], true);
   const d = c.getSnapshot().grantDraft;
   assert.ok(d.includes('web_fetch') && d.includes('telegram_send'));

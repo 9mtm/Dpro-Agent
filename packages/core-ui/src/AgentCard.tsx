@@ -15,7 +15,8 @@ import { validatedDisplayName } from './naming';
 import { UiIcon } from './ui-icons';
 
 const TABS: { key: CardTab; label: string }[] = [
-  { key: 'profile', label: 'Profile' }, { key: 'persona', label: 'Persona' }, { key: 'permissions', label: 'Permissions' }, { key: 'memory', label: 'Memory' }, { key: 'skills', label: 'Skills' }, { key: 'mcp', label: 'MCP' },
+  // Board M6: Memory next to the persona; tools and MCP together; drawer and action permissions under Access.
+  { key: 'profile', label: 'Profile' }, { key: 'persona', label: 'Persona' }, { key: 'memory', label: 'Memory' }, { key: 'skills', label: 'Skills' }, { key: 'mcp', label: 'Tools & MCP' }, { key: 'permissions', label: 'Access' },
 ];
 const ROLE_LABEL: Record<string, string> = { '': 'No role', main: 'Main agent', manager: 'Manager', specialist: 'Specialist', evaluator: 'Evaluator' };
 const TRAIT: Record<TraitName, [string, string, string]> = {
@@ -63,8 +64,8 @@ export function CardView({ card, agents, personality, onBack, onOpenMemory }: { 
     {s.phase === 'error' ? null : <>
       {s.tab === 'profile' && <ProfileTab card={card} agents={agents} busy={busy}/>}
       {s.tab === 'persona' && <PersonaTab card={card} personality={personality} busy={busy}/>}
-      {s.tab === 'permissions' && <PermissionsTab card={card} busy={busy}/>}
-      {s.tab === 'mcp' && <AgentMcp key={s.agentId} client={card.client} agentId={s.agentId}/>}
+      {s.tab === 'permissions' && <PermissionsTab card={card} busy={busy} part="access"/>}
+      {s.tab === 'mcp' && <><PermissionsTab card={card} busy={busy} part="tools"/><AgentMcp key={s.agentId} client={card.client} agentId={s.agentId}/></>}
       {s.tab === 'skills' && <AgentSkills key={s.agentId} client={card.client} agentId={s.agentId}/>}
       {s.tab === 'memory' && <MemoryTab card={card} onOpenMemory={onOpenMemory}/>}
     </>}
@@ -151,14 +152,15 @@ function PersonaTab({ card, personality, busy }: { card: AgentCardController; pe
   </div>;
 }
 
-function PermissionsTab({ card, busy }: { card: AgentCardController; busy: boolean }) {
+/** Access (drawers + actions) or Tools (by kind); one save for both. */
+function PermissionsTab({ card, busy, part }: { card: AgentCardController; busy: boolean; part: 'access' | 'tools' }) {
   const s = useSyncExternalStore(card.subscribe, card.getSnapshot, card.getSnapshot);
   const [confirm, setConfirm] = useState(false);
   const d = s.permissionDraft, g = s.grants, gd = s.grantDraft ?? [];
   if (!d || !g) return <p className="fine-print">Loading permissions…</p>;
   const save = () => { if (card.riskyAllowed() && !confirm) { setConfirm(true); return; } setConfirm(false); void card.savePermissions(card.riskyAllowed()); };
   return <div className="card-section">
-    <section className="card-sub" aria-label="Memory drawers">
+    {part === 'access' && <><section className="card-sub" aria-label="Memory drawers">
       <h4>Memory</h4>
       <p className="fine-print">Which of your memory drawers this agent may read, and which it may add to.</p>
       <table className="perm-table"><thead><tr><th scope="col">Drawer</th><th scope="col">Read</th><th scope="col">Write</th></tr></thead>
@@ -172,8 +174,8 @@ function PermissionsTab({ card, busy }: { card: AgentCardController; busy: boole
       <div className="mode-list">{permissionCategories.map(c => <div key={c} className="mode-row"><span>{CATEGORY[c] ?? c}</span>
         <span className="seg small" role="radiogroup" aria-label={CATEGORY[c] ?? c}>{(['off', 'ask', 'allow'] as const).map(m =>
           <button key={m} type="button" role="radio" aria-checked={d.modes[c] === m} disabled={busy} onClick={() => card.setMode(c, m)}>{m === 'off' ? 'Off' : m === 'ask' ? 'Ask me' : 'Allow'}</button>)}</span></div>)}</div>
-    </section>
-    <section className="card-sub" aria-label="Tools">
+    </section></>}
+    {part === 'tools' && <section className="card-sub" aria-label="Tools">
       <h4>Tools <small className="fine-print">{gd.length} of {g.available.length} on</small></h4>
       {TOOL_GROUPS.map(group => {
         const tools = g.available.filter(t => toolGroup(t.name) === group);
@@ -194,7 +196,7 @@ function PermissionsTab({ card, busy }: { card: AgentCardController; busy: boole
           })}</ul>
         </div>;
       })}
-    </section>
+    </section>}
     {confirm && <p className="card-notice" role="alert">You allowed a risky action (spend money, install software or delete). Press Save again to confirm.</p>}
     <div className="card-actions sticky">
       <button type="button" className="primary" disabled={busy || !card.permissionsChanged()} onClick={save}>{confirm ? 'Confirm and save' : 'Save permissions'}</button>
@@ -228,7 +230,7 @@ function MemoryTab({ card, onOpenMemory }: { card: AgentCardController; onOpenMe
         <label className="check"><input type="checkbox" checked={d.sharedMemory} disabled={busy} onChange={e => card.setShared(e.target.checked)}/>Share what it learns with the team</label>
         <div className="card-actions"><button type="button" className="primary" disabled={busy || !card.permissionsChanged()} onClick={() => void card.savePermissions(false)}>Save memory access</button></div>
         {a && <p className="fine-print">{a.template ? <>Role template: <b>{a.template.name}</b>. </> : 'No role template. '}{a.exceptions.length ? `${a.exceptions.length} ${a.exceptions.length === 1 ? 'exception' : 'exceptions'} in Memory › Access.` : ''} Effective now: reads {a.effective.memoryRead.map(k => drawerLabel({ kind: k as never })).join(', ') || 'nothing'}.</p>}
-        <p className="fine-print">Off / ask / allow per action stays under Permissions.</p>
+        <p className="fine-print">Off / ask / allow per action stays under Access.</p>
       </section>
       <div className="agent-memory-col">
         <section className="card-sub" aria-label="Its own notes">
@@ -251,10 +253,9 @@ function MemoryTab({ card, onOpenMemory }: { card: AgentCardController; onOpenMe
           <p className="fine-print">From the central skill library; updates arrive with the library.</p>
         </section>
         <section className="card-sub" aria-label="Tools and MCP">
-          <h4>Tools &amp; MCP <button type="button" className="link-button" onClick={() => void card.openTab('permissions')}>Manage…</button></h4>
+          <h4>Tools &amp; MCP <button type="button" className="link-button" onClick={() => void card.openTab('mcp')}>Manage…</button></h4>
           {g ? TOOL_GROUPS.map(group => { const tools = g.available.filter(t => toolGroup(t.name) === group); if (!tools.length) return null;
             return <span key={group} className="mem-line"><span>{group}</span><span className="fine-print">{tools.filter(t => gd.includes(t.name)).length} of {tools.length} on</span></span>; }) : <p className="fine-print">…</p>}
-          <button type="button" className="link-button" onClick={() => void card.openTab('mcp')}>MCP connections</button>
           <p className="fine-print">New MCP tools stay off until you turn them on.</p>
         </section>
       </div>

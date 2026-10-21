@@ -75,7 +75,7 @@ export class AgentCardController {
 
   async openTab(tab: CardTab) {
     this.publish({ tab, saved: undefined, notice: undefined });
-    if ((tab === 'permissions' || tab === 'memory') && !this.#state.permissions) await this.loadPermissions();
+    if ((tab === 'permissions' || tab === 'memory' || tab === 'mcp') && !this.#state.permissions) await this.loadPermissions();
     if (tab === 'memory' && !this.#state.memories) await this.loadMemories();
     if (tab === 'persona' && !this.#state.versions) await this.loadVersions();
   }
