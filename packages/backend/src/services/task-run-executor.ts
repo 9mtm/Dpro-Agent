@@ -34,6 +34,8 @@ import { UNKNOWN_PRINCIPAL } from '../tools/grants.js';
 import { logActivity } from './activity-logger.js';
 import { resolveProviderApiKey } from '../credentials/authority.js';
 import { ollamaToolChat } from '../llm/ollama-tool-chat.js';
+import { DEFAULT_OLLAMA_MODEL } from '../llm/ollama.js';
+import { resolveLocalModel } from '../llm/local-models.js';
 import { SMALL_AGENT_ID, smallAgentCard, smallAgentRunScope, smallAgentSystemPrompt } from './small-agent.js';
 import { intersectGrants, staticGrants } from '../tools/grants.js';
 import { toolMemoryDrawers } from '../tools/memory/scope.js';
@@ -336,6 +338,7 @@ export async function executeTaskRun(runId: string, owner: string = WORKER_ID): 
     let smallTemp: number | undefined;
     let claudeClient: ClaudeClient | undefined;
     let factsOwner: string | null | undefined;
+    let localModel: string | null = null;
     if (isSmall) {
       // MCP-01: the small local agent. Tools = what the run was given at
       // spawn ∩ the agent's grants now (never wider); only the stored
@@ -352,11 +355,16 @@ export async function executeTaskRun(runId: string, owner: string = WORKER_ID): 
     } else {
       // SECURITY (S1.1): key from the credential authority (agent's own key,
       // then the historical cron fallback row); never another agent's key.
-      const apiKey = await resolveProviderApiKey('claude', { agentId: agent.id, noGlobal: true, legacySettingsRow: 'claude_api_key' });
-      if (!apiKey || agent.provider !== 'claude') {
-        const msg = `Agent "${agent.name}" has no Claude API key configured or provider is not claude.`;
-        console.warn(`[TaskRun] ⚠️  ${msg}`);
-        return await fail(msg, agent.id);
+      const apiKey = agent.provider === 'claude'
+        ? await resolveProviderApiKey('claude', { agentId: agent.id, noGlobal: true, legacySettingsRow: 'claude_api_key' })
+        : '';
+      // Without a Claude key (or for an agent set to the local model) the run
+      // uses the local model, like a chat turn does; the agent's own local
+      // model when it names one, else the default (or another installed one).
+      if (!apiKey) {
+        const wanted = agent.provider === 'claude' || !agent.model ? DEFAULT_OLLAMA_MODEL : agent.model;
+        localModel = await resolveLocalModel(wanted, DEFAULT_OLLAMA_MODEL);
+        console.log('[TaskRun] No Claude key for this agent; using the local model', { agentId: agent.id, model: localModel });
       }
       systemPrompt = (agent.system_prompt ?? `You are ${agent.name}, an AI agent.`) + await agentSkillsPrompt(agent.id);
       // CORE-MEM-HANDOFF: the agent's newest note for this board task, and how to leave the next one.
@@ -366,8 +374,11 @@ export async function executeTaskRun(runId: string, owner: string = WORKER_ID): 
       const parts = [handoff, handoffTools ? HANDOFF_NOTE : ''].filter(Boolean);
       if (parts.length) systemPrompt += `\n\n${parts.join('\n\n')}`;
       factsOwner = await taskRunOwner(run.user_id).catch(() => undefined);
-      claudeClient = new ClaudeClient(apiKey, agent.model);
-      driver = claudeDriver(claudeClient, agent, systemPrompt, registry.getToolsForAPI());
+      if (localModel) driver = ollamaDriver({ ...agent, model: localModel }, systemPrompt, registry.getToolsForAPI());
+      else {
+        claudeClient = new ClaudeClient(apiKey, agent.model);
+        driver = claudeDriver(claudeClient, agent, systemPrompt, registry.getToolsForAPI());
+      }
     }
     const prompt = await runPrompt(run);
     // R1: the contract pinned on the run narrows tools and drawers for this
@@ -392,6 +403,7 @@ export async function executeTaskRun(runId: string, owner: string = WORKER_ID): 
       const tools = registry.getToolsForAPI();
       driver = isSmall
         ? ollamaDriver({ ...agent, model: driver.model, temperature: smallTemp!, max_tokens: driver.maxTokens }, systemPrompt, tools)
+        : localModel ? ollamaDriver({ ...agent, model: localModel }, systemPrompt, tools)
         : claudeDriver(claudeClient!, agent, systemPrompt, tools);
     }
 
