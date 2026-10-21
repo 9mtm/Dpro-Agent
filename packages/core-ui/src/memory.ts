@@ -10,6 +10,8 @@ export interface ProposalSummary {
   reviewHash: string; baseHash: string; baseRevision: number; status: ProposalStatus; source: 'file' | 'upload' | 'learning' | 'agent' | 'import';
   note: string | null; createdBy: string; createdAt: string; decidedBy: string | null; decidedAt: string | null;
   appliedRevision: number | null; reasons: string[]; importBatchId: string | null;
+  /** CORE-MEM-CONFLICT: the memory a conflict proposal contradicts, and how it was decided. */
+  conflictWith?: string; decision?: 'keep_new' | 'keep_old' | 'keep_both';
 }
 export interface Proposal extends ProposalSummary { changes: Change[] }
 export interface DrawerView { drawerId: string; agentId: string; revision: number; hash: string; count: number; path?: string; content: string }
@@ -71,6 +73,8 @@ function summary(value: unknown): ProposalSummary {
     note: nullableText(p.note), createdBy: text(p.createdBy), createdAt: timestamp(p.createdAt), decidedBy: nullableText(p.decidedBy),
     decidedAt: p.decidedAt === null ? null : timestamp(p.decidedAt), appliedRevision: p.appliedRevision === null ? null : integer(p.appliedRevision),
     reasons: p.reasons.map(x => text(x)), importBatchId: nullableText(p.importBatchId),
+    ...(p.conflictWith ? { conflictWith: identifier(p.conflictWith) } : {}),
+    ...(p.decision ? { decision: ['keep_new', 'keep_old', 'keep_both'].includes(p.decision as string) ? p.decision as 'keep_new' | 'keep_old' | 'keep_both' : bad() } : {}),
   };
 }
 function exactKeys(value: Record<string, unknown>, keys: string[]) {

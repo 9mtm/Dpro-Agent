@@ -15,6 +15,8 @@ import { allowedChatMemory, chatMemoryRoute, chatMemoryResponse } from './chat-m
 import { allowedChatSearch, chatSearchRoute, chatSearchResponse } from './chat-search-contract.js';
 import { allowedChatExport, chatExportRoute, chatExportResponse } from './chat-export-contract.js';
 import { allowedChatSecrets, chatSecretsRoute, chatSecretsResponse, CLEANUP_PATH } from './chat-secrets-contract.js';
+import { allowedMemoryPages, memoryPagesRoute, memoryPagesResponse } from './memory-pages-contract.js';
+import { allowedMemoryRecall, memoryRecallRoute, memoryRecallResponse } from './memory-recall-contract.js';
 import { allowedTerminal, terminalPath, terminalRoute, terminalResponse, TerminalEventParser, TERMINAL_STREAM_MS } from './terminal-contract.js';
 import type { TerminalFrame } from './terminal-contract.js';
 import { allowedConversation, conversationPath, conversationRoute, conversationResponse, RunEventParser, RUN_IDLE_MS, RUN_STREAM_MS } from './conversation-contract.js';
@@ -46,11 +48,13 @@ type BoundaryNotice = 'published_password' | 'account_inactive' | 'rate_limited'
 export type SessionState = Readonly<{ mode: Mode; epoch: number; retryAfterSeconds?: number; setup?: 'checking' | 'required' | 'login' | 'unavailable'; phase: 'signed-out' | 'signing-in' | 'authenticated' | 'signing-out'; user?: User; notice?: BoundaryNotice | 'invalid' | 'denied' | 'limited' | 'unavailable' | 'expired' | 'logout-confirmed' | 'logout-unknown' }>;
 import { SessionFailure } from './session-failure';
 export { SessionFailure } from './session-failure';
-export interface WireRequest { method: 'GET' | 'POST' | 'PUT' | 'DELETE'; path: string; body?: unknown; headers: Readonly<Record<string, string>>; signal: AbortSignal }
+export interface WireRequest { method: 'GET' | 'POST' | 'PUT' | 'PATCH' | 'DELETE'; path: string; body?: unknown; headers: Readonly<Record<string, string>>; signal: AbortSignal }
 export interface WireResponse { status: number; body: unknown; retryAfterSeconds?: number; stream?: ReadableStream<Uint8Array>; streamIds?: ChatIds }
 export type WireTransport = (request: WireRequest) => Promise<WireResponse>;
 export type ConversationRequest = { method: 'GET' | 'DELETE'; path: string } | { method: 'POST' | 'PUT'; path: string; body?: unknown };
-type Request = AgentRequest | HireRequest | MemoryRequest | SuggestionRequest | BoardRequest | ConversationRequest | { method: 'GET'; path: '/api/auth/me' };
+/** MEM-UI-01: the memory pages (owner only; checked by the memory-pages and memory-recall contracts). */
+export type MemoryPagesRequest = { method: 'GET' | 'DELETE'; path: string } | { method: 'POST' | 'PUT' | 'PATCH'; path: string; body?: unknown };
+type Request = AgentRequest | HireRequest | MemoryRequest | SuggestionRequest | BoardRequest | ConversationRequest | MemoryPagesRequest | { method: 'GET'; path: '/api/auth/me' };
 const record = (x: unknown): x is Record<string, unknown> => !!x && typeof x === 'object' && !Array.isArray(x);
 const id = (x: string) => /^[A-Za-z0-9][A-Za-z0-9_.@-]{0,199}$/.test(x) && !x.includes('..');
 function user(value: unknown): User {
@@ -67,6 +71,8 @@ export function allowedRequest(method: string, path: string, body?: unknown): bo
   if (mcpImportPath(path)) return allowedMcpImport(method,path,body);
   if (templatePath(path)) return allowedTemplates(method,path,body);
   if (skillLibraryPath(path)) return allowedSkillLibrary(method,path,body);
+  if (memoryPagesRoute(path)) return allowedMemoryPages(method, path, body);
+  if (memoryRecallRoute(path)) return allowedMemoryRecall(method, path, body);
   if (allowedGenVR(method, path, body) || allowedChannel(method, path, body) || allowedPersonality(method, path, body) || allowedHire(method, path, body) || allowedBoard(method, path, body) || allowedConversation(method, path, body) || allowedAgentCard(method, path, body) || allowedTerminal(method, path, body) || allowedConnector(method, path, body) || allowedLocalImport(method, path, body) || allowedChatBoard(method, path, body) || allowedChatMemory(method, path, body) || allowedChatSearch(method, path, body) || allowedChatExport(method, path, body) || allowedChatSecrets(method, path, body)) return true;
   const agentId = /^\/api\/agents\/([^/?#]+)$/.exec(path)?.[1];
   if (method === 'PUT') return validAgentId(agentId) && record(body) && Object.keys(body).length === 2 && Object.keys(body).every(k => k === 'name' || k === 'expectedVersion') && typeof body.name === 'string' && validatedDisplayName(body.name) === body.name && validVersion(body.expectedVersion);
@@ -136,6 +142,8 @@ function projectResponse(path: string, response: WireResponse): WireResponse {
   if (chatSearchRoute(path)) return { status: response.status, body: chatSearchResponse(path, response.status, response.body) };
   if (chatExportRoute(path)) return { status: response.status, body: chatExportResponse(path, response.status, response.body) };
   if (chatSecretsRoute(path)) return { status: response.status, body: chatSecretsResponse(path, response.status, response.body) };
+  if (memoryPagesRoute(path)) return { status: response.status, body: memoryPagesResponse(path, response.status, response.body) };
+  if (memoryRecallRoute(path)) return { status: response.status, body: memoryRecallResponse(path, response.status, response.body) };
   if (path === '/api/agents' || (path.startsWith('/api/agents/') && path !== '/api/agents/name-suggestion')) return agentResponse(path, response);
   if (response.status === 200 && (path === '/api/auth/login' || path === '/api/auth/me')) {
     if (!record(response.body)) throw new SessionFailure('unavailable');
@@ -247,7 +255,7 @@ export class SessionClient {
     this.#reset(mode, 'signed-out');
   }
   cancel() { this.#reset(this.#state.mode, 'signed-out', this.#state.phase === 'signing-out' ? 'logout-unknown' : undefined); }
-  async #send(method: 'GET' | 'POST' | 'PUT' | 'DELETE', path: string, body: unknown, token: string | undefined, epoch: number, signal?: AbortSignal, observeResponse?: (response: WireResponse) => void): Promise<WireResponse> {
+  async #send(method: WireRequest['method'], path: string, body: unknown, token: string | undefined, epoch: number, signal?: AbortSignal, observeResponse?: (response: WireResponse) => void): Promise<WireResponse> {
     const mode = this.#state.mode;
     if (mode === 'fixture' || !allowedRequest(method, path, body)) throw new SessionFailure('blocked');
     const transport = this.transports[mode];
@@ -381,6 +389,7 @@ export class SessionClient {
     if ((conversationRoute(request.path) || chatSearchRoute(request.path) || chatExportRoute(request.path) || chatSecretsRoute(request.path)) && this.#state.user?.role === 'guest') throw new SessionFailure('blocked');
     if (request.path === CLEANUP_PATH && this.#state.user?.role !== 'owner') throw new SessionFailure('blocked');
     if ((request.path === '/api/chat/project-folders' || approvalRoute(request.path) || connectionsRoute(request.path) || templatePath(request.path) || mcpImportPath(request.path) || channelRoute(request.path) || connectorRoute(request.path) || localImportRoute(request.path) || chatBoardRoute(request.path) || chatMemoryRoute(request.path)) && this.#state.user?.role !== 'owner') throw new SessionFailure('blocked');
+    if ((memoryPagesRoute(request.path) || memoryRecallRoute(request.path)) && this.#state.user?.role !== 'owner') throw new SessionFailure('blocked');
     if (terminalRoute(request.path) && (this.#state.user?.role !== 'owner' || terminalPath(request.path)?.kind === 'stream')) throw new SessionFailure('blocked');
     if (request.method === 'PUT' && !conversationRoute(request.path) && this.#state.user?.role !== 'owner') throw new SessionFailure('blocked');
     if (request.method === 'POST' && request.path.startsWith('/api/memory/') && this.#state.user?.role !== 'owner') throw new SessionFailure('blocked');

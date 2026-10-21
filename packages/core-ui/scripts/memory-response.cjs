@@ -40,6 +40,9 @@ function summary(x) {
     note: nullable(x.note), createdBy: text(x.createdBy), createdAt: timestamp(x.createdAt), decidedBy: nullable(x.decidedBy),
     decidedAt: nullable(x.decidedAt, timestamp), appliedRevision: nullable(x.appliedRevision, int),
     reasons: list(x.reasons, text), importBatchId: nullable(x.importBatchId),
+    // CORE-MEM-CONFLICT: only on a conflict proposal.
+    ...(x.conflictWith ? { conflictWith: id(x.conflictWith) } : {}),
+    ...(x.decision ? { decision: ['keep_new', 'keep_old', 'keep_both'].includes(x.decision) ? x.decision : bad() } : {}),
   };
 }
 function proposal(x) {

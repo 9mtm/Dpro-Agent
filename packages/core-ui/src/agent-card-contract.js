@@ -30,6 +30,8 @@ export function validDrawer(d) {
   return keyed ? typeof d.key === 'string' && drawerKey(d.kind, d.key) : d.key === undefined;
 }
 const importance = x => Number.isInteger(x) && x >= 1 && x <= 10;
+/** CORE-MEM-TOPIC: a stable topic key, e.g. "owner-drinks". */
+export const topicKey = x => typeof x === 'string' && x.length <= 80 && /^[\p{L}\p{N}]+(-[\p{L}\p{N}]+)*$/u.test(x);
 const traits = x => record(x) && Object.keys(x).length === traitNames.length && traitNames.every(n => Number.isInteger(x[n]) && x[n] >= 0 && x[n] <= 100);
 
 /** The card or memory path this request names, or null. */
@@ -78,7 +80,7 @@ export function allowedAgentCard(method, path, body) {
     case 'persona-lock': case 'persona-unlock': return method === 'POST' && body === undefined;
     case 'persona-rollback': return method === 'POST' && record(body) && Object.keys(body).length === 1 && version(body.version);
     case 'memories': return (method === 'GET' && body === undefined)
-      || (method === 'POST' && record(body) && onlyKeys(body, ['type', 'content', 'importance', 'drawer']) && memoryTypes.includes(body.type)
+      || (method === 'POST' && record(body) && onlyKeys(body, ['type', 'content', 'importance', 'drawer', 'topicKey']) && memoryTypes.includes(body.type) && (body.topicKey === undefined || topicKey(body.topicKey))
         && text(body.content, MAX_MEMORY, true) && (body.importance === undefined || importance(body.importance)) && (body.drawer === undefined || validDrawer(body.drawer)));
     case 'drawers': return method === 'GET' && body === undefined;
     case 'search': return method === 'POST' && record(body) && onlyKeys(body, ['query', 'limit']) && line(body.query, 500) && (body.limit === undefined || (Number.isInteger(body.limit) && body.limit >= 1 && body.limit <= 50));
@@ -93,6 +95,13 @@ export function allowedAgentCard(method, path, body) {
 
 const str = (x, max) => (typeof x === 'string' ? x.slice(0, max) : '');
 const fail = () => { throw Error('Invalid agent card response'); };
+/** Who wrote a memory version: an agent id, a short system word, or the owner ("you"; the owner id is never shown). */
+function versionBy(x) {
+  if (typeof x !== 'string' || !x) return '';
+  if (/^agent:[A-Za-z0-9_][A-Za-z0-9_.:-]{0,127}$/.test(x)) return x;
+  if (/^[a-z][a-z_-]{0,19}$/.test(x)) return x;
+  return 'you';
+}
 
 function persona(x) {
   if (!record(x) || !version(x.version) || !traits(x.traits)) fail();
@@ -106,7 +115,8 @@ export function memoryItem(x) {
   const d = record(x.drawer) && drawerKinds.includes(x.drawer.kind) ? { kind: x.drawer.kind, ...(typeof x.drawer.key === 'string' ? { key: str(x.drawer.key, 128) } : {}) } : { kind: 'owner' };
   return { id: x.id, type: x.type, content: x.content.slice(0, MAX_MEMORY), importance: Math.min(10, Math.max(1, imp)), drawer: d,
     layer: typeof x.memoryLayer === 'string' ? str(x.memoryLayer, 20) : null, createdAt: str(x.createdAt, 40),
-    tags: Array.isArray(x.tags) ? x.tags.filter(t => typeof t === 'string').slice(0, 20).map(t => t.slice(0, 60)) : [] };
+    tags: Array.isArray(x.tags) ? x.tags.filter(t => typeof t === 'string').slice(0, 20).map(t => t.slice(0, 60)) : [],
+    ...(topicKey(x.topicKey) ? { topicKey: x.topicKey } : {}) };
 }
 
 const ERRORS = { 400: ['invalid_role', 'invalid_version', 'no_change'], 403: ['reserved_agent'], 404: [], 409: ['version_conflict', 'personality_locked'] };
@@ -157,7 +167,7 @@ export function agentCardResponse(path, status, body) {
     case 'memory-versions':
       if (!Array.isArray(body.versions)) fail();
       return { versions: body.versions.slice(0, 200).map(v => ({ version: Number.isSafeInteger(v?.version) ? v.version : 0, change: str(v?.change, 20), type: str(v?.type, 20),
-        content: typeof v?.content === 'string' ? v.content.slice(0, MAX_MEMORY) : '', createdAt: str(v?.createdAt, 40), reason: str(v?.reason, 40) })) };
+        content: typeof v?.content === 'string' ? v.content.slice(0, MAX_MEMORY) : '', createdAt: str(v?.createdAt, 40), reason: str(v?.reason, 40), by: versionBy(v?.createdBy), proposal: typeof v?.proposalId === 'string' && /^[A-Za-z0-9-]{1,64}$/.test(v.proposalId) })) };
   }
   fail();
 }

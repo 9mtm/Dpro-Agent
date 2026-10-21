@@ -24,6 +24,8 @@ const { validDeviceToken, validLoginBody } = require('../src/login-contract.js')
 const { setupStatus } = require('../src/setup-status.js');
 const { OWNER_SETUP_PATH, validOwnerSetupBody, ownerSetupResponse } = require('../src/owner-setup-contract.js');
 const { memoryResponse } = require('./memory-response.cjs');
+const { allowedMemoryPages, memoryPagesRoute, memoryPagesResponse } = require('../src/memory-pages-contract.js');
+const { allowedMemoryRecall, memoryRecallRoute, memoryRecallResponse } = require('../src/memory-recall-contract.js');
 const { validChatBody, validKey, validId, chatError, SSEParser, CHAT_BYTES, CHAT_DEADLINE_MS, CHAT_IDLE_MS } = require('../src/chat-protocol.js');
 const http = require('node:http');
 const { performance } = require('node:perf_hooks');
@@ -64,6 +66,8 @@ function allowed(method, target, body) {
   if (mcpImportPath(target)) return allowedMcpImport(method,target,body);
   if (templatePath(target)) return allowedTemplates(method,target,body);
   if (skillLibraryPath(target)) return allowedSkillLibrary(method,target,body);
+  if (memoryPagesRoute(target)) return allowedMemoryPages(method, target, body);
+  if (memoryRecallRoute(target)) return allowedMemoryRecall(method, target, body);
   if (allowedGenVR(method, target, body) || allowedChannel(method, target, body) || allowedPersonality(method, target, body) || allowedHire(method, target, body) || allowedBoard(method, target, body) || allowedConversation(method, target, body) || allowedAgentCard(method, target, body) || allowedTerminal(method, target, body) || allowedConnector(method, target, body) || allowedLocalImport(method, target, body) || allowedChatBoard(method, target, body) || allowedChatMemory(method, target, body) || allowedChatSearch(method, target, body) || allowedChatExport(method, target, body) || allowedChatSecrets(method, target, body)) return true;
   const id = /^\/api\/agents\/([^/?#]+)$/.exec(target)?.[1];
   if (method === 'PUT') return agentId(id) && record(body) && Object.keys(body).length === 2 && Object.keys(body).every(k => k === 'name' || k === 'expectedVersion') && name(body.name) && version(body.expectedVersion);
@@ -130,6 +134,8 @@ function project(target, status, body) {
   if (chatSearchRoute(target)) return chatSearchResponse(target, status, body);
   if (chatExportRoute(target)) return chatExportResponse(target, status, body);
   if (chatSecretsRoute(target)) return chatSecretsResponse(target, status, body);
+  if (memoryPagesRoute(target)) return memoryPagesResponse(target, status, body);
+  if (memoryRecallRoute(target)) return memoryRecallResponse(target, status, body);
   if (target === '/api/agents' || (target.startsWith('/api/agents/') && target !== '/api/agents/name-suggestion')) {
     if (status === 200 && target === '/api/agents') {
       if (!Array.isArray(body?.agents) || body.agents.length > 10000) throw Error();
@@ -232,12 +238,12 @@ function createApplicationServer({ packageRoot = root, channel, stage1ReadOnly =
       if (!data) return send(404);
       return send(200, data, name.endsWith('.html') ? 'text/html; charset=utf-8' : name.endsWith('.js') ? 'text/javascript; charset=utf-8' : name.endsWith('.css') ? 'text/css; charset=utf-8' : 'text/plain; charset=utf-8');
     }
-    if (!['GET', 'POST', 'PUT', 'DELETE'].includes(req.method)) return send(405);
+    if (!['GET', 'POST', 'PUT', 'PATCH', 'DELETE'].includes(req.method)) return send(405);
     const chat = raw === '/api/chat' && req.method === 'POST';
     const runEvents = req.method === 'GET' && conversationPath(raw)?.kind === 'events';
     const termStream = req.method === 'GET' && terminalPath(raw)?.kind === 'stream';
     if (Object.keys(req.headers).some(k => !passiveHeaders.has(k) && !(chat && k === 'idempotency-key')) || (req.headers.connection && !/^(close|keep-alive)$/i.test(req.headers.connection)) || (req.headers['sec-fetch-mode'] && req.headers['sec-fetch-mode'] !== 'same-origin') || (req.headers['sec-fetch-dest'] && req.headers['sec-fetch-dest'] !== 'empty')) return send(400);
-    if (['POST', 'PUT', 'DELETE'].includes(req.method) && req.headers.origin !== origin) return send(403);
+    if (['POST', 'PUT', 'PATCH', 'DELETE'].includes(req.method) && req.headers.origin !== origin) return send(403);
     if (chat && !validKey(req.headers['idempotency-key'])) return send(400);
     const login = raw === '/api/auth/login' || (raw === OWNER_SETUP_PATH && req.method === 'POST');
     const discovery = raw === '/api/setup/status' && req.method === 'GET';

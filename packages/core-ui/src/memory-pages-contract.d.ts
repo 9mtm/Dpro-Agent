@@ -1,0 +1,73 @@
+export const DRAWER_KINDS: readonly DrawerKind[];
+export const PROJECT_ACTIONS: readonly ProjectAction[];
+export const ACCESS_MODES: readonly AccessMode[];
+export const DOCTOR_KINDS: readonly DoctorKind[];
+export const ENTITY_KINDS: readonly EntityKind[];
+export const LINK_STATUSES: readonly LinkStatus[];
+export const HANDOFF_KINDS: readonly HandoffKind[];
+export const CONFLICT_DECISIONS: readonly ConflictDecision[];
+export const MAX_PINNED_TEXT: number;
+export const MAX_HANDOFF_ITEMS: number;
+export const MAX_HANDOFF_ITEM: number;
+export type DrawerKind = 'owner' | 'project' | 'experience' | 'task' | 'people';
+export type ProjectAction = 'pin' | 'unpin' | 'archive' | 'unarchive' | 'move' | 'merge' | 'forget';
+export type AccessMode = 'allow' | 'deny' | 'inherit';
+export type DoctorKind = 'duplicate' | 'expired' | 'embedding-missing' | 'embedding-stale' | 'orphan-versions' | 'broken-drawer' | 'topic-key-invalid';
+export type EntityKind = 'person' | 'project' | 'place' | 'topic' | 'agent' | 'task' | 'decision';
+export type LinkStatus = 'active' | 'pending' | 'rejected';
+export type HandoffKind = 'conversation' | 'task';
+export type ConflictDecision = 'keep_new' | 'keep_old' | 'keep_both';
+export type Health = 'ok' | 'attention' | 'problem';
+export type ScopeCounts = { memories: number; pendingReviews: number; conflicts: number; pinnedFacts: number; lastMemoryAt: string | null; health: Health; reasons: string[] };
+export type TreeProject = ScopeCounts & { slug: string; name: string; departmentId: string; pinned: boolean; archived: boolean; archivedAt: string | null; mergedInto: string | null };
+export type ProjectRef = Omit<TreeProject, keyof ScopeCounts> & Partial<ScopeCounts>;
+export type TreeDepartment = ScopeCounts & { id: string; name: string; isDefault: boolean; projects: number; archivedProjects: number };
+export type ScopeTree = {
+  generatedAt: string; cached: boolean;
+  company: ScopeCounts & { drawers: Record<string, number>; departments: number; projects: number; archivedProjects: number };
+  departments: TreeDepartment[]; projects: TreeProject[]; people: Array<ScopeCounts & { key: string }>;
+  agents: { total: number; withTemplate: number; withExceptions: number };
+};
+export type ScopeHit = { kind: 'department' | 'project' | 'people' | 'agent'; id: string; name: string; departmentId?: string; archived: boolean; memories: number };
+export type AgentScope = { id: string; name: string; department: string | null; template: { id: string; name: string } | null; exceptions: number };
+export type ExplorerItem = { id: string; type: string; preview: string; drawerId: string; topicKey: string | null; importance: number; layer: string; createdAt: string; sourceAgentId: string | null };
+export type ExplorerPage = { scope: string; items: ExplorerItem[]; nextCursor: string | null; total: number; facets: { type: Record<string, number>; layer: Record<string, number>; drawer: Record<string, number> } };
+export type PinnedFact = { id: string; scope: string; text: string; position: number; createdAt: string; updatedAt: string };
+export type AgentSample = { agentId: string; agentName: string; project: string | null; before: { read: DrawerKind[]; write: DrawerKind[] }; after: { read: DrawerKind[]; write: DrawerKind[] } };
+export type Effects = Record<string, number | boolean | string | null> & { sample?: AgentSample[] };
+export type ProjectPreview = { action: ProjectAction; project: ProjectRef; target?: ProjectRef; department?: { id: string; name: string }; effects: Effects; previewHash: string };
+export type ProjectApplied = { action: ProjectAction; project: ProjectRef; effects: Effects; result: Effects };
+export type ProjectExport = { project: string; files: Array<{ name: string; content: string }> };
+export type AccessRule = { id: string; scope: string; agentId: string | null; drawerKind: DrawerKind; read: AccessMode; write: AccessMode; endsAt: string | null; expired: boolean; reason: string | null; createdAt: string };
+export type RoleTemplate = { id: string; name: string; memoryRead: DrawerKind[]; memoryWrite: DrawerKind[]; agents: number };
+export type AccessOverview = { version: number; rules: AccessRule[]; templates: RoleTemplate[] };
+export type AccessChange =
+  | { op: 'set_rule'; scope: string; agentId?: string | null; drawerKind: DrawerKind; read?: AccessMode; write?: AccessMode; endsAt?: string | null; reason?: string | null }
+  | { op: 'clear_rule'; scope: string; agentId?: string | null; drawerKind: DrawerKind }
+  | { op: 'save_template'; id?: string | null; name: string; memoryRead: DrawerKind[]; memoryWrite: DrawerKind[] }
+  | { op: 'delete_template'; id: string }
+  | { op: 'assign_template'; template: string | null; agentIds: string[] };
+export type AccessPreview = { previewHash: string; version: number; changes: number; agentsAffected: number; projectsAffected: number; noProjectAffected: boolean; pairsChanged: number; widened: number; narrowed: number; agentsTotal: number; projectsTotal: number; sample: AgentSample[] };
+export type WhyStep = { layer: 'default' | 'company' | 'department' | 'project' | 'agent-company' | 'agent-department' | 'agent-project' | 'agent-permissions' | 'role-template'; value: 'allow' | 'deny'; endsAt?: string; name?: string };
+export type KindAccess = { read: boolean; write: boolean; readWhy: WhyStep[]; writeWhy: WhyStep[] };
+export type EffectiveAccess = {
+  agentId: string; agentName: string; project: string | null; department: string | null; version: number; template: { id: string; name: string } | null;
+  exceptions: AccessRule[]; effective: { memoryRead: DrawerKind[]; memoryWrite: DrawerKind[] }; kinds: Record<DrawerKind, KindAccess>;
+};
+export type DoctorIssue = { kind: DoctorKind; drawerId: string; memoryIds: string[]; detail?: string };
+export type DoctorReport = { checkedAt: string; embeddingModel: string; total: number; counts: Record<DoctorKind, number>; issues: DoctorIssue[]; reportHash: string };
+export type DoctorFix = { fixed: Record<DoctorKind, number>; skipped: Array<{ kind: DoctorKind; memoryId: string; reason: string }>; report: DoctorReport };
+export type GraphEntity = { id: string; kind: EntityKind; name: string; aliases: string[]; memories: number; links: number; updatedAt: string };
+export type GraphLink = { id: string; type: string; status: LinkStatus; from: { id: string; name: string; kind: EntityKind }; to: { id: string; name: string; kind: EntityKind }; memoryIds: string[]; createdAt: string };
+export type TimelineEntry = { memoryId: string; createdAt: string; drawer: string; type: string; preview: string };
+export type EntityDetail = { entity: GraphEntity; links: GraphLink[]; timeline: TimelineEntry[] };
+export type Handoff = { id: string; agentId: string; kind: HandoffKind; scopeId: string; projectId: string | null; version: number; source: 'agent' | 'model' | 'fallback' | 'owner'; createdAt: string; done: string[]; left: string[]; next: string[]; questions: string[] };
+export type DecideResult = { decision: ConflictDecision; proposal: { id: string; status: string }; applied: boolean };
+export function validDrawerId(x: unknown): x is string;
+export function validScope(x: unknown): boolean;
+export function validRuleScope(x: unknown): boolean;
+export function queryString(params: Record<string, string | number | null | undefined>): string;
+export function memoryPagesPath(path: string): { route: string; params: Record<string, string>; id?: string; kind?: string } | null;
+export function memoryPagesRoute(path: string): boolean;
+export function allowedMemoryPages(method: string, path: string, body?: unknown): boolean;
+export function memoryPagesResponse(path: string, status: number, body: unknown): unknown;
