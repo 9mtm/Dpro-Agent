@@ -1718,3 +1718,40 @@ button.status-item:hover { background:var(--row-hover); color:var(--text); }
 .app-shell .page-ui .mem .mem-action-list .link-button { color:var(--text); font-weight:400; font-size:12.5px; }
 .app-shell .page-ui .mem .mem-action-list .link-button.danger { color:var(--danger); }
 .app-shell .page-ui .mem button.link-button.danger:not(:disabled), .app-shell .page-ui .mem .mem-menu button.danger:not(:disabled) { background:transparent; color:var(--danger); box-shadow:none; }
+.mem-view-toggle { display:inline-flex; border-radius:8px; box-shadow:inset 0 0 0 1px var(--border); overflow:hidden; margin-block-end:12px; }
+.app-shell .page-ui .mem-view-toggle button { box-shadow:none; border-radius:0; background:transparent; color:var(--text-3); }
+.app-shell .page-ui .mem-view-toggle button[aria-pressed="true"] { background:var(--row-active); color:var(--text); }
+.mem-panel:has(.mem-inbox) { padding:0; }
+.mem-inbox { display:grid; grid-template-columns:190px minmax(0,380px) minmax(0,1fr); block-size:100%; min-block-size:0; }
+.mem-inbox-filters { border-inline-end:1px solid var(--border); padding:14px 10px; display:flex; flex-direction:column; gap:2px; }
+.app-shell .page-ui .mem-inbox-filters button { justify-self:stretch; justify-content:space-between; box-shadow:none; background:transparent; color:var(--text-2); font-size:13px; padding:0 9px; border-radius:7px; }
+.app-shell .page-ui .mem-inbox-filters button[aria-pressed="true"] { background:var(--row-active); color:var(--text); }
+.mem-inbox-filters p { margin:14px 8px 0 !important; font-size:11.5px !important; }
+.mem-inbox-list { border-inline-end:1px solid var(--border); display:flex; flex-direction:column; min-block-size:0; }
+.mem-inbox-bar { display:flex; align-items:center; gap:10px; padding:10px 14px; border-block-end:1px solid var(--border); font-size:12.5px; }
+.mem-inbox-bar label { margin-inline-end:auto; display:flex; gap:8px; align-items:center; }
+.app-shell .page-ui .mem-reject { color:var(--danger); box-shadow:inset 0 0 0 1px color-mix(in srgb,var(--danger) 40%,var(--border)); background:transparent; }
+.mem-inbox-items { list-style:none; margin:0; padding:0; overflow:auto; flex:1; }
+.mem-inbox-items li { display:grid; grid-template-columns:18px minmax(0,1fr); gap:10px; align-items:start; padding:11px 14px; border-block-end:1px solid var(--border); }
+.mem-inbox-items li[data-open] { background:var(--row-active); }
+.app-shell .page-ui .mem-inbox-item { display:grid; gap:4px; justify-items:start; justify-content:normal; text-align:start; box-shadow:none; background:transparent; padding:0; min-block-size:0; min-inline-size:0; justify-self:stretch; }
+.mem-inbox-meta { display:flex; gap:8px; align-items:center; }
+.mem-inbox-text { font-size:13px; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; max-inline-size:100%; }
+.mem-kind { padding:2px 8px; border-radius:999px; font-size:11px; font-weight:600; background:var(--mem-warn-bg); color:var(--mem-warn); white-space:nowrap; }
+.mem-kind[data-kind="conflict"] { background:var(--mem-bad-bg); color:var(--mem-bad); }
+.mem-kind[data-kind="link"] { background:var(--mem-link-bg); color:var(--mem-link); }
+.mem-kind[data-kind="imported"], .mem-kind[data-kind="file"], .mem-kind[data-kind="agent"] { background:var(--subtle); color:var(--text-2); }
+.mem-inbox-detail { padding:22px 28px; display:flex; flex-direction:column; gap:16px; overflow:auto; min-inline-size:0; }
+.mem-detail-head { display:flex; align-items:center; gap:10px; flex-wrap:wrap; }
+.app-shell .page-ui .mem-detail-title { margin:0; font-size:18px; font-weight:600; }
+.mem-versus { display:grid; grid-template-columns:repeat(2,minmax(0,1fr)); gap:14px; }
+.mem-versus-text { font-size:15px; white-space:pre-wrap; }
+.app-shell .page-ui .mem-new { box-shadow:inset 0 0 0 1px color-mix(in srgb,var(--accent) 55%,var(--border)); }
+.mem-new-label { color:var(--mem-link) !important; }
+.mem-why { display:grid; gap:6px; }
+.app-shell .page-ui .mem-why h4 { color:var(--text-3); font-size:13px; }
+.mem-changes { list-style:none; margin:0; padding:0; display:grid; gap:12px; }
+.app-shell .page-ui .ghost-outline { background:transparent; }
+.mem-inbox-keys { margin-block-start:auto; }
+@container (max-width: 900px) { .mem-inbox { grid-template-columns:minmax(0,1fr); } .mem-versus { grid-template-columns:minmax(0,1fr); } }
+.app-shell .page-ui .mem input[type="checkbox"] { inline-size:14px; block-size:14px; margin:0; accent-color:var(--accent); }

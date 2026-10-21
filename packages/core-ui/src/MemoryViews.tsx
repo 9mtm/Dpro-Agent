@@ -10,6 +10,8 @@ import { ViewTabs } from './ViewTabs';
 import { LocalImport } from './LocalImport';
 import { MemoryScopesController } from './memory-scopes';
 import { ActionDialog, HomeView, OverviewView, ScopeHeader, ScopeRail } from './MemoryHome';
+import { MemoryReviewController } from './memory-review';
+import { ReviewInbox } from './MemoryReviewInbox';
 
 const KIND_LABEL: Record<string, string> = { owner: 'About you', experience: 'Lessons', project: 'Project', task: 'Task', people: 'Person' };
 const KIND_PLURAL: Record<string, string> = { project: 'Projects', task: 'Tasks', people: 'People' };
@@ -59,7 +61,11 @@ export function MemoryPage({ client, active = false, focus }: { client: SessionC
   const [scopes, setScopes] = useState<MemoryScopesController>();
   useEffect(() => { const x = new MemoryItemsController(client); setC(x); return () => x.dispose(); }, [client]);
   useEffect(() => { const x = new MemoryScopesController(client); setScopes(x); return () => x.dispose(); }, [client]);
+  const [review, setReview] = useState<MemoryReviewController>();
+  const [explorerView, setExplorerView] = useState<'table' | 'files'>('table');
+  useEffect(() => { if (!scopes) return; const x = new MemoryReviewController(client, () => void scopes.load(true)); setReview(x); return () => x.dispose(); }, [client, scopes]);
   useEffect(() => { if (active && scopes && owner) void scopes.load(); }, [active, scopes, owner]);
+  useEffect(() => { if (active && review && owner && tab === 'review') void review.load(); }, [active, review, owner, tab]);
   // Returning from reviews must read the newly approved memories.
   useEffect(() => {
     if (!active || tab !== 'explorer' || !c) return;
@@ -113,9 +119,13 @@ export function MemoryPage({ client, active = false, focus }: { client: SessionC
         {tab === 'home' && scopes && (s?.phase === 'error' ? <p className="empty-note">{s.notice} <button type="button" className="link-button" onClick={() => void scopes.load()}>Try again</button></p>
           : s?.phase !== 'ready' ? <p className="empty-note" role="status">Loading memory…</p>
           : s.scope === 'company' ? <HomeView c={scopes} go={go}/> : <OverviewView c={scopes} go={go}/>)}
-        {tab === 'explorer' && (c ? <ItemsView c={c} focused={focus?.memoryId}/> : null)}
+        {tab === 'explorer' && <>
+          <div className="mem-view-toggle" role="group" aria-label="Explorer view"><button type="button" aria-pressed={explorerView === 'table'} onClick={() => setExplorerView('table')}>Table</button><button type="button" aria-pressed={explorerView === 'files'} onClick={() => setExplorerView('files')}>Files</button></div>
+          {explorerView === 'files' ? <><p className="fine-print">Agent files and reviews: each agent's readable memory files (MEMORY.md). Edits you make there come back as reviews.</p><MemoryPanel client={client} active={active && tab === 'explorer'}/></>
+            : c ? <ItemsView c={c} focused={focus?.memoryId}/> : null}
+        </>}
         {tab === 'import' && <LocalImport client={client} active={active} onReview={() => setTab('review')}/>}
-        {tab === 'review' && <><p className="fine-print">Agent files and reviews: choose an agent to read its memory files and the changes waiting for you.</p><MemoryPanel client={client} active={active && tab === 'review'}/></>}
+        {tab === 'review' && review && <ReviewInbox c={review}/>}
       </div>
     </div>
   </section>;
