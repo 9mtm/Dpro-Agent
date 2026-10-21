@@ -36,6 +36,23 @@
 //   PUT    /api/handoffs/:kind/:scopeId                  { agentId, done?, left?, next?, questions? }
 //   Conflicts (CORE-MEM-CONFLICT)
 //   POST   /api/memory/proposals/:id/decide              { decision, expectedReviewHash, note? }
+//   Built on MEM-GAPS-02 / MEM-FINISH-01 (boards M2, M3, M4, M7, M9, M12–M14)
+//   GET    /api/memory/scopes/memories/:id               one memory: used in N replies, entities, readers
+//   GET    /api/memory/scopes/rules?scope=               review rules of one scope (own + effective)
+//   PUT    /api/memory/scopes/rules                      { scope, routine?, important?, contradiction?, reviewerAgentId?, weeklyDay?, weeklyHour? }
+//   GET    /api/memory/access/agents?scope=&column=&mode=&q=&cursor=&limit=
+//   GET    /api/memory/access/counts?column=&mode=
+//   GET    /api/memory/access/templates/:id?cursor=&limit=
+//   GET    /api/memory/proposals/groups?by=
+//   POST   /api/memory/proposals/accept-routine/preview  { scope?, agent? }
+//   POST   /api/memory/proposals/accept-routine          { scope?, agent?, expectedPreviewHash, confirm: true }
+//   GET    /api/memory/graph/agent-view/:agentId?project=&q=&kind=&limit=
+//   GET    /api/memory/graph/clusters?limit=&drawers=
+//   POST   /api/memory/graph/clusters/:id/topic-preview  { topicKey? }
+//   POST   /api/memory/graph/clusters/:id/topic          { topicKey?, expectedPreviewHash, confirm: true }
+//   POST   /api/memory/graph/clusters/:id/dismiss
+//   POST   /api/memory/graph/sync                        { limit? }
+//   GET    /api/handoffs/coding-apps?projectId=&client=&limit=
 //   Rules and speed (CORE-05/07, MEM-CACHE-01)
 //   GET    /api/memory/weekly-summary
 //   GET    /api/memory/retention
@@ -65,6 +82,11 @@ export const CONFLICT_DECISIONS = ['keep_new', 'keep_old', 'keep_both'];
 export const MAX_PINNED_TEXT = 1000;
 export const MAX_HANDOFF_ITEMS = 8;
 export const MAX_HANDOFF_ITEM = 300;
+export const ROUTINE_RULES = ['save', 'ask'];
+export const IMPORTANT_RULES = ['ask', 'save'];
+export const CONTRADICTION_RULES = ['ask', 'keep_new', 'keep_both'];
+export const REVIEW_GROUP_BY = ['scope', 'department', 'agent'];
+export const BRIDGE_CLIENTS = ['claude-code', 'codex', 'gemini-cli', 'antigravity'];
 
 const slug = x => typeof x === 'string' && /^[a-z0-9][a-z0-9_-]{0,63}$/.test(x);
 const departmentId = x => typeof x === 'string' && /^[A-Za-z0-9][A-Za-z0-9_-]{0,63}$/.test(x);
@@ -125,6 +147,14 @@ const QUERIES = {
   links: { status: x => LINK_STATUSES.includes(x), limit: limit(500) },
   handoffs: { agentId: handoffAgent, kind: x => HANDOFF_KINDS.includes(x), projectId: plainId, limit: limit(200) },
   handoff: { agentId: handoffAgent },
+  rules: { scope: validRuleScope },
+  accessAgents: { scope: validRuleScope, column: x => ACCESS_COLUMNS.includes(x), mode: x => x === 'read' || x === 'write', q: queryText(200), cursor, limit: limit(500) },
+  accessCounts: { column: x => ACCESS_COLUMNS.includes(x), mode: x => x === 'read' || x === 'write' },
+  template: { cursor, limit: limit(500) },
+  groups: { by: x => REVIEW_GROUP_BY.includes(x) },
+  agentView: { project: slug, q: queryText(200), kind: x => ENTITY_KINDS.includes(x), limit: limit(500) },
+  clusters: { limit: limit(150), drawers: x => x.length <= 2000 && x.split(',').every(validDrawerId) },
+  codingHandoffs: { projectId: plainId, client: x => BRIDGE_CLIENTS.includes(x), limit: limit(200) },
 };
 
 /** Which memory-page route a path is, with its ids and query, or null. */
@@ -152,6 +182,15 @@ export function memoryPagesPath(path) {
     case '/api/memory/weekly-summary': return with_('weekly', null);
     case '/api/memory/retention': return with_('retention', null);
     case '/api/memory/cache/clear': return with_('cache-clear', null);
+    case '/api/memory/scopes/rules': return with_('rules', QUERIES.rules);
+    case '/api/memory/access/agents': return with_('access-agents', QUERIES.accessAgents);
+    case '/api/memory/access/counts': return with_('access-counts', QUERIES.accessCounts);
+    case '/api/memory/proposals/groups': return with_('review-groups', QUERIES.groups);
+    case '/api/memory/proposals/accept-routine/preview': return with_('routine-preview', null);
+    case '/api/memory/proposals/accept-routine': return with_('routine-accept', null);
+    case '/api/memory/graph/clusters': return with_('clusters', QUERIES.clusters);
+    case '/api/memory/graph/sync': return with_('graph-sync', null);
+    case '/api/handoffs/coding-apps': return with_('coding-handoffs', QUERIES.codingHandoffs);
   }
   if ((m = /^\/api\/memory\/scopes\/pinned\/([^/]+)$/.exec(base)) && plainId(m[1])) return with_('pinned-fact', null, { id: m[1] });
   if ((m = /^\/api\/memory\/scopes\/projects\/([^/]+)\/(preview|apply|export)$/.exec(base)) && slug(m[1])) return with_(`project-${m[2]}`, null, { id: m[1] });
@@ -160,6 +199,10 @@ export function memoryPagesPath(path) {
   if ((m = /^\/api\/memory\/graph\/links\/([^/]+)\/(approve|reject)$/.exec(base)) && plainId(m[1])) return with_(`link-${m[2]}`, null, { id: m[1] });
   if ((m = /^\/api\/handoffs\/(conversation|task)\/([^/]+)$/.exec(base)) && scopeId(m[2])) return with_('handoff', QUERIES.handoff, { id: m[2], kind: m[1] });
   if ((m = /^\/api\/memory\/proposals\/([^/]+)\/decide$/.exec(base)) && proposalId(m[1])) return with_('decide', null, { id: m[1] });
+  if ((m = /^\/api\/memory\/scopes\/memories\/([^/]+)$/.exec(base)) && plainId(m[1])) return with_('memory-detail', null, { id: m[1] });
+  if ((m = /^\/api\/memory\/access\/templates\/([^/]+)$/.exec(base)) && /^[A-Za-z0-9_-]{1,64}$/.test(m[1])) return with_('template', QUERIES.template, { id: m[1] });
+  if ((m = /^\/api\/memory\/graph\/agent-view\/([^/]+)$/.exec(base)) && agentId(m[1])) return with_('agent-view', QUERIES.agentView, { id: m[1] });
+  if ((m = /^\/api\/memory\/graph\/clusters\/([^/]+)\/(topic-preview|topic|dismiss)$/.exec(base)) && plainId(m[1])) return with_(`cluster-${m[2]}`, null, { id: m[1] });
   return null;
 }
 
@@ -237,8 +280,35 @@ export function allowedMemoryPages(method, path, body) {
     case 'decide':
       return method === 'POST' && record(body) && onlyKeys(body, ['decision', 'expectedReviewHash', 'note']) && CONFLICT_DECISIONS.includes(body.decision)
         && hash(body.expectedReviewHash) && (body.note === undefined || text(body.note, 500));
+    case 'memory-detail': case 'access-agents': case 'access-counts': case 'template': case 'review-groups': case 'agent-view': case 'clusters': case 'coding-handoffs':
+      return get;
+    case 'rules':
+      if (method === 'GET') return body === undefined && p.params.scope !== undefined;
+      return method === 'PUT' && raw(p) && rulesBody(body);
+    case 'routine-preview': return method === 'POST' && routineFilter(body, []);
+    case 'routine-accept': return method === 'POST' && routineFilter(body, ['expectedPreviewHash', 'confirm']) && body.confirm === true && hash(body.expectedPreviewHash);
+    case 'cluster-topic-preview': return method === 'POST' && /^[0-9a-f]{32}$/.test(p.id) && record(body) && onlyKeys(body, ['topicKey']) && (body.topicKey === undefined || topicKey(body.topicKey));
+    case 'cluster-topic':
+      return method === 'POST' && /^[0-9a-f]{32}$/.test(p.id) && record(body) && onlyKeys(body, ['topicKey', 'expectedPreviewHash', 'confirm']) && body.confirm === true && hash(body.expectedPreviewHash)
+        && (body.topicKey === undefined || topicKey(body.topicKey));
+    case 'cluster-dismiss': return method === 'POST' && /^[0-9a-f]{32}$/.test(p.id) && body === undefined;
+    case 'graph-sync': return method === 'POST' && record(body) && onlyKeys(body, ['limit']) && (body.limit === undefined || (Number.isInteger(body.limit) && body.limit >= 1 && body.limit <= 1000));
   }
   return false;
+}
+const topicKey = x => typeof x === 'string' && /^[a-z0-9][a-z0-9._-]{0,119}$/.test(x);
+const ruleScopeOrDrawer = x => validRuleScope(x) || validDrawerId(x);
+function routineFilter(b, extra) {
+  return record(b) && onlyKeys(b, ['scope', 'agent', ...extra]) && (b.scope === undefined || ruleScopeOrDrawer(b.scope)) && (b.agent === undefined || agentId(b.agent));
+}
+function rulesBody(b) {
+  if (!record(b) || !onlyKeys(b, ['scope', 'routine', 'important', 'contradiction', 'reviewerAgentId', 'weeklyDay', 'weeklyHour']) || !validRuleScope(b.scope) || Object.keys(b).length < 2) return false;
+  const pick = (k, list) => b[k] === undefined || b[k] === null || list.includes(b[k]);
+  const hour = (k, max) => b[k] === undefined || b[k] === null || (Number.isInteger(b[k]) && b[k] >= 0 && b[k] <= max);
+  return pick('routine', ROUTINE_RULES) && pick('important', IMPORTANT_RULES) && pick('contradiction', CONTRADICTION_RULES)
+    && (b.reviewerAgentId === undefined || b.reviewerAgentId === null || (b.scope.startsWith('department:') && agentId(b.reviewerAgentId)))
+    && hour('weeklyDay', 6) && hour('weeklyHour', 23) && ((b.weeklyDay === undefined) === (b.weeklyHour === undefined))
+    && (b.weeklyDay === undefined || b.scope === 'company');
 }
 /** Writes never carry a query string. */
 function raw(p) { return Object.keys(p.params).length === 0; }
@@ -384,6 +454,7 @@ function handoff(h) {
     id: h.id, agentId: idOr(h.agentId, handoffAgent, ''), kind: h.kind, scopeId: idOr(h.scopeId, scopeId, ''), projectId: typeof h.projectId === 'string' ? clip(h.projectId, 128) : null,
     version: count(h.version), source: ['agent', 'model', 'fallback', 'owner'].includes(h.source) ? h.source : 'agent', createdAt: when(h.createdAt),
     done: items(h.done), left: items(h.left), next: items(h.next), questions: items(h.questions),
+    ...('title' in h ? { title: typeof h.title === 'string' && h.title.trim() ? clip(h.title, 200) : null } : {}),
   };
 }
 function exported(b, id) {
@@ -394,14 +465,83 @@ function exported(b, id) {
   };
 }
 
+function ownRules(o) {
+  const r = record(o) ? o : {};
+  return {
+    routine: ROUTINE_RULES.includes(r.routine) ? r.routine : null, important: IMPORTANT_RULES.includes(r.important) ? r.important : null,
+    contradiction: CONTRADICTION_RULES.includes(r.contradiction) ? r.contradiction : null, reviewerAgentId: idOr(r.reviewerAgentId, agentId),
+    weeklyDay: Number.isInteger(r.weeklyDay) && r.weeklyDay >= 0 && r.weeklyDay <= 6 ? r.weeklyDay : null,
+    weeklyHour: Number.isInteger(r.weeklyHour) && r.weeklyHour >= 0 && r.weeklyHour <= 23 ? r.weeklyHour : null,
+    updatedAt: whenOrNull(r.updatedAt),
+  };
+}
+const fromScope = x => (x === 'default' || validRuleScope(x) ? x : 'default');
+function rulesView(b) {
+  const e = record(b.effective) ? b.effective : {};
+  const f = record(e.from) ? e.from : {};
+  const w = record(e.weekly) ? e.weekly : {};
+  return {
+    scope: idOr(b.scope, validRuleScope, 'company'), own: ownRules(b.own),
+    effective: {
+      routine: ROUTINE_RULES.includes(e.routine) ? e.routine : 'save', important: IMPORTANT_RULES.includes(e.important) ? e.important : 'ask',
+      contradiction: CONTRADICTION_RULES.includes(e.contradiction) ? e.contradiction : 'ask',
+      from: { routine: fromScope(f.routine), important: fromScope(f.important), contradiction: fromScope(f.contradiction) },
+      reviewerAgentId: idOr(e.reviewerAgentId, agentId),
+      weekly: { day: Number.isInteger(w.day) && w.day >= 0 && w.day <= 6 ? w.day : 0, hour: Number.isInteger(w.hour) && w.hour >= 0 && w.hour <= 23 ? w.hour : 9 },
+    },
+  };
+}
+const shortEntity = e => ({ id: e.id, kind: ENTITY_KINDS.includes(e.kind) ? e.kind : 'topic', name: clip(e.name, 80) });
+function memoryDetail(m) {
+  if (!record(m) || !plainId(m.id)) fail();
+  const u = record(m.usage) ? m.usage : {};
+  const g = record(m.graph) ? m.graph : {};
+  const r = record(m.readers) ? m.readers : {};
+  return {
+    id: m.id, type: clip(m.type, 32), content: clip(m.content, 50000), drawerId: idOr(m.drawerId, validDrawerId, 'owner'), topicKey: typeof m.topicKey === 'string' ? clip(m.topicKey, 120) : null,
+    importance: Math.min(10, Math.max(0, count(m.importance))), layer: clip(m.layer, 20), createdAt: when(m.createdAt), sourceAgentId: idOr(m.sourceAgentId, agentId),
+    source: typeof m.source === 'string' && /^[a-z_-]{1,32}$/.test(m.source) ? m.source : null,
+    usage: { usedIn: count(u.usedIn), lastUsedAt: whenOrNull(u.lastUsedAt), recent: list(u.recent, 20).filter(x => record(x)).map(x => ({ runId: clip(x.runId, 128), sessionId: typeof x.sessionId === 'string' ? clip(x.sessionId, 128) : null, agentId: idOr(x.agentId, agentId), at: when(x.at) })) },
+    graph: { entities: list(g.entities, 100).filter(e => record(e) && plainId(e.id)).map(shortEntity), links: list(g.links, 200).map(link) },
+    readers: { scope: clip(r.scope, 140), count: count(r.count), total: count(r.total), all: r.all === true, archived: r.archived === true },
+  };
+}
+function cluster(c) {
+  if (!record(c) || typeof c.id !== 'string' || !/^[0-9a-f]{32}$/.test(c.id)) fail();
+  return {
+    id: c.id, drawer: idOr(c.drawer, validDrawerId, 'owner'), name: clip(c.name, 80), suggestedTopicKey: typeof c.suggestedTopicKey === 'string' && topicKey(c.suggestedTopicKey) ? c.suggestedTopicKey : null,
+    entities: list(c.entities, 150).filter(e => record(e) && plainId(e.id)).map(e => ({ ...shortEntity(e), memories: count(e.memories) })), memoryIds: list(c.memoryIds, 500).filter(plainId),
+  };
+}
+function topicPreviewView(p) {
+  if (!record(p) || !hash(p.previewHash)) fail();
+  const b = record(p.blocked) && ['key_taken', 'already_topic', 'nothing_to_change'].includes(p.blocked.code) ? { code: p.blocked.code, ...(plainId(p.blocked.memoryId) ? { memoryId: p.blocked.memoryId } : {}) } : null;
+  return {
+    cluster: cluster(p.cluster), topicKey: topicKey(p.topicKey) ? p.topicKey : '', target: record(p.target) && plainId(p.target.memoryId) ? { memoryId: p.target.memoryId, preview: clip(p.target.preview, 400) } : null,
+    keepKey: list(p.keepKey, 200).filter(k => record(k) && plainId(k.memoryId)).map(k => ({ memoryId: k.memoryId, topicKey: clip(k.topicKey, 120) })),
+    related: list(p.related, 500).filter(plainId), blocked: b, previewHash: p.previewHash,
+  };
+}
+function reviewGroup(g) {
+  return { key: clip(g.key, 160), count: count(g.count), conflicts: count(g.conflicts), routine: count(g.routine), reviewerAgentId: idOr(g.reviewerAgentId, agentId), proposalIds: list(g.proposalIds, 200).filter(proposalId) };
+}
+function codingHandoff(h) {
+  if (!record(h) || !plainId(h.id)) fail();
+  return { id: h.id, projectId: clip(h.projectId, 128), client: BRIDGE_CLIENTS.includes(h.client) ? h.client : 'claude-code', done: items(h.done), left: items(h.left), next: items(h.next), questions: items(h.questions), createdAt: when(h.createdAt) };
+}
+
 const CODES = {
   scopes: ['invalid_scope', 'not_found', 'preview_hash_required', 'confirm_required', 'preview_changed', 'name_taken', 'no_change', 'too_many', 'target_archived'],
   doctor: ['confirm_required', 'report_hash_required', 'report_changed', 'invalid_kinds'],
   handoff: ['invalid_handoff', 'not_found'],
   decide: ['already_decided', 'stale', 'review_changed', 'review_hash_required'],
-  rules: ['confirm_required'],
+  rules: ['confirm_required', 'invalid_scope', 'not_found', 'no_change'],
+  review: ['confirm_required', 'preview_changed', 'invalid_scope'],
+  graph: ['not_found', 'confirm_required', 'stale', 'key_taken', 'already_topic', 'nothing_to_change', 'invalid_topic_key'],
 };
-const family = route => (['doctor', 'doctor-fix'].includes(route) ? 'doctor' : ['handoffs', 'handoff'].includes(route) ? 'handoff' : route === 'decide' ? 'decide' : ['weekly', 'retention', 'cache-clear'].includes(route) ? 'rules' : 'scopes');
+const family = route => (['doctor', 'doctor-fix'].includes(route) ? 'doctor' : ['handoffs', 'handoff', 'coding-handoffs'].includes(route) ? 'handoff' : route === 'decide' ? 'decide'
+  : ['weekly', 'retention', 'cache-clear', 'rules'].includes(route) ? 'rules' : ['review-groups', 'routine-preview', 'routine-accept'].includes(route) ? 'review'
+    : route.startsWith('cluster') || route === 'graph-sync' || route === 'agent-view' ? 'graph' : 'scopes');
 function retention(c) {
   const n = (x, d) => (Number.isSafeInteger(x) && x > 0 ? x : d);
   return record(c) ? { enabled: c.enabled === true, taskTtlDays: n(c.taskTtlDays, 90), experienceAfterDays: n(c.experienceAfterDays, 180), experienceMinGroup: n(c.experienceMinGroup, 3) } : fail();
@@ -468,7 +608,41 @@ export function memoryPagesResponse(path, status, body) {
     case 'decide': {
       if (!CONFLICT_DECISIONS.includes(body.decision) || !record(body.proposal) || !proposalId(body.proposal.id)) fail();
       return { decision: body.decision, proposal: { id: body.proposal.id, status: clip(body.proposal.status, 20) }, applied: body.applied === true || record(body.applied) };
+    }    case 'memory-detail': return { memory: memoryDetail(body.memory) };
+    case 'rules': return rulesView(body);
+    case 'access-agents':
+      return {
+        scope: idOr(body.scope, validRuleScope, 'company'), column: ACCESS_COLUMNS.includes(body.column) ? body.column : 'owner', mode: body.mode === 'write' ? 'write' : 'read', count: count(body.count), total: count(body.total),
+        agents: list(body.agents, 500).filter(a => record(a) && agentId(a.id)).map(a => ({ id: a.id, name: clip(a.name, 120) || a.id, read: a.read === true, write: a.write === true, template: typeof a.template === 'string' ? clip(a.template, 80) : null, exception: a.exception === true })),
+        nextCursor: cursor(body.nextCursor) ? body.nextCursor : null,
+      };
+    case 'access-counts': {
+      const map = (x, ok) => { const out = {}; if (record(x)) for (const [k, v] of Object.entries(x).slice(0, 5000)) if (ok(k)) out[k] = count(v); return out; };
+      return { column: ACCESS_COLUMNS.includes(body.column) ? body.column : 'project', mode: body.mode === 'write' ? 'write' : 'read', total: count(body.total), company: count(body.company), departments: map(body.departments, departmentId), projects: map(body.projects, slug) };
     }
+    case 'template': return { template: template(body.template), agents: list(body.agents, 500).filter(a => record(a) && agentId(a.id)).map(a => ({ id: a.id, name: clip(a.name, 120) || a.id })), nextCursor: cursor(body.nextCursor) ? body.nextCursor : null };
+    case 'review-groups': return { by: REVIEW_GROUP_BY.includes(body.by) ? body.by : 'scope', total: count(body.total), groups: list(body.groups, 500).filter(record).map(reviewGroup) };
+    case 'routine-preview': {
+      if (!hash(body.previewHash)) fail();
+      const f = record(body.filter) ? body.filter : {};
+      return { filter: { scope: ruleScopeOrDrawer(f.scope) ? f.scope : null, agent: idOr(f.agent, agentId) }, count: count(body.count), items: list(body.items, 1000).filter(i => record(i) && proposalId(i.id)).map(i => ({ id: i.id, drawerId: idOr(i.drawerId, validDrawerId, 'owner'), reviewHash: hash(i.reviewHash) ? i.reviewHash : '' })), previewHash: body.previewHash };
+    }
+    case 'routine-accept': return { approved: list(body.approved, 1000).filter(proposalId), skipped: list(body.skipped, 1000).filter(s => record(s) && proposalId(s.id)).map(s => ({ id: s.id, code: clip(s.code, 40) })) };
+    case 'agent-view':
+      if (body.agentId !== p.id) fail();
+      return {
+        agentId: p.id, agentName: clip(body.agentName, 120) || p.id, project: idOr(body.project, slug), readable: list(body.readable, 10).filter(k => DRAWER_KINDS.includes(k)),
+        drawers: list(body.drawers, 200).filter(validDrawerId), entities: list(body.entities, 500).map(entity), links: list(body.links, 500).map(link),
+      };
+    case 'clusters': return { clusters: list(body.clusters, 150).map(cluster) };
+    case 'cluster-topic-preview': return { preview: topicPreviewView(body.preview) };
+    case 'cluster-topic': {
+      const r = record(body.result) ? body.result : fail();
+      return { result: { topicKey: clip(r.topicKey, 120), memoryId: idOr(r.memoryId, plainId, ''), drawer: idOr(r.drawer, validDrawerId, 'owner') } };
+    }
+    case 'cluster-dismiss': return { id: /^[0-9a-f]{32}$/.test(body.id) ? body.id : p.id, dismissed: body.dismissed === true };
+    case 'graph-sync': { const pr = record(body.pruned) ? body.pruned : {}; return { indexed: count(body.indexed), unchanged: count(body.unchanged), pruned: { links: count(pr.links), entities: count(pr.entities) } }; }
+    case 'coding-handoffs': return { handoffs: list(body.handoffs, 200).map(codingHandoff) };
   }
   return fail();
 }
