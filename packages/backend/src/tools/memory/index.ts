@@ -9,3 +9,4 @@ export { memoryReflectTool } from './memory-reflect.tool.js';
 export { memoryStatsTool } from './memory-stats.tool.js';
 export { memoryEditTool, memoryDeleteTool } from './edit.js';
 export { memoryForgetTool } from './forget.js';
+export { memoryDoctorTool, memoryDoctorFixTool } from './doctor.js';

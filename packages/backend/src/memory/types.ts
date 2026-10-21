@@ -108,6 +108,8 @@ export interface Memory {
   metadata: Record<string, unknown>;
   /** Drawer this memory belongs to (CORE-03); default by type when absent. */
   drawer?: import('./drawers.js').DrawerRef;
+  /** Stable topic key (CORE-MEM-TOPIC): unique per user + drawer; null/absent = none. */
+  topicKey?: string | null;
 }
 
 /** Memory relationship */

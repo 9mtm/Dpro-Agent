@@ -34,6 +34,7 @@ import { schedulerRoutes } from './routes/scheduler.js';
 import { memoryRoutes } from './routes/memory.js';
 import { memoryFilesRoutes } from './routes/memory-files.js';
 import { memoryLearningRoutes } from './routes/memory-learning.js';
+import { memoryDoctorRoutes } from './routes/memory-doctor.js';
 import { genvrRoutes } from './routes/genvr.js';
 import { connectionsRoutes } from './routes/connections.js';
 import { agentConnectRoutes } from './routes/agent-connect.js';
@@ -311,6 +312,7 @@ export async function buildServer(options: BuildServerOptions = {}): Promise<Fas
   await fastify.register(memoryRoutes); // 🧠 Memory System
   await fastify.register(memoryFilesRoutes); // CORE-04: owner-only memory files + reviewed proposals
   await fastify.register(memoryLearningRoutes); // CORE-05: owner-only weekly learning summary
+  await fastify.register(memoryDoctorRoutes); // CORE-MEM-DOCTOR: owner-only health check + confirmed fixes
   await fastify.register(agentConnectRoutes);
   await fastify.register(genvrRoutes);
   await fastify.register(connectionsRoutes);

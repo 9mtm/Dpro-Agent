@@ -13,7 +13,7 @@ import { dataPathOr } from '../config/data-root.js';
 import fs from 'fs/promises';
 import path from 'path';
 import { v4 as uuidv4 } from 'uuid';
-import { all, columnExists, dialect, one, run, sql, type Step } from '../repositories/sql-steps.js';
+import { all, columnExists, dialect, lockName, one, run, sql, type Step } from '../repositories/sql-steps.js';
 import { LEGACY_HASH_MODEL, getEmbeddingService } from './embedding.js';
 import { lexicalTokens } from './text-normalize.js';
 import { MIN_RECALL_SCORE, WORKING_LAYER_BOOST, bm25Scores, hybridScore, vectorScore } from './hybrid.js';
@@ -81,12 +81,15 @@ const SQLITE_MEMORIES_COLUMNS: Array<[string, string]> = [
   // CORE-06 embedding model per vector (normally added by migration 063)
   ['embedding_model', 'TEXT'],
   ['embedding_dims', 'INTEGER'],
+  // CORE-MEM-TOPIC (normally added by migration 096)
+  ['topic_key', 'TEXT'],
 ];
 
 const SQLITE_MEMORIES_INDEXES = [
   'CREATE INDEX IF NOT EXISTS idx_memories_layer ON memories(memory_layer)',
   'CREATE INDEX IF NOT EXISTS idx_memories_expiry ON memories(expiry_timestamp) WHERE expiry_timestamp IS NOT NULL',
   "CREATE INDEX IF NOT EXISTS idx_memories_consolidation ON memories(consolidation_status) WHERE memory_layer = 'experiential'",
+  'CREATE UNIQUE INDEX IF NOT EXISTS idx_memories_topic_key ON memories(user_id, drawer_kind, drawer_key, topic_key) WHERE topic_key IS NOT NULL',
 ];
 
 const UPSERT_COLUMNS = [
@@ -100,13 +103,19 @@ const UPSERT_COLUMNS = [
  * Insert or update a memory row. Was INSERT OR REPLACE (SQLite only); an
  * upsert on the id keeps the columns it does not list (sharing, quality)
  * and the rows that reference the memory, and never moves a memory id to
- * another user (`changes` is 0 then).
+ * another user (`changes` is 0 then). The topic key (CORE-MEM-TOPIC) is set
+ * on insert only; an update keeps it (setTopicKeyStep changes it).
  */
 const UPSERT_SQL = `
-  INSERT INTO memories (${UPSERT_COLUMNS.join(', ')})
-  VALUES (${UPSERT_COLUMNS.map(() => '?').join(', ')})
+  INSERT INTO memories (${UPSERT_COLUMNS.join(', ')}, topic_key)
+  VALUES (${UPSERT_COLUMNS.map(() => '?').join(', ')}, ?)
   ON CONFLICT (id) DO UPDATE SET ${UPSERT_COLUMNS.filter((c) => c !== 'id').map((c) => `${c} = excluded.${c}`).join(', ')}
   WHERE memories.user_id = excluded.user_id`;
+
+/** The topic key is already used by another memory of the drawer (CORE-MEM-TOPIC). */
+export class TopicKeyTakenError extends Error {
+  constructor(readonly holderId: string) { super('That topic key is already used by another memory in this drawer'); }
+}
 
 export class MemoryStorage implements IMemoryStorage {
   private memoryDir: string;
@@ -202,6 +211,12 @@ export class MemoryStorage implements IMemoryStorage {
     // embedding service; anything else is 'unknown' and never compared).
     const embeddingModel = this.embeddingService.modelOf(memory.embedding) ?? memory.embeddingModel ?? 'unknown';
     memory.embeddingModel = embeddingModel;
+    // CORE-MEM-TOPIC: a new row may only take a free topic key of its drawer.
+    const topicKey = memory.topicKey || null;
+    if (topicKey) {
+      const holder = yield* this.getByTopicKeyStep(memory.userId, drawer, topicKey, true);
+      if (holder && holder.id !== memory.id) throw new TopicKeyTakenError(holder.id);
+    }
 
     const res = yield* run(UPSERT_SQL,
       memory.id,
@@ -222,7 +237,8 @@ export class MemoryStorage implements IMemoryStorage {
       drawer.kind,
       drawer.key || '',
       embeddingModel,
-      memory.embedding.length
+      memory.embedding.length,
+      topicKey,
     );
     if (res.changes !== 1) throw new Error('Memory id belongs to another user');
   }
@@ -261,6 +277,42 @@ export class MemoryStorage implements IMemoryStorage {
       userId, ...filter.params,
     );
     return rows.map((row) => this.rowToMemory(row));
+  }
+
+  /** The memory of this user + drawer with this topic key, or null (CORE-MEM-TOPIC). */
+  async getByTopicKey(userId: string, drawer: DrawerRef, topicKey: string): Promise<Memory | null> {
+    return sql().read(this.getByTopicKeyStep(userId, drawer, topicKey));
+  }
+
+  /**
+   * getByTopicKey as a SQL step. `lock` serializes writers of one topic on
+   * PostgreSQL (a transaction lock on the key, then FOR UPDATE on the row).
+   */
+  *getByTopicKeyStep(userId: string, drawer: DrawerRef, topicKey: string, lock = false): Step<Memory | null> {
+    const d = normalizeDrawer(drawer);
+    const dl = yield* dialect();
+    if (lock) yield* lockName(`memory-topic:${userId}:${d.kind}:${d.key || ''}:${topicKey}`);
+    const row = yield* one(
+      `SELECT * FROM memories WHERE user_id = ? AND drawer_kind = ? AND drawer_key = ? AND topic_key = ?${lock && dl === 'postgres' ? ' FOR UPDATE' : ''}`,
+      userId, d.kind, d.key || '', topicKey,
+    );
+    return row ? this.rowToMemory(row) : null;
+  }
+
+  /**
+   * Set or clear a memory's topic key (SQL step). Throws TopicKeyTakenError
+   * when another memory of its drawer holds the key. False when the memory
+   * is not this user's.
+   */
+  *setTopicKeyStep(userId: string, id: string, topicKey: string | null): Step<boolean> {
+    const m = yield* this.getOwnedStep(userId, id, true);
+    if (!m) return false;
+    if (topicKey) {
+      const holder = yield* this.getByTopicKeyStep(userId, m.drawer!, topicKey, true);
+      if (holder && holder.id !== id) throw new TopicKeyTakenError(holder.id);
+    }
+    const res = yield* run('UPDATE memories SET topic_key = ? WHERE id = ? AND user_id = ?', topicKey, id, userId);
+    return res.changes === 1;
   }
 
   /** The user's drawers that hold memories, with counts. */
@@ -550,6 +602,7 @@ ${JSON.stringify(memory.metadata, null, 2)}
       expiryTimestamp: row.expiry_timestamp || null,
       consolidationStatus: row.consolidation_status || 'pending',
       drawer: rowDrawer(row),
+      topicKey: row.topic_key ?? null,
     };
   }
 }

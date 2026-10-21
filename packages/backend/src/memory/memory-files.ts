@@ -62,7 +62,8 @@ export class MemoryFileError extends Error {
 
 interface Entry { type: string; importance: number; content: string }
 export type MemoryChange =
-  | { op: 'add'; after: Entry }
+  /** `topicKey` (CORE-MEM-TOPIC): the new memory takes this key of its drawer. */
+  | { op: 'add'; after: Entry; topicKey?: string }
   | { op: 'update'; id: string; before: Entry; after: Entry }
   | { op: 'delete'; id: string; before: Entry };
 
@@ -89,11 +90,26 @@ export interface MemoryProposal {
   /** Import batch that created it (CLI-02), else null. */
   importBatchId: string | null;
   /**
+   * CORE-MEM-CONFLICT: the existing memory this proposal's new text
+   * contradicts (its one change is an update of that memory), else null.
+   */
+  conflictWith: string | null;
+  /** How a conflict proposal was decided (keep_new / keep_old / keep_both), else null. */
+  decision: ConflictDecision | null;
+  /**
    * sha256 of the reviewed content (proposal id, drawer, base revision, base
    * hash, source, changes). Approve/reject must send it back as
    * `expectedReviewHash`, so a decision only applies to what was shown.
    */
   reviewHash: string;
+}
+
+/** The owner's choices for a conflict proposal (CORE-MEM-CONFLICT). */
+export const CONFLICT_DECISIONS = ['keep_new', 'keep_old', 'keep_both'] as const;
+export type ConflictDecision = typeof CONFLICT_DECISIONS[number];
+
+export function isConflictDecision(value: unknown): value is ConflictDecision {
+  return typeof value === 'string' && (CONFLICT_DECISIONS as readonly string[]).includes(value);
 }
 
 /** Proposals reviewed against the whole drawer (hash) vs. against each changed memory. */
@@ -429,6 +445,8 @@ function rowToProposal(row: any): MemoryProposal {
     decidedBy: row.decided_by ?? null, decidedAt: isoUtc(row.decided_at), appliedRevision: row.applied_revision ?? null,
     reasons: parseReasons(row.reasons),
     importBatchId: row.import_batch_id ?? null,
+    conflictWith: row.conflict_with ?? null,
+    decision: isConflictDecision(row.decision) ? row.decision : null,
     reviewHash,
   };
 }
@@ -472,6 +490,8 @@ export interface ChangeProposalInput {
   reasons: string[]; note?: string | null; createdBy: string; importBatchId?: string | null;
   /** Import (CLI-02) checks capacity for the whole batch up front. */
   skipPendingLimit?: boolean;
+  /** CORE-MEM-CONFLICT: the existing memory the change contradicts (its one change updates it). */
+  conflictWith?: string | null;
 }
 
 export function createChangeProposal(input: ChangeProposalInput): Promise<MemoryProposal> {
@@ -489,15 +509,21 @@ export function* createChangeProposalStep(input: ChangeProposalInput): Step<Memo
       throw new MemoryFileError('Too many proposals are waiting for review', 409);
     }
   }
+  if (input.conflictWith) {
+    const [only] = input.changes;
+    if (input.changes.length !== 1 || only.op !== 'update' || only.id !== input.conflictWith) {
+      throw new MemoryFileError('A conflict proposal updates exactly the memory it conflicts with');
+    }
+  }
   const current = yield* currentMemories(input.userId, d);
   const revision = yield* drawerRevisionStep(input.userId, d);
   const id = uuidv4();
   yield* run(`
-    INSERT INTO memory_file_proposals (id, user_id, agent_id, drawer_kind, drawer_key, base_hash, base_revision, changes, status, source, note, created_by, reasons, import_batch_id)
-    VALUES (?, ?, ?, ?, ?, ?, ?, ?, 'pending', ?, ?, ?, ?, ?)
+    INSERT INTO memory_file_proposals (id, user_id, agent_id, drawer_kind, drawer_key, base_hash, base_revision, changes, status, source, note, created_by, reasons, import_batch_id, conflict_with)
+    VALUES (?, ?, ?, ?, ?, ?, ?, ?, 'pending', ?, ?, ?, ?, ?, ?)
   `, id, input.userId, input.agentId, d.kind, d.key || '', drawerHash(current), revision,
     JSON.stringify(input.changes), input.source, typeof input.note === 'string' ? input.note.slice(0, 500) : null,
-    input.createdBy, JSON.stringify(input.reasons.slice(0, 20)), input.importBatchId ?? null);
+    input.createdBy, JSON.stringify(input.reasons.slice(0, 20)), input.importBatchId ?? null, input.conflictWith ?? null);
   return (yield* getProposalStep(input.userId, id))!;
 }
 
@@ -590,12 +616,15 @@ function* decidable(userId: string, id: string, expectedReviewHash: unknown, loc
 }
 
 /** Atomically move a pending proposal to its decided status; 409 if another decision won. */
-function* claimDecision(userId: string, id: string, status: 'approved' | 'rejected' | 'stale', decidedBy: string, note: string | null = null): Step<void> {
+function* claimDecision(
+  userId: string, id: string, status: 'approved' | 'rejected' | 'stale', decidedBy: string, note: string | null = null,
+  decision: ConflictDecision | null = null,
+): Step<void> {
   const d = yield* dialect();
   const res = yield* run(`
-    UPDATE memory_file_proposals SET status = ?, decided_by = ?, decided_at = ${nowIsoText(d)}, note = COALESCE(?, note)
+    UPDATE memory_file_proposals SET status = ?, decided_by = ?, decided_at = ${nowIsoText(d)}, note = COALESCE(?, note), decision = ?
     WHERE id = ? AND user_id = ? AND status = 'pending'
-  `, status, decidedBy, note, id, userId);
+  `, status, decidedBy, note, decision, id, userId);
   if (res.changes !== 1) throw new MemoryFileError('Proposal was already decided', 409, 'already_decided');
 }
 
@@ -617,14 +646,24 @@ async function bestEffort(what: string, fn: () => Promise<unknown>): Promise<voi
  * approve/reject won meanwhile, the claim fails, the transaction rolls back
  * and nothing is written (409 `already_decided`).
  */
-export async function approveProposal(userId: string, id: string, decidedBy: string, expectedReviewHash: unknown): Promise<ApplyResult> {
+export async function approveProposal(
+  userId: string, id: string, decidedBy: string, expectedReviewHash: unknown, opts: { keepBoth?: boolean } = {},
+): Promise<ApplyResult> {
   const proposal = await sql().read(decidable(userId, id, expectedReviewHash));
   const storage = getMemoryStorage();
   const drawer = proposal.drawer;
+  // CORE-MEM-CONFLICT: approving a conflict proposal = keep new (the existing
+  // memory gets the new text as a new version); keep both adds the new text
+  // as its own memory instead and leaves the existing one as it is.
+  if (opts.keepBoth && !proposal.conflictWith) throw new MemoryFileError('Only a conflict proposal can keep both', 400);
+  const decision: ConflictDecision | null = proposal.conflictWith ? (opts.keepBoth ? 'keep_both' : 'keep_new') : null;
+  const changes: MemoryChange[] = opts.keepBoth
+    ? proposal.changes.map((c) => (c.op === 'update' ? { op: 'add', after: c.after } : c))
+    : proposal.changes;
 
   // Embeddings first (async); the database work below is one transaction (SQL steps).
   const embeddings = new Map<number, number[]>();
-  for (const [i, c] of proposal.changes.entries()) {
+  for (const [i, c] of changes.entries()) {
     if (c.op !== 'delete') embeddings.set(i, await storage.embed(c.after.content));
   }
 
@@ -662,18 +701,23 @@ export async function approveProposal(userId: string, id: string, decidedBy: str
       if (drawerHash(current) !== proposal.baseHash) stale = true;
     } else {
       // CORE-05: each changed memory must still be exactly what was reviewed.
-      for (const c of proposal.changes) {
+      for (const c of changes) {
         if (c.op === 'add') continue;
         const now = byId.get(c.id);
         if (!now || JSON.stringify(entryOf(now)) !== JSON.stringify(c.before)) { stale = true; break; }
       }
     }
+    // CORE-MEM-TOPIC: a new memory's topic key must still be free in the drawer.
+    for (const c of changes) {
+      if (stale) break;
+      if (c.op === 'add' && c.topicKey && (yield* storage.getByTopicKeyStep(userId, drawer, c.topicKey, true))) stale = true;
+    }
     if (stale) { yield* claimDecision(userId, id, 'stale', decidedBy); return; }
     // The claim: exactly one decision moves the row out of 'pending'.
-    yield* claimDecision(userId, id, 'approved', decidedBy);
+    yield* claimDecision(userId, id, 'approved', decidedBy, null, decision);
     const prev = yield* drawerRevisionStep(userId, drawer);
     revision = prev + 1;
-    for (const [i, c] of proposal.changes.entries()) {
+    for (const [i, c] of changes.entries()) {
       if (c.op === 'add') {
         const now = Date.now();
         const mem: Memory = {
@@ -681,7 +725,7 @@ export async function approveProposal(userId: string, id: string, decidedBy: str
           importance: c.after.importance as ImportanceLevel, importanceScore: c.after.importance / 10,
           ...layerFor(c.after.importance), consolidationStatus: 'pending', status: 'active',
           metadata: { source: isFileProposal(proposal) ? 'memory_file' : proposal.source, proposalId: proposal.id }, createdAt: new Date(now), lastAccessedAt: now,
-          accessCount: 0, embedding: embeddings.get(i), drawer,
+          accessCount: 0, embedding: embeddings.get(i), drawer, topicKey: c.topicKey ?? null,
         };
         yield* storage.writeRowStep(mem);
         yield* record(mem.id, 'create', c.after, revision);
@@ -725,13 +769,33 @@ export async function approveProposal(userId: string, id: string, decidedBy: str
   return { proposal: (await getProposal(userId, proposal.id))!, revision, applied };
 }
 
-/** Reject: nothing in the memory changes. Same checks and claim as approve. */
+/** Reject: nothing in the memory changes (a conflict proposal: keep old). Same checks and claim as approve. */
 export async function rejectProposal(userId: string, id: string, decidedBy: string, expectedReviewHash: unknown, note?: unknown): Promise<MemoryProposal> {
   await sql().tx(function* () {
-    yield* decidable(userId, id, expectedReviewHash, true);
-    yield* claimDecision(userId, id, 'rejected', decidedBy, typeof note === 'string' && note ? note.slice(0, 500) : null);
+    const p = yield* decidable(userId, id, expectedReviewHash, true);
+    yield* claimDecision(userId, id, 'rejected', decidedBy, typeof note === 'string' && note ? note.slice(0, 500) : null, p.conflictWith ? 'keep_old' : null);
   });
   return (await getProposal(userId, id))!;
+}
+
+/**
+ * Decide a conflict proposal (CORE-MEM-CONFLICT), owner only (callers check):
+ *   keep_new   the existing memory gets the new text as a new version
+ *   keep_old   nothing changes (= reject)
+ *   keep_both  the new text is added as its own memory; the existing one stays
+ * Same review-hash checks, claim and transaction as approve/reject (CORE-04b):
+ * of two decisions exactly one wins, the other gets 409 `already_decided`.
+ */
+export async function decideConflict(
+  userId: string, id: string, decision: unknown, decidedBy: string, expectedReviewHash: unknown, note?: unknown,
+): Promise<{ decision: ConflictDecision; proposal: MemoryProposal; applied: ApplyResult['applied'] | null }> {
+  if (!isConflictDecision(decision)) throw new MemoryFileError('decision must be keep_new, keep_old or keep_both');
+  const p = await getProposal(userId, id);
+  if (!p) throw new MemoryFileError('Proposal not found', 404);
+  if (!p.conflictWith) throw new MemoryFileError('This proposal is not a conflict', 400);
+  if (decision === 'keep_old') return { decision, proposal: await rejectProposal(userId, id, decidedBy, expectedReviewHash, note), applied: null };
+  const result = await approveProposal(userId, id, decidedBy, expectedReviewHash, { keepBoth: decision === 'keep_both' });
+  return { decision, proposal: result.proposal, applied: result.applied };
 }
 
 /** Version history of a drawer, newest first. */

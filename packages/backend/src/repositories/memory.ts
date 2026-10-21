@@ -31,14 +31,16 @@ import { memoryRecall, type MemoryRecallRepository } from './memory-recall.js';
 import { memoryOwnerRepository, type MemoryOwnerRepository } from './memory-owner.js';
 import { memoryShared, type MemorySharedRepository } from './memory-shared.js';
 import { one, sql } from './sql-steps.js';
-import { getMemoryStorage } from '../memory/storage.js';
+import { getMemoryStorage, TopicKeyTakenError } from '../memory/storage.js';
 import { defaultDrawerForType, normalizeDrawer, sameDrawer, type DrawerRef } from '../memory/drawers.js';
-import { deleteVersioned, saveVersioned, updateVersioned } from '../memory/learning.js';
+import { deleteVersioned, saveVersioned, setTopicKeyVersioned, updateVersioned } from '../memory/learning.js';
 import { memoryVersions } from '../memory/versions.js';
 import { forgetMemory, forgettableDrawer, listTombstones, type ForgetResult } from '../memory/forget.js';
+import { checkMemory, fixMemory, type DoctorFixResult, type DoctorReport } from '../memory/doctor.js';
 import {
   approveProposal,
   createProposal,
+  decideConflict,
   drawerVersions,
   exportDrawerFile,
   getProposal,
@@ -67,6 +69,13 @@ export interface MemoryRepository extends MemoryRecallRepository, MemoryOwnerRep
   assertAccess(actor: Actor | null | undefined, id: string): Promise<void>;
   create(actor: Actor | null | undefined, memory: Omit<Memory, 'userId'>, reason: string): Promise<Memory>;
   update(actor: Actor | null | undefined, id: string, updates: Partial<Memory>, reason: string): Promise<Memory>;
+  /**
+   * CORE-MEM-TOPIC: create, or when `memory.topicKey` already names a memory
+   * of the drawer, update that one as a new version (`updated: true`).
+   */
+  createOrUpdateTopic(actor: Actor | null | undefined, memory: Omit<Memory, 'userId'>, reason: string): Promise<{ memory: Memory; updated: boolean }>;
+  /** Set (or clear with null) a memory's topic key, versioned. TopicKeyTakenError when taken. */
+  setTopicKey(actor: Actor | null | undefined, id: string, topicKey: string | null): Promise<Memory>;
   delete(actor: Actor | null | undefined, id: string, reason: string): Promise<void>;
   versions(actor: Actor | null | undefined, id: string): Promise<any[]>;
   /** null when the memory does not exist (or is not the actor's). */
@@ -84,6 +93,25 @@ export interface MemoryRepository extends MemoryRecallRepository, MemoryOwnerRep
   /** `expectedReviewHash` = the reviewHash the caller reviewed (UI-IP-04). */
   approveProposal(actor: Actor | null | undefined, id: string, expectedReviewHash: unknown): Promise<ApplyResult>;
   rejectProposal(actor: Actor | null | undefined, id: string, expectedReviewHash: unknown, note?: unknown): Promise<MemoryProposal>;
+  /** CORE-MEM-CONFLICT: keep_new / keep_old / keep_both on a conflict proposal (owner only). */
+  decideConflict(actor: Actor | null | undefined, id: string, decision: unknown, expectedReviewHash: unknown, note?: unknown): ReturnType<typeof decideConflict>;
+
+  // CORE-MEM-DOCTOR: the owner account, or an agent run in the owner's own
+  // (non-channel) turn, limited to the drawers open for the run.
+  doctorCheck(actor: Actor | null | undefined): Promise<DoctorReport>;
+  doctorFix(actor: Actor | null | undefined, input: { confirm: unknown; expectedReportHash: unknown; kinds?: unknown }): Promise<DoctorFixResult>;
+}
+
+/** Who may run the memory doctor (see MemoryRepository.doctorCheck). */
+function doctorScope(actor: Actor | null | undefined): { userId: string; drawers: DrawerRef[] | null; label: string } {
+  const a = requireActor(actor);
+  if (a.kind === 'agent') {
+    if (a.channel) throw new ScopeError(403, OUTSIDER_REFUSED);
+    if (a.role !== 'owner' || !a.userId) throw new ScopeError(403, 'The memory doctor is only for the owner');
+    return { userId: a.userId, drawers: [...(a.drawers ?? [])], label: versionActor(a) };
+  }
+  const userId = owner(a);
+  return { userId, drawers: null, label: userId };
 }
 
 async function memoryRowOwner(id: string): Promise<string | null> {
@@ -153,6 +181,27 @@ export const memoryRepository: MemoryRepository = {
     const updated = await updateVersioned(userId, id, updates, versionActor(a), reason);
     if (!updated) throw new ScopeError(404, NOT_FOUND);
     return updated;
+  },
+
+  async createOrUpdateTopic(actor, memory, reason) {
+    const { a } = memoryUser(actor);
+    try {
+      return { memory: await memoryRepository.create(a, memory, reason), updated: false };
+    } catch (err) {
+      if (!(err instanceof TopicKeyTakenError)) throw err;
+      const updates: Partial<Memory> = {
+        content: memory.content, type: memory.type, importance: memory.importance, importanceScore: memory.importanceScore,
+        ...(memory.metadata && Object.keys(memory.metadata).length ? { metadata: memory.metadata } : {}),
+      };
+      return { memory: await memoryRepository.update(a, err.holderId, updates, `${reason}:topic`), updated: true };
+    }
+  },
+
+  async setTopicKey(actor, id, topicKey) {
+    const { a, userId } = memoryUser(actor);
+    const m = await ownMemory(a, userId, id, true);
+    if ((m.topicKey ?? null) !== topicKey) await setTopicKeyVersioned(m, topicKey, versionActor(a));
+    return (await getMemoryStorage().getOwned(userId, id))!;
   },
 
   async delete(actor, id, reason) {
@@ -231,6 +280,21 @@ export const memoryRepository: MemoryRepository = {
   async rejectProposal(actor, id, expectedReviewHash, note) {
     const userId = owner(actor);
     return rejectProposal(userId, id, userId, expectedReviewHash, note);
+  },
+
+  async decideConflict(actor, id, decision, expectedReviewHash, note) {
+    const userId = owner(actor);
+    return decideConflict(userId, id, decision, userId, expectedReviewHash, note);
+  },
+
+  async doctorCheck(actor) {
+    const s = doctorScope(actor);
+    return checkMemory(s.userId, { drawers: s.drawers });
+  },
+
+  async doctorFix(actor, input) {
+    const s = doctorScope(actor);
+    return fixMemory(s.userId, { ...input, actor: s.label }, { drawers: s.drawers });
   },
 };
 
