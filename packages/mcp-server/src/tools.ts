@@ -25,7 +25,7 @@ export const TOOL_DEFINITIONS = [
       'Good for: lookups in Agent Player memory/storage, summaries of text you pass in, classification/tagging, first drafts.',
       'Not for: code changes, security decisions, anything that sends, pays, deletes, installs or runs commands (the small agent has no such tools), or tasks needing deep reasoning.',
       'Returns a run id at once; fetch the result card with get_result. Outputs marked needs_review must be checked by you before use.',
-      'The small agent only gets read-only tools (memory_search, storage_search, read) and only the memory drawers you name; delegation never adds permissions.',
+      'The small agent only gets read-only tools (memory_search, storage_search, read, memory_graph) and only the memory drawers you name; delegation never adds permissions.',
     ].join(' '),
     inputSchema: {
       type: 'object',
@@ -34,7 +34,7 @@ export const TOOL_DEFINITIONS = [
         kind: { type: 'string', enum: [...KINDS], description: 'lookup | summary | classification are informational; draft and other always need review. Default other.' },
         tools: {
           type: 'array', maxItems: 20, items: { type: 'string' },
-          description: 'Tools the agent may use; only memory_search, storage_search and read can be granted. Default: memory_search + storage_search.',
+          description: 'Tools the agent may use; only memory_search, storage_search, read and memory_graph (people/projects/links in memory) can be granted. Default: memory_search + storage_search.',
         },
         drawers: {
           type: 'array', maxItems: 14, items: { type: 'string' },

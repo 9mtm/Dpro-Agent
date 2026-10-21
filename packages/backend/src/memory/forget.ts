@@ -42,6 +42,7 @@ import { exportDrawerFileIfPresent } from './memory-files.js';
 import { drawerRevisionStep, lockMemoryHistory } from './versions.js';
 import { renderDigest, type WeeklyDigest } from './weekly-summary.js';
 import { purgePgIndexStep } from './indexer-pg.js';
+import { forgetMemoryGraphStep } from './graph/store.js';
 import { DEFAULT_MEMORY_CONFIG, type Memory, type MemoryType } from './types.js';
 import { v4 as uuidv4 } from 'uuid';
 
@@ -226,6 +227,7 @@ export async function forgetMemory(userId: string, memoryId: string, actor: stri
       VALUES (?, ?, ?, ?, ?, ?, 1, 'forget', NULL, NULL, NULL, NULL, ?, ?, NULL)
     `, uuidv4(), memoryId, userId, drawer.kind, drawer.key || '', revision, actor, forgottenAt);
     yield* removeRelated(memoryId);
+    yield* forgetMemoryGraphStep(userId, memoryId); // CORE-MEM-GRAPH: attachments + orphan links
     yield* scrubSummaries(userId, memoryId, texts);
     return { drawer, types, cancelled };
   });
