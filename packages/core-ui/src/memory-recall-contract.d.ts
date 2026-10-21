@@ -7,7 +7,8 @@ export type SummarySource = 'model' | 'fallback' | 'inline';
 export const SUMMARY_SOURCES: readonly SummarySource[];
 export const CACHE_METRICS_PATH: string;
 export type RecallItem = {
-  kind: 'memory' | 'handoff'; id: string; drawer: string | null; why: RecallReason; state: RecallState;
+  /** fact = an owner-pinned scope fact; its drawer is 'company', 'department:<id>' or 'project:<slug>'. */
+  kind: 'memory' | 'handoff' | 'fact'; id: string; drawer: string | null; why: RecallReason; state: RecallState;
   score?: number; type?: string; preview?: string; nowIn?: string;
 };
 export type RecallTrace = {

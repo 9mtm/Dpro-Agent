@@ -1,7 +1,7 @@
 /**
  * Reply recall trace (MEM-CACHE-01, migration 111): what one chat turn put
- * into its context — memories (pinned / topic / graph / meaning / keyword),
- * the handoff note — and how the context was built (turns kept in full or
+ * into its context — the owner's pinned scope facts, memories (pinned /
+ * topic / graph / meaning / keyword), the handoff note — and how the context was built (turns kept in full or
  * summarised, cache hit, size, time to first word).
  *
  * Stored per run, linked to the assistant message through
@@ -111,7 +111,16 @@ async function view(row: TraceRow): Promise<TraceView> {
   const handoffIds = items.filter((i) => i.kind === 'handoff').map((i) => i.id);
   const handoffs = handoffIds.length ? new Set((await sql().read(all<{ id: string }>(
     `SELECT id FROM agent_handoffs WHERE owner_id = ? AND id IN (${handoffIds.map(() => '?').join(', ')})`, row.user_id, ...handoffIds)).catch(() => [])).map((r) => r.id)) : new Set<string>();
+  const factIds = items.filter((i) => i.kind === 'fact').map((i) => i.id);
+  const facts = factIds.length ? new Map((await sql().read(all<{ id: string; text: string; updated_at: string }>(
+    `SELECT id, text, updated_at FROM memory_pinned_facts WHERE owner_id = ? AND id IN (${factIds.map(() => '?').join(', ')})`, row.user_id, ...factIds)).catch(() => []))
+    .map((f) => [f.id, f])) : new Map<string, { id: string; text: string; updated_at: string }>();
   const out: TraceView['items'] = items.map((i) => {
+    if (i.kind === 'fact') {
+      const f = facts.get(i.id);
+      if (!f) return { ...i, state: 'deleted' };
+      return { ...i, preview: oneLine(f.text, 300), state: f.updated_at > row.created_at ? 'changed' : 'active' };
+    }
     if (i.kind === 'handoff') return { ...i, state: handoffs.has(i.id) ? 'active' : 'deleted' };
     const m = byId.get(i.id);
     if (!m) return { ...i, state: forgotten.has(i.id) ? 'forgotten' : 'deleted' };

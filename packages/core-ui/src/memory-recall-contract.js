@@ -19,6 +19,8 @@ const conversationId = messageId;
 const memoryId = x => typeof x === 'string' && /^[A-Za-z0-9][A-Za-z0-9_.@-]{0,127}$/.test(x);
 const drawerId = x => typeof x === 'string' && /^(owner|experience|(project|task|people):[A-Za-z0-9][A-Za-z0-9_.@-]{0,127})$/.test(x);
 const handoffScope = x => typeof x === 'string' && /^(conversation|task):[A-Za-z0-9][A-Za-z0-9_.:-]{0,127}$/.test(x);
+// MEM-SCALE-01: the scope of an owner-pinned fact.
+const factScope = x => typeof x === 'string' && /^(company|department:[A-Za-z0-9][A-Za-z0-9_-]{0,63}|project:[A-Za-z0-9][A-Za-z0-9_.@-]{0,127})$/.test(x);
 // eslint-disable-next-line no-control-regex
 const badChars = /[\u0000-\u0008\u000B-\u001F\u007F‪-‮⁦-⁩]/u;
 export const MAX_CORRECTION = 50000;
@@ -74,14 +76,15 @@ const num = x => (typeof x === 'number' && Number.isFinite(x) && x >= 0 ? x : nu
 const rate = x => (typeof x === 'number' && x >= 0 && x <= 1 ? x : null);
 
 function item(i) {
-  if (!record(i) || !['memory', 'handoff'].includes(i.kind) || !memoryId(i.id) || !RECALL_REASONS.includes(i.why) || !RECALL_STATES.includes(i.state)) fail();
-  const drawer = i.kind === 'handoff' ? (handoffScope(i.drawer) ? i.drawer : null) : (drawerId(i.drawer) ? i.drawer : null);
+  if (!record(i) || !['memory', 'handoff', 'fact'].includes(i.kind) || !memoryId(i.id) || !RECALL_REASONS.includes(i.why) || !RECALL_STATES.includes(i.state)) fail();
+  const valid = i.kind === 'handoff' ? handoffScope : i.kind === 'fact' ? factScope : drawerId;
+  const drawer = valid(i.drawer) ? i.drawer : null;
   return {
     kind: i.kind, id: i.id, drawer, why: i.why, state: i.state,
     ...(rate(i.score) !== null ? { score: i.score } : {}),
     ...(typeof i.type === 'string' ? { type: clip(i.type, 20) } : {}),
     // A forgotten or deleted memory never shows text.
-    ...(i.kind === 'memory' && ['active', 'changed', 'moved'].includes(i.state) && typeof i.preview === 'string' ? { preview: clip(i.preview, 300) } : {}),
+    ...(i.kind !== 'handoff' && ['active', 'changed', 'moved'].includes(i.state) && typeof i.preview === 'string' ? { preview: clip(i.preview, 300) } : {}),
     ...(i.state === 'moved' && drawerId(i.nowIn) ? { nowIn: i.nowIn } : {}),
   };
 }
