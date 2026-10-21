@@ -23,6 +23,15 @@ export type VersionChange = 'baseline' | 'create' | 'update' | 'delete';
 
 export interface VersionEntry { type: string; importance: number; content: string }
 
+/** What Restore from the Trash needs beyond a version row (MEM-TRASH-01). */
+export function trashSnapshot(m: Memory): string {
+  return JSON.stringify({
+    type: m.type, content: m.content, importanceScore: m.importanceScore ?? null, summary: m.summary ?? null, tags: m.tags ?? null,
+    metadata: m.metadata ?? null, topicKey: m.topicKey ?? null, memoryLayer: m.memoryLayer ?? null, sourceAgentId: m.sourceAgentId ?? null,
+    createdAt: m.createdAt instanceof Date ? m.createdAt.toISOString() : m.createdAt ?? null,
+  });
+}
+
 /** Actor id for an agent tool call. */
 export function agentActor(agentId?: string | null): string {
   return agentId ? `agent:${agentId}` : 'agent';
@@ -76,6 +85,8 @@ export interface RecordVersionInput {
   proposalId?: string | null;
   /** Drawer revision of the row; default the drawer's current revision. */
   revision?: number;
+  /** JSON of the whole memory at a 'delete' (Trash restore, MEM-TRASH-01). */
+  snapshot?: string | null;
 }
 
 /** Append one version row (SQL step; run it inside a transaction). */
@@ -84,11 +95,11 @@ export function* recordVersionStep(input: RecordVersionInput): Step<void> {
   const v = ((yield* lastVersionStep(input.memoryId)) ?? 0) + 1;
   const rev = input.revision ?? (yield* drawerRevisionStep(input.userId, input.drawer));
   yield* run(`
-    INSERT INTO memory_versions (id, memory_id, user_id, drawer_kind, drawer_key, drawer_revision, version, change, type, content, importance_score, proposal_id, created_by, reason)
-    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+    INSERT INTO memory_versions (id, memory_id, user_id, drawer_kind, drawer_key, drawer_revision, version, change, type, content, importance_score, proposal_id, created_by, reason, snapshot)
+    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
   `, uuidv4(), input.memoryId, input.userId, input.drawer.kind, input.drawer.key || '', rev, v, input.change,
     input.entry?.type ?? null, input.entry?.content ?? null, input.entry ? input.entry.importance / 10 : null,
-    input.proposalId ?? null, input.actor, typeof input.reason === 'string' ? input.reason.slice(0, 200) : null);
+    input.proposalId ?? null, input.actor, typeof input.reason === 'string' ? input.reason.slice(0, 200) : null, input.snapshot ?? null);
 }
 
 /** Append one version row (one transaction). */

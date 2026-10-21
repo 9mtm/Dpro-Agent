@@ -35,6 +35,7 @@ export const BACKGROUND_JOBS: ReadonlyArray<{ id: string; off: string }> = [
   { id: 'task-run-recovery', off: 'startTaskRunRecovery not called (no timer, no recovery kick)' },
   { id: 'handoff-sweep', off: 'startHandoffSweep not called (no generated handoff notes for idle chats / ended task runs)' },
   { id: 'memory-bridge-sync', off: 'startMemoryBridgeSync not called (managed project files and back-flow only on owner request)' },
+  { id: 'memory-files-sync', off: 'startMemoryFilesSync not called (exported memory files follow the database only on owner request)' },
   { id: 'login-pruning', off: 'startLoginRecordPruning not called' },
   { id: 'scheduled-notifications', off: '60 s interval not started' },
   { id: 'calendar-sync', off: 'startCalendarSyncScheduler not called' },
@@ -233,6 +234,10 @@ export async function initializeBackend(fastify: FastifyInstance): Promise<Start
     // CLAUDE.md / GEMINI.md section refreshed; opted-in back-flow runs.
     const { startMemoryBridgeSync } = await import('../memory/bridge/sync.js');
     startMemoryBridgeSync();
+
+    // MEM-UX-02: exported memory files follow the database (untouched files only).
+    const { startMemoryFilesSync } = await import('../memory/files-sync.js');
+    startMemoryFilesSync();
 
     // S0-Q.21: prune old sign-in attempts (30 days) and expired device
     // tokens now and daily (unref'd timer, errors logged, never thrown).

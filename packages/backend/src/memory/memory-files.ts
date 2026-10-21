@@ -41,7 +41,7 @@ import { v4 as uuidv4 } from 'uuid';
 import { all, dialect, lockName, one, run, sql, type Step } from '../repositories/sql-steps.js';
 import { forUpdate, nowIsoText } from '../db/pg/dialect.js';
 import { getMemoryStorage } from './storage.js';
-import { drawerRevisionStep, lastVersionStep, lockMemoryHistory } from './versions.js';
+import { drawerRevisionStep, lastVersionStep, lockMemoryHistory, trashSnapshot } from './versions.js';
 import { isMemoryType, type Memory, type MemoryType, type ImportanceLevel, type MultiTierLayer } from './types.js';
 import { drawerId, normalizeDrawer, parseDrawerId, type DrawerRef } from './drawers.js';
 
@@ -410,6 +410,33 @@ export async function exportDrawerFileIfPresent(userId: string, drawer: DrawerRe
   return done;
 }
 
+/**
+ * MEM-UX-02 background re-export: rewrite a drawer's exported files that are
+ * out of date AND untouched (the entries in the file still hash to the base
+ * written in its header). A file the owner edited is never overwritten: its
+ * changes reach the database only as a reviewed proposal. Returns the agents
+ * re-exported and the files left alone because they were edited.
+ */
+export async function refreshUntouchedExports(userId: string, drawer: DrawerRef): Promise<{ reexported: string[]; edited: string[] }> {
+  const out = { reexported: [] as string[], edited: [] as string[] };
+  let agents: string[] = [];
+  try { agents = await fs.readdir(agentsRoot()); } catch { return out; }
+  const current = drawerHash(await sql().read(currentMemories(userId, normalizeDrawer(drawer))));
+  for (const agentId of agents) {
+    if (!isValidAgentId(agentId)) continue;
+    let text: string;
+    try { text = await readDrawerFile(userId, agentId, drawer); } catch { continue; }
+    let parsed: ParsedFile;
+    try { parsed = parseDrawerFile(text); } catch { out.edited.push(agentId); continue; }
+    if (parsed.baseHash === current) continue;
+    const h = createHash('sha256');
+    for (const e of parsed.entries) { h.update(JSON.stringify([e.id, e.type, e.importance, e.content])); h.update('\n'); }
+    if (h.digest('hex') !== parsed.baseHash) { out.edited.push(agentId); continue; }
+    try { await exportDrawerFile(userId, agentId, drawer); out.reexported.push(agentId); } catch { /* next round */ }
+  }
+  return out;
+}
+
 /** Read the exported file of a drawer as it is on disk (owner edited it). */
 export async function readDrawerFile(userId: string, agentId: string, drawer: DrawerRef): Promise<string> {
   const file = drawerFilePath(agentId, userId, drawer);
@@ -680,14 +707,14 @@ export async function approveProposal(
   let stale = false;
 
   const reason = `proposal:${proposal.source}`;
-  function* record(memoryId: string, change: string, e: Entry | null, rev: number): Step<void> {
+  function* record(memoryId: string, change: string, e: Entry | null, rev: number, snapshot: string | null = null): Step<void> {
     yield* lockMemoryHistory(memoryId);
     const v = ((yield* lastVersionStep(memoryId)) ?? 0) + 1;
     yield* run(`
-      INSERT INTO memory_versions (id, memory_id, user_id, drawer_kind, drawer_key, drawer_revision, version, change, type, content, importance_score, proposal_id, created_by, reason)
-      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+      INSERT INTO memory_versions (id, memory_id, user_id, drawer_kind, drawer_key, drawer_revision, version, change, type, content, importance_score, proposal_id, created_by, reason, snapshot)
+      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
     `, uuidv4(), memoryId, userId, drawer.kind, drawer.key || '', rev, v, change,
-      e?.type ?? null, e?.content ?? null, e ? e.importance / 10 : null, proposal.id, decidedBy, change === 'baseline' ? 'before first change' : reason);
+      e?.type ?? null, e?.content ?? null, e ? e.importance / 10 : null, proposal.id, decidedBy, change === 'baseline' ? 'before first change' : reason, snapshot);
   }
   function* recordBaseline(m: Memory, rev: number): Step<void> {
     yield* lockMemoryHistory(m.id);
@@ -758,7 +785,7 @@ export async function approveProposal(
         if (!old) throw new MemoryFileError('Proposal does not match the drawer', 409, 'stale');
         yield* recordBaseline(old, prev);
         yield* run('DELETE FROM memories WHERE id = ? AND user_id = ?', old.id, userId);
-        yield* record(old.id, 'delete', null, revision);
+        yield* record(old.id, 'delete', null, revision, trashSnapshot(old));
         applied.deleted.push(old.id);
         removed.push(old);
       }

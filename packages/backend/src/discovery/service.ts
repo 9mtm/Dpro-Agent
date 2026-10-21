@@ -15,10 +15,20 @@
  *           .mcp.json → MCP servers, switched off; a token goes only to the
  *           encrypted store, and only when the owner chooses so
  *   ssh     Host entries of ~/.ssh/config → SSH hosts (names only)
+ *   design  a project's colours, fonts, logos and design rules (project-tech.ts)
+ *           → the project's Design view, added on its own (DESIGN-FIND-01)
+ *   database a project's local databases: SQLite table names (from a copy),
+ *           .env DB_* names, compose services → the project's Databases view,
+ *           added on its own; never a row, never a password (PROJECT-TECH-01)
  *
- * Read only: no file here is ever changed, moved or deleted. Never read: private
- * keys (an IdentityFile is named, never opened), .env files, browser, keychain
- * or wallet data. Paths work on macOS, Windows and Linux (os.homedir + path).
+ * The page asks for the kinds it shows (`kinds`): Memory › Sources shows
+ * memory, note, design and database; Skills, MCP and Terminal ask for theirs.
+ *
+ * Read only: no file here is ever changed, moved or deleted (DESIGN.md, written
+ * between Dpro's markers by the design store, is the one file Dpro keeps).
+ * Never read: private keys (an IdentityFile is named, never opened), .env files
+ * (except the DB_* connection names, never a password), browser, keychain or
+ * wallet data. Paths work on macOS, Windows and Linux (os.homedir + path).
  * Every response is redacted; every import carries the previewHash the owner saw.
  */
 import { createHash, randomUUID } from 'node:crypto';
@@ -26,7 +36,7 @@ import fs from 'node:fs/promises';
 import os from 'node:os';
 import path from 'node:path';
 import yaml from 'js-yaml';
-import { q } from '../repositories/sql-steps.js';
+import { q, sql } from '../repositories/sql-steps.js';
 import { readRegularFile } from '../services/read-regular-file.js';
 import { redactImportText } from '../memory/import/redact.js';
 import { claudeFolderCwd, listLocalSessions, matchProject, projectRoot, relocateGoneRoots, rootDrawerKey, type ProjectRoot } from '../memory/import/local-agents.js';
@@ -39,8 +49,12 @@ import { deleteServer } from '../mcp-client/service.js';
 import { approveProposal, createChangeProposal, MemoryFileError, resolveFileAgent, type MemoryChange } from '../memory/memory-files.js';
 import { parseDrawerId, type DrawerRef } from '../memory/drawers.js';
 import * as P from './places.js';
+import { findDatabases, findDesign, type DatabaseFound, type DesignFound } from './project-tech.js';
+import { recordFoundDesign } from '../memory/project-design.js';
+import { recordFoundDatabases } from '../memory/project-databases.js';
+import { upsertProjectRowStep, projectStep } from '../memory/scopes/store.js';
 
-export const DISCOVERY_KINDS = ['memory', 'note', 'tool', 'skill', 'mcp', 'ssh'] as const;
+export const DISCOVERY_KINDS = ['memory', 'note', 'tool', 'skill', 'mcp', 'ssh', 'design', 'database'] as const;
 export type DiscoveryKind = (typeof DISCOVERY_KINDS)[number];
 export type DiscoveryState = 'new' | 'changed' | 'decision' | 'imported' | 'ignored' | 'gone';
 export class DiscoveryError extends Error { constructor(readonly code: string, readonly status = 400) { super(code); } }
@@ -55,6 +69,8 @@ type Found = {
   note?: { root: string };
   tool?: { type: 'command' | 'sub-agent'; skillName: string; content: string };
   skillTaken?: { agents: number };
+  design?: DesignFound;
+  database?: DatabaseFound;
 };
 export type DiscoveryItem = { id: string; kind: DiscoveryKind; name: string; from: string; rootId: string | null; to: string; state: DiscoveryState; updatedAt: string };
 export type DiscoveryRoot = { id: string; name: string; path: string | null; project: string | null; count: number; fresh: number; watch: boolean; group?: { members: { id: string; name: string; path: string }[] }; hidden?: string[] };
@@ -288,6 +304,64 @@ async function sshHosts(home: string): Promise<Found[]> {
   return parseSshConfig(t.text).map((h) => ({ id: itemId('ssh', path.relative(home, file), h.alias), kind: 'ssh' as const, name: h.alias, from: `${homeRel(home, file)}`, root: null, file, hash: sha(h.block), updatedAt: t.mtime, ssh: { alias: h.alias, host: h.host, user: h.user, port: h.port, key: h.key } }));
 }
 
+// ---- design and databases (DESIGN-FIND-01, PROJECT-TECH-01) ----
+async function designItems(home: string, roots: string[]): Promise<Found[]> {
+  const out: Found[] = [];
+  for (const root of roots.slice(0, 200)) {
+    const d = await findDesign(root).catch(() => null);
+    if (!d) continue;
+    const what = [d.colours.length && `${d.colours.length} colours`, d.fonts.length && `${d.fonts.length} fonts`, d.logos.length && `${d.logos.length} logos`, d.rules.length && `${d.rules.length} rules`].filter(Boolean).join(', ');
+    out.push({ id: itemId('design', path.relative(home, root)), kind: 'design', name: `Design · ${what}`, from: d.sources.filter((x) => x.kind !== 'image').map((x) => path.relative(root, x.path)).slice(0, 4).join(', ') || 'images', root, file: root, hash: d.hash, updatedAt: new Date().toISOString(), design: d });
+  }
+  return out;
+}
+async function databaseItems(home: string, roots: string[]): Promise<Found[]> {
+  const out: Found[] = [];
+  for (const root of roots.slice(0, 200)) {
+    for (const db of await findDatabases(root).catch(() => [] as DatabaseFound[])) {
+      const st = await fs.stat(db.path).catch(() => null);
+      out.push({ id: itemId('database', path.relative(home, db.path), db.id), kind: 'database', name: `${db.name} · ${db.engine}${db.tables ? ` · ${db.tables.length} tables` : ''}`, from: path.relative(root, db.path), root, file: db.path, hash: createHash('sha256').update(JSON.stringify(db)).digest('hex'), updatedAt: st?.mtime.toISOString() ?? new Date(0).toISOString(), database: db });
+    }
+  }
+  return out;
+}
+/** The project slug a found root belongs to (the same rule as memory files), or null. */
+function projectSlugOf(root: string | null, ctx: Ctx): string | null {
+  const drawer = destination({ kind: 'design', root }, ctx).drawer;
+  return drawer.startsWith('project:') ? drawer.slice('project:'.length) : null;
+}
+/**
+ * Design and databases join their project on their own (no import step):
+ * each scan stores what it found per project (the project joins Dpro by its
+ * folder name when it was not known yet). A kind that is off is left alone.
+ */
+async function applyProjectTech(userId: string, s: Scan, home: string, on: { design: boolean; databases: boolean }) {
+  if (!on.design && !on.databases) return;
+  const gs = await P.groups(userId);
+  const groupOf = new Map<string, P.Group>(); for (const g of gs) for (const r of g.roots) groupOf.set(r, g);
+  const ctx: Ctx = { projects: await listProjects(userId).catch(() => []), home, groupOf };
+  const ensure = async (slug: string, root: string) => {
+    if (await sql().read(projectStep(userId, slug))) return;
+    await sql().tx(() => upsertProjectRowStep(userId, slug, { name: path.basename(root).slice(0, 80) || slug }, 'discovery'), { immediate: true });
+  };
+  if (on.design) for (const f of s.found) {
+    if (f.kind !== 'design' || !f.design) continue;
+    const slug = projectSlugOf(f.root, ctx); if (!slug) continue;
+    await ensure(slug, f.design.root);
+    await recordFoundDesign(userId, slug, f.design, home);
+  }
+  if (on.databases) {
+    const byProject = new Map<string, { root: string; list: DatabaseFound[] }>();
+    for (const f of s.found) {
+      if (f.kind !== 'database' || !f.database || !f.root) continue;
+      const slug = projectSlugOf(f.root, ctx); if (!slug) continue;
+      const e = byProject.get(slug) ?? { root: f.root, list: [] };
+      e.list.push(f.database); byProject.set(slug, e);
+    }
+    for (const [slug, e] of byProject) { await ensure(slug, e.root); await recordFoundDatabases(userId, slug, e.list); }
+  }
+}
+
 // ---- scan, state, list ----
 const scans = new Map<string, Scan>();
 const running = new Map<string, Promise<Scan>>();
@@ -322,10 +396,13 @@ export async function scan(userId: string, opts: DiscoveryOptions = {}): Promise
     const pn = await projectNotes(home, list.filter((r) => !P.isExcluded(r, allowed.exclude)), allowed, kinds);
     for (const n of pn.found) if (n.root) roots.add(n.root);
     const all = [...roots].filter((r) => r !== home && !P.isExcluded(r, allowed.exclude));
-    const found = [...mem, ...(kinds.notes ? await notes(home, all) : []), ...pn.found, ...(kinds.skills ? await skills(home, all) : []), ...(kinds.mcp ? mcp : []), ...(kinds.ssh ? await sshHosts(home) : [])]
+    const techRoots = all.filter((r) => !unwatched.has(rootId(r)));
+    const found = [...mem, ...(kinds.notes ? await notes(home, all) : []), ...pn.found, ...(kinds.skills ? await skills(home, all) : []), ...(kinds.mcp ? mcp : []), ...(kinds.ssh ? await sshHosts(home) : []),
+      ...(kinds.design ? await designItems(home, techRoots) : []), ...(kinds.databases ? await databaseItems(home, techRoots) : [])]
       .filter((f) => !unwatched.has(rootId(f.root)) && !(f.root && P.isExcluded(f.root, allowed.exclude)));
     const s: Scan = { at: Date.now(), ms: Date.now() - t0, found, leftOut: pn.leftOut };
     scans.set(userId, s);
+    await applyProjectTech(userId, s, home, { design: kinds.design, databases: kinds.databases }).catch((e) => console.warn('[Discovery] design/databases not stored:', (e as Error).message));
     return s;
   })().finally(() => running.delete(userId));
   running.set(userId, work);
@@ -355,6 +432,8 @@ function destination(f: Pick<Found, 'kind' | 'root' | 'memory' | 'mcp'> & { skil
     return { to: label, drawer: projectDrawer };
   }
   if (f.kind === 'note') return { to: `${label} · read by the local model`, drawer: projectDrawer };
+  if (f.kind === 'design') return { to: `${label} · Design (added on its own)`, drawer: projectDrawer };
+  if (f.kind === 'database') return { to: `${label} · Databases (names only)`, drawer: projectDrawer };
   if (f.kind === 'tool') return { to: 'Skills · off until assigned', drawer: '' };
   if (f.kind === 'skill') return { to: f.skillTaken ? `Skills · replaces the skill this page added${f.skillTaken.agents ? ` (used by ${f.skillTaken.agents} agent${f.skillTaken.agents === 1 ? '' : 's'})` : ''}` : 'Skills · off until assigned', drawer: '' };
   if (f.kind === 'mcp') return { to: `MCP · off${f.mcp?.secrets.length ? ' · secret → Credentials' : ''}`, drawer: '' };
@@ -374,12 +453,14 @@ async function stateOf(f: Found, row: Row | undefined, mcp: LocalMcpImport): Pro
   }
   if (f.kind === 'mcp') return f.mcp?.input && await mcp.existing(f.mcp.input) ? 'imported' : 'decision';
   if (f.kind === 'tool') return 'decision';
+  // Added on its own by the scan (applyProjectTech).
+  if (f.kind === 'design' || f.kind === 'database') return 'imported';
   return 'new';
 }
 
 export type DiscoveryView = { scannedAt: string | null; ms: number; leftOut: number; settings: { watch: boolean; intervalMinutes: number; kinds: P.Kinds }; allowedFolders: number; roots: DiscoveryRoot[]; items: DiscoveryItem[]; suggestions: { key: string; a: { id: string; name: string }; b: { id: string; name: string }; reason: string }[] };
 /** The page: projects, items and their state (scans first when nothing was read yet). */
-export async function view(userId: string, opts: DiscoveryOptions & { rescan?: boolean } = {}): Promise<DiscoveryView> {
+export async function view(userId: string, opts: DiscoveryOptions & { rescan?: boolean; kinds?: readonly string[] } = {}): Promise<DiscoveryView> {
   await init();
   const s = !opts.rescan && scans.get(userId) || await scan(userId, opts);
   const home = opts.home ?? os.homedir(); const mcp = mcpFor(opts);
@@ -396,13 +477,14 @@ export async function view(userId: string, opts: DiscoveryOptions & { rescan?: b
     seen.add(f.id);
     const rid = shownRoot(f.root);
     if (hidden.get(rid ?? 'computer')?.has(f.kind)) continue;
+    if (opts.kinds && !opts.kinds.includes(f.kind)) continue;
     items.push({ id: f.id, kind: f.kind, name: redactImportText(f.name).text, from: redactImportText(f.from).text, rootId: rid, to: destination(f, ctx).to, state: await stateOf(f, saved.get(f.id), mcp), updatedAt: f.updatedAt });
   }
   const unwatched = new Set((await q.all<{ root_id: string }>('SELECT root_id FROM discovery_roots WHERE user_id = ? AND watch = 0', userId)).map((r) => r.root_id));
   // A kind the owner turned off is not read, so it is not "gone" either.
   const kindsOn = await P.kinds(userId);
-  const KIND_OF: Record<string, P.FileKind | null> = { memory: null, note: 'notes', tool: 'tools', skill: 'skills', mcp: 'mcp', ssh: 'ssh' };
-  for (const r of saved.values()) if (!seen.has(r.item_id) && r.state === 'imported' && !unwatched.has(rootId(r.root)) && !(KIND_OF[r.kind] && !kindsOn[KIND_OF[r.kind]!])) {
+  const KIND_OF: Record<string, P.FileKind | null> = { memory: null, note: 'notes', tool: 'tools', skill: 'skills', mcp: 'mcp', ssh: 'ssh', design: 'design', database: 'databases' };
+  for (const r of saved.values()) if (!seen.has(r.item_id) && r.state === 'imported' && !unwatched.has(rootId(r.root)) && !(KIND_OF[r.kind] && !kindsOn[KIND_OF[r.kind]!]) && !(opts.kinds && !opts.kinds.includes(r.kind))) {
     items.push({ id: r.item_id, kind: r.kind, name: r.name, from: 'no longer on this computer', rootId: shownRoot(r.root), to: destination({ kind: r.kind, root: r.root }, ctx).to, state: 'gone', updatedAt: '' });
   }
   const byRoot = new Map<string, { root: string | null; count: number; fresh: number }>();
@@ -454,6 +536,14 @@ export async function preview(userId: string, id: string, opts: DiscoveryOptions
   else if (f.kind === 'mcp') {
     const i = f.mcp?.input as any;
     text = i ? JSON.stringify({ command: i.command, args: i.args, url: i.url, env: Object.fromEntries(Object.keys(i.env ?? {}).map((k) => [k, '••••••••'])), headers: Object.fromEntries(Object.keys(i.headers ?? {}).map((k) => [k, '••••••••'])) }, null, 2) : `Cannot be added: ${f.mcp?.issue?.replace(/_/g, ' ')}`;
+  } else if (f.design) {
+    const d = f.design;
+    text = [d.colours.length ? `Colours: ${d.colours.map((c) => `${c.name} ${c.value}`).join(', ')}` : '', d.fonts.length ? `Fonts: ${d.fonts.map((x) => x.name).join(', ')}` : '',
+      d.logos.length ? `Logos: ${d.logos.map((l) => `${l.kind} ${path.relative(d.root, l.path)}`).join(', ')}` : '', ...d.rules.map((r) => `Rule: ${r.text}`)].filter(Boolean).join('\n');
+  } else if (f.database) {
+    const db = f.database;
+    text = [`${db.engine} · ${db.name}`, db.host ? `Host: ${db.host}${db.port ? `:${db.port}` : ''}` : '', db.database ? `Database: ${db.database}` : '', db.image ? `Image: ${db.image}` : '',
+      db.tables ? `Tables (${db.tables.length}): ${db.tables.join(', ')}` : db.tablesNote ? `Tables: ${db.tablesNote}` : '', 'Never a row, never a password.'].filter(Boolean).join('\n');
   } else if (f.ssh) text = [`Host ${f.ssh.alias}`, f.ssh.host ? `  HostName ${f.ssh.host}` : '', f.ssh.user ? `  User ${f.ssh.user}` : '', f.ssh.port ? `  Port ${f.ssh.port}` : '', f.ssh.key ? `  IdentityFile ${f.ssh.key} (name only; the key is never read)` : ''].filter(Boolean).join('\n');
   const clean = redactImportText(text).text;
   return {
@@ -514,6 +604,12 @@ export async function importItems(userId: string, items: { id: string; previewHa
           ? await applyMemory(userId, drawer, [{ op: 'update', id: saved.ref, before, after }], 'Claude Code memory file changed')
           : await applyMemory(userId, drawer, [{ op: 'add', after }], 'Claude Code memory file');
         await save(userId, f, 'imported', r.applied.updated[0] ?? r.applied.added[0] ?? saved?.ref ?? null, f.hash);
+      } else if (f.kind === 'design' || f.kind === 'database') {
+        // Already added by the scan; importing again stores the newest state.
+        const s = scans.get(userId)!;
+        const same = f.kind === 'design' ? [f] : s.found.filter((x) => x.kind === 'database' && x.root === f.root);
+        await applyProjectTech(userId, { ...s, found: same }, ctx.home, { design: f.kind === 'design', databases: f.kind === 'database' });
+        await save(userId, f, 'imported', null, f.hash);
       } else if (f.kind === 'note') {
         noteDocs.push({ f, doc: await registerProjectDocument(userId, f.note!.root, f.file) });
         continue;
@@ -580,7 +676,7 @@ export async function remove(userId: string, id: string) {
   if (!/^[a-f0-9]{32}$/.test(id)) throw new DiscoveryError('invalid_input');
   const saved = (await rows(userId)).get(id);
   if (!saved || !saved.ref || saved.state === 'ignored') throw new DiscoveryError('not_imported', 409);
-  if (saved.kind === 'note') throw new DiscoveryError('not_removable', 409);
+  if (saved.kind === 'note' || saved.kind === 'design' || saved.kind === 'database') throw new DiscoveryError('not_removable', 409);
   if (saved.kind === 'memory') {
     const before = await currentMemory(userId, saved.ref);
     if (before) {

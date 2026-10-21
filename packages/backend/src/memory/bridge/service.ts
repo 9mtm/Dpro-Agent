@@ -4,12 +4,16 @@
  *
  *   owner        status, kill switch per CLI, managed files (preview -> confirm),
  *                registration (preview -> confirm -> undo), back-flow, sync
- *   MCP server   read tools (project_brief, pinned_facts, latest_handoff, memory_search)
+ *   MCP server   read tools (project_brief, pinned_facts, latest_handoff, memory_search, project_design)
  *                and write tools that only create review proposals (memory_propose)
  *                or handoff notes (handoff_write), for the project whose folder the
  *                CLI runs in; nothing for a folder Dpro does not know
  */
+import { designBlock, getDesign } from '../project-design.js';
+import fs from 'node:fs';
 import os from 'node:os';
+import path from 'node:path';
+import { q } from '../../repositories/sql-steps.js';
 import type { Project } from '../../repositories/chat-conversations.js';
 import { findProject, listProjects } from '../../repositories/chat-conversations.js';
 import { getMemoryStorage } from '../storage.js';
@@ -196,9 +200,64 @@ export async function syncOwner(ownerId: string): Promise<{ written: number; pro
   return out;
 }
 
+// --- automatic connection (MEM-UX-02) ---------------------------------------
+
+/**
+ * Once the owner allowed reading this computer (at least one folder allowed in
+ * Settings › Memory › Folders and drives, DISCOVER-02), coding apps connect on
+ * their own:
+ *   - each coding app whose config is on this computer gets the dpro-memory
+ *     server registered (the same preview + apply: the original config is
+ *     backed up first; Undo restores it). An app the owner switched off, or
+ *     whose registration the owner undid, is never registered again by itself.
+ *   - each project folder without folder settings gets its managed files
+ *     (default on; written only between Dpro's markers). A folder the owner
+ *     turned off stays off; a conflict is recorded once and left alone.
+ * Every step is audited ('automatic'). Never throws.
+ */
+export async function autoConnect(ownerId: string, allowed: boolean): Promise<{ registered: BridgeClient[]; folders: string[]; conflicts: number }> {
+  const out = { registered: [] as BridgeClient[], folders: [] as string[], conflicts: 0 };
+  if (!allowed) return out;
+  const w = where();
+  const regs = await listRegistrations(ownerId);
+  const decided = new Set((await q.all<{ client: string }>('SELECT client FROM memory_bridge_clients WHERE owner_id = ?', ownerId)).map((r) => r.client));
+  for (const cl of BRIDGE_CLIENTS) {
+    if (decided.has(cl) || regs.some((r) => r.client === cl)) continue;
+    const file = clientConfigFile(cl, w);
+    const dirOk = path.dirname(file) !== (w.home ?? os.homedir()) && fs.existsSync(path.dirname(file));
+    if (!fs.existsSync(file) && !dirOk) continue; // the app is not on this computer
+    try {
+      const preview = previewRegistration(cl, w);
+      if (preview.action === 'conflict' || !launchReady(serverLaunch(cl))) continue;
+      await applyRegistration(ownerId, cl, { previewHash: preview.previewHash, confirm: true }, w);
+      await setClientEnabled(ownerId, cl, true);
+      await audit(ownerId, 'registered', { client: cl, note: `${preview.action} automatic` });
+      out.registered.push(cl);
+    } catch (err) {
+      if (!(err instanceof RegistrationError)) console.warn('[Memory bridge] automatic registration failed:', (err as Error)?.message);
+    }
+  }
+  const known = new Set((await allFolderSettings(ownerId)).map((f) => f.projectId));
+  for (const p of (await listProjects(ownerId)).filter((x) => x.folder && !known.has(x.id))) {
+    try {
+      const brief = await projectBrief(ownerId, p);
+      applyFiles(p.id, brief, p.folder, true, null);
+      await patchFolder(ownerId, p.id, { filesEnabled: true, briefHash: briefHash(brief), confirmed: true, written: true });
+      await audit(ownerId, 'files-written', { projectId: p.id, note: 'automatic' });
+      out.folders.push(p.id);
+    } catch (err) {
+      if (!(err instanceof ManagedFileError)) { console.warn('[Memory bridge] automatic files failed:', (err as Error)?.message); continue; }
+      out.conflicts++;
+      await patchFolder(ownerId, p.id, { filesEnabled: false });
+      await audit(ownerId, 'files-conflict', { projectId: p.id, note: `automatic: ${err.message}` });
+    }
+  }
+  return out;
+}
+
 // --- MCP server ------------------------------------------------------------
 
-export const MCP_TOOLS = ['project_brief', 'pinned_facts', 'latest_handoff', 'memory_search', 'memory_propose', 'handoff_write'] as const;
+export const MCP_TOOLS = ['project_brief', 'pinned_facts', 'latest_handoff', 'memory_search', 'project_design', 'memory_propose', 'handoff_write'] as const;
 export type McpTool = (typeof MCP_TOOLS)[number];
 
 /** Session start of the MCP server: install proof -> the CLI's token (only while the CLI is on). */
@@ -247,6 +306,12 @@ export async function mcpCall(c: unknown, token: unknown, cwd: unknown, tool: un
       const hits = await getMemoryStorage().search({ userId: ownerId, query, drawers: [projectDrawer(project)], limit } as any);
       const results = hits.slice(0, limit).map((h) => ({ id: h.memory.id, content: clean(h.memory.content), score: Number(h.similarity.toFixed(3)) }));
       return { text: results.length ? results.map((r) => `- ${r.content}`).join('\n') : 'Nothing found in this project.', data: { results } };
+    }
+    case 'project_design': {
+      // DESIGN-FIND-01: the design Dpro found for this project (the same text as DESIGN.md's Dpro section).
+      const v = await getDesign(ownerId, projectDrawer(project).key!).catch(() => null);
+      const has = !!v && (v.colours.length + v.fonts.length + v.logos.length + v.rules.length) > 0;
+      return { text: has ? designBlock(v!) : 'Dpro has not found a design for this project yet.', data: { colours: v?.colours.length ?? 0, fonts: v?.fonts.length ?? 0, logos: v?.logos.length ?? 0, rules: v?.rules.length ?? 0, conflicts: v?.conflicts.length ?? 0 } };
     }
     case 'memory_propose': {
       const content = typeof a.content === 'string' ? a.content.trim() : '';

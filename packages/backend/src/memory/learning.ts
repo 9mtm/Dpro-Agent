@@ -50,7 +50,7 @@ import {
   type MemoryChange,
   type MemoryProposal,
 } from './memory-files.js';
-import { recordBaselineIfMissing, recordBaselineIfMissingStep, recordVersion, recordVersionStep, versionEntryOf, type VersionEntry } from './versions.js';
+import { recordBaselineIfMissing, recordBaselineIfMissingStep, recordVersion, recordVersionStep, trashSnapshot, versionEntryOf, type VersionEntry } from './versions.js';
 import type { ImportanceLevel, Memory, MemoryType, MultiTierLayer } from './types.js';
 import { textSimilarity } from './embedding.js';
 import { detectContradiction, detectReplacement } from './contradiction.js';
@@ -293,7 +293,7 @@ export async function deleteVersioned(userId: string, id: string, actor: string,
   if (!old) return false;
   await recordBaselineIfMissing(old, actor);
   await storage.delete(id);
-  await recordVersion({ memoryId: id, userId, drawer: old.drawer!, change: 'delete', entry: null, actor, reason });
+  await recordVersion({ memoryId: id, userId, drawer: old.drawer!, change: 'delete', entry: null, actor, reason, snapshot: trashSnapshot(old) });
   return true;
 }
 

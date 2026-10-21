@@ -33,6 +33,8 @@ import { outsiderAgentMemoryEnabled } from '../../services/outsider-memory.js';
 import { DrawerInputError, chatTurnDrawers, drawerId, sameDrawer, type DrawerRef } from '../../memory/drawers.js';
 import { pinnedFactsForReply, scopeFactAccess, type ReplyPinnedFacts } from '../../memory/scopes/pinned.js';
 import { withoutArchivedDrawers } from '../../memory/scopes/store.js';
+import { withGroupDrawers } from '../../memory/scopes/groups.js';
+import { logAudit } from '../../services/audit-logger.js';
 import { loadRunPermissions } from '../../tools/agent-permissions.js';
 import { createModelRouter, ModelRouter } from '../../services/model-router.js';
 import { CostTracker } from '../../services/cost-tracker.js';
@@ -464,6 +466,16 @@ export async function executeChatTurn(reply: FastifyReply, input: ChatTurnInput)
     }
     // MEM-SCALE-01: an archived project is kept but never loaded into a reply.
     memoryDrawers = await withoutArchivedDrawers(userId, memoryDrawers);
+    // MEM-UX-02: a group of projects that shares within opens its other projects too (audited).
+    const grouped = await withGroupDrawers(userId, memoryDrawers);
+    if (grouped.added.length) {
+      memoryDrawers = grouped.drawers;
+      logAudit({
+        event_type: 'data.read', event_category: 'data_access', severity: 'info', user_id: userId,
+        resource_type: 'memory_group', resource_id: grouped.groupId ?? '', action: 'memory_group.share_within', success: true,
+        metadata: { agentId: agentConfig?.id ?? null, project: memoryDrawers.find((d) => d.kind === 'project')?.key ?? null, added: grouped.added.map((d) => d.key) },
+      });
+    }
     // MEM-SCALE-01: the owner's pinned facts of this scope load first (company, department, project).
     // Only facts of drawers this agent may read in this project (its inherited access, CORE-PERMS-01 cap).
     const pinnedProject = memoryDrawers.find((d) => d.kind === 'project')?.key ?? null;

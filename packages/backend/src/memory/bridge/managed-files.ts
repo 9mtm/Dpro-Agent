@@ -40,10 +40,14 @@ export class ManagedFileError extends Error {
 }
 
 type Split = { before: string; inside: string; after: string };
+/** A pair of Dpro markers: the memory section here, the design section in DESIGN.md (DESIGN-FIND-01). */
+export interface Marks { start: string; end: string; startRe: RegExp; endRe: RegExp }
+const MEMORY_MARKS: Marks = { start: MARK_START, end: MARK_END, startRe: START_RE, endRe: END_RE };
+
 /** The text around Dpro's section; null when there is none, 'broken' when the markers are not exactly one ordered pair. */
-export function splitManaged(text: string): Split | null | 'broken' {
-  const starts = [...text.matchAll(START_RE)];
-  const ends = [...text.matchAll(END_RE)];
+export function splitManaged(text: string, marks: Marks = MEMORY_MARKS): Split | null | 'broken' {
+  const starts = [...text.matchAll(marks.startRe)];
+  const ends = [...text.matchAll(marks.endRe)];
   if (!starts.length && !ends.length) return null;
   if (starts.length !== 1 || ends.length !== 1) return 'broken';
   const s = starts[0], e = ends[0];
@@ -52,9 +56,9 @@ export function splitManaged(text: string): Split | null | 'broken' {
 }
 
 /** `text` with Dpro's section set to `block`; outside text unchanged. */
-export function replaceManaged(text: string, block: string): string {
-  const section = `${MARK_START}\n${block.trim()}\n${MARK_END}`;
-  const split = splitManaged(text);
+export function replaceManaged(text: string, block: string, marks: Marks = MEMORY_MARKS): string {
+  const section = `${marks.start}\n${block.trim()}\n${marks.end}`;
+  const split = splitManaged(text, marks);
   if (split === 'broken') throw new ManagedFileError('The Dpro markers in this file are broken', 409, 'markers_broken');
   if (split) return split.before + section + split.after;
   if (!text) return `${section}\n`;
@@ -196,4 +200,23 @@ export function applyFiles(projectId: string, brief: ProjectBrief, folder: strin
   if (conflicts.length) throw new ManagedFileError(`Nothing written: ${conflicts.map((c) => c.reason).join('; ')}`, 409, 'conflict');
   for (const f of p.files) if ((f.action === 'create' || f.action === 'update') && f.after !== null) writeAtomic(f.abs, f.after, f.mode);
   return { projectId, folder: p.folder, files, previewHash: hash, conflicts: 0, changes: files.filter((f) => f.action === 'create' || f.action === 'update').length };
+}
+
+/**
+ * Write one Dpro section into one file (DESIGN-FIND-01: DESIGN.md), between
+ * `marks`: the same rules as the managed memory files (outside text kept byte
+ * for byte, a symlink / non-text / oversized file or broken markers = conflict,
+ * nothing written) and the same secret check. Atomic.
+ */
+export function writeSection(folderRaw: string | null, relative: string, block: string, marks: Marks): { action: 'create' | 'update' | 'unchanged'; file: string } {
+  const folder = checkFolder(folderRaw);
+  assertNoSecret(block);
+  const abs = path.join(folder, relative);
+  const cur = readExisting(abs);
+  if (cur.problem) throw new ManagedFileError(`${relative} ${cur.problem}`, 409, 'conflict');
+  if (cur.text !== null && splitManaged(cur.text, marks) === 'broken') throw new ManagedFileError(`${relative} has broken Dpro markers; fix or remove them by hand`, 409, 'markers_broken');
+  const after = replaceManaged(cur.text ?? '', block, marks);
+  if (cur.text === after) return { action: 'unchanged', file: abs };
+  writeAtomic(abs, after, cur.mode);
+  return { action: cur.text === null ? 'create' : 'update', file: abs };
 }

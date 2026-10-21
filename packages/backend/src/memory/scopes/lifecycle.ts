@@ -250,6 +250,34 @@ function* mergeStep(ownerId: string, from: string, to: ProjectScope, fromChat: s
 }
 
 /**
+ * Forget every memory of a project and what hangs on it (CORE-07): the
+ * 'forget' action after its preview check, and Empty Trash for a project
+ * moved to the Trash (MEM-TRASH-01). Runs its own transactions.
+ */
+export async function forgetProjectNow(ownerId: string, project: ProjectScope, by: string): Promise<Record<string, unknown>> {
+  const slug = project.slug;
+  const { forgotten } = await forgetAll(ownerId, by, projectDrawer(slug));
+  const extra = await sql().tx(function* () {
+    const cancelled = (yield* run(`UPDATE memory_file_proposals SET status = 'cancelled', changes = '[]', decided_by = ?, decided_at = ?, note = 'cancelled: the project was forgotten'
+      WHERE user_id = ? AND status = 'pending' AND drawer_kind = 'project' AND drawer_key = ?`, by, new Date().toISOString(), ownerId, slug)).changes;
+    const facts = (yield* run("DELETE FROM memory_pinned_facts WHERE owner_id = ? AND scope_kind = 'project' AND scope_id = ?", ownerId, slug)).changes;
+    const rules = yield* deleteScopeRulesStep(ownerId, 'project', slug);
+    if (rules) yield* bumpAccessVersionStep(ownerId);
+    const handoffs = project.chatProjectId ? (yield* run('DELETE FROM agent_handoffs WHERE owner_id = ? AND project_id = ?', ownerId, project.chatProjectId)).changes : 0;
+    const dept = yield* one<{ department_id: string | null }>('SELECT department_id FROM memory_project_scopes WHERE owner_id = ? AND slug = ?', ownerId, slug);
+    yield* run('DELETE FROM memory_project_scopes WHERE owner_id = ? AND slug = ?', ownerId, slug);
+    if (dept?.department_id) yield* bumpAccessVersionStep(ownerId);
+    // MEM-UX-02: its group place, design and databases go with it.
+    if ((yield* run('DELETE FROM memory_project_group_members WHERE owner_id = ? AND slug = ?', ownerId, slug)).changes) yield* bumpAccessVersionStep(ownerId);
+    for (const t of ['memory_project_design', 'memory_project_databases', 'memory_project_db_access']) yield* run(`DELETE FROM ${t} WHERE owner_id = ? AND slug = ?`, ownerId, slug);
+    return { reviewsCancelled: cancelled, pinnedFactsRemoved: facts, accessRulesRemoved: rules, handoffsRemoved: handoffs };
+  }, { immediate: true });
+  invalidateScopeTree(ownerId);
+  invalidateAccess(ownerId);
+  return { forgotten, ...extra };
+}
+
+/**
  * Apply a previewed action. `by` is the audit label (owner id or agent
  * actor); `proposalAgent` is the agent folder conflict reviews belong to.
  */
@@ -258,23 +286,7 @@ export async function applyProjectAction(ownerId: string, slug: string, input: A
     // CORE-07: forgetAll runs its own transactions; the hash check comes first.
     const preview = await previewProjectAction(ownerId, slug, input);
     checkHash(preview, expectedPreviewHash);
-    const project = preview.project;
-    const { forgotten } = await forgetAll(ownerId, by, projectDrawer(slug));
-    const extra = await sql().tx(function* () {
-      const cancelled = (yield* run(`UPDATE memory_file_proposals SET status = 'cancelled', changes = '[]', decided_by = ?, decided_at = ?, note = 'cancelled: the project was forgotten'
-        WHERE user_id = ? AND status = 'pending' AND drawer_kind = 'project' AND drawer_key = ?`, by, new Date().toISOString(), ownerId, slug)).changes;
-      const facts = (yield* run("DELETE FROM memory_pinned_facts WHERE owner_id = ? AND scope_kind = 'project' AND scope_id = ?", ownerId, slug)).changes;
-      const rules = yield* deleteScopeRulesStep(ownerId, 'project', slug);
-      if (rules) yield* bumpAccessVersionStep(ownerId);
-      const handoffs = project.chatProjectId ? (yield* run('DELETE FROM agent_handoffs WHERE owner_id = ? AND project_id = ?', ownerId, project.chatProjectId)).changes : 0;
-      const dept = yield* one<{ department_id: string | null }>('SELECT department_id FROM memory_project_scopes WHERE owner_id = ? AND slug = ?', ownerId, slug);
-      yield* run('DELETE FROM memory_project_scopes WHERE owner_id = ? AND slug = ?', ownerId, slug);
-      if (dept?.department_id) yield* bumpAccessVersionStep(ownerId);
-      return { reviewsCancelled: cancelled, pinnedFactsRemoved: facts, accessRulesRemoved: rules, handoffsRemoved: handoffs };
-    }, { immediate: true });
-    invalidateScopeTree(ownerId);
-    invalidateAccess(ownerId);
-    return { preview, result: { forgotten, ...extra } };
+    return { preview, result: await forgetProjectNow(ownerId, preview.project, by) };
   }
 
   const out = await sql().tx(function* () {

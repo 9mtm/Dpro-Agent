@@ -38,6 +38,7 @@ import { memoryLearningRoutes } from './routes/memory-learning.js';
 import { memoryDoctorRoutes } from './routes/memory-doctor.js';
 import { memoryGraphRoutes } from './routes/memory-graph.js';
 import { memoryScopeRoutes } from './routes/memory-scopes.js';
+import { memoryDesktopRoutes } from './routes/memory-desktop.js';
 import { memoryRecallRoutes } from './routes/memory-recall.js';
 import { genvrRoutes } from './routes/genvr.js';
 import { connectionsRoutes } from './routes/connections.js';
@@ -319,6 +320,7 @@ export async function buildServer(options: BuildServerOptions = {}): Promise<Fas
   await fastify.register(memoryDoctorRoutes); // CORE-MEM-DOCTOR: owner-only health check + confirmed fixes
   await fastify.register(memoryGraphRoutes); // CORE-MEM-GRAPH: owner-only memory graph view + link review
   await fastify.register(memoryScopeRoutes); // MEM-SCALE-01: owner-only scope tree, pinned facts, project lifecycle, access policies
+  await fastify.register(memoryDesktopRoutes); // MEM-UX-02: owner-only Trash, groups of projects, project design and databases
   await fastify.register(memoryRecallRoutes); // MEM-CACHE-01: owner-only reply recall trace, cache metrics, memory moves
   await fastify.register(agentConnectRoutes);
   await fastify.register(genvrRoutes);

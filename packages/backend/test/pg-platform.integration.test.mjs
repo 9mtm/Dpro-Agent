@@ -214,7 +214,7 @@ test('named jobs and memory jobs: created once under concurrent processes', { sk
   const runs = await Promise.all([m.memoryJobs.ensureMemoryJobs(), m.memoryJobs.ensureMemoryJobs()]);
   const mine = runs.flat().filter((j) => j.actionData.userId === ids.owner);
   assert.equal(mine.length, 2, 'weekly summary + retention, once');
-  for (const name of ['weekly-summary', 'retention']) {
+  for (const name of ['weekly-summary', 'retention', 'trash']) {
     assert.equal((await one('SELECT COUNT(*) AS n FROM cron_jobs WHERE name = ?', m.memoryJobs.memoryJobName(name, ids.owner))).n, 1);
   }
   assert.deepEqual((await m.memoryJobs.ensureMemoryJobs()).filter((j) => j.actionData.userId === ids.owner), []);

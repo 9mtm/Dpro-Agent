@@ -45,7 +45,7 @@ const fail = (tool: string, msg: string): ToolResult => ({ content: [{ type: 'te
 const ok = (text: string, data: Record<string, unknown>): ToolResult => ({ content: [{ type: 'text', text }], data: { success: true, ...data } } as ToolResult);
 
 /** The owner's id when this run may use the scope tools, else a refusal text. */
-async function ownerGate(context?: ToolExecutionContext): Promise<{ ownerId: string } | { refused: string }> {
+export async function ownerGate(context?: ToolExecutionContext): Promise<{ ownerId: string } | { refused: string }> {
   const userId = toolMemoryUser(context);
   if (!userId) return { refused: 'no user for this memory' };
   if (!toolOwnerTurn(context)) return { refused: "only in the owner's own turn, not in a board task run" };
@@ -55,7 +55,7 @@ async function ownerGate(context?: ToolExecutionContext): Promise<{ ownerId: str
   return { ownerId: userId };
 }
 
-function auditTool(context: ToolExecutionContext | undefined, action: string, resourceType: string, resourceId: string, metadata: Record<string, unknown>) {
+export function auditTool(context: ToolExecutionContext | undefined, action: string, resourceType: string, resourceId: string, metadata: Record<string, unknown>) {
   void repositories.audit.record(toolActor(context), {
     event_type: 'data.update', event_category: 'data_modification', severity: 'info',
     resource_type: resourceType, resource_id: resourceId, action, success: true, metadata: { ...metadata, via: 'agent_tool' },

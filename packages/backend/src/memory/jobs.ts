@@ -6,6 +6,8 @@
  *   weekly-summary  "what I learned this week" (memory/weekly-summary.ts)
  *   retention       task TTL + experience consolidation (memory/retention.ts);
  *                   does nothing until the owner turns retention on
+ *   trash           forgets what stayed in the Trash longer than the
+ *                   company's trashDays (MEM-TRASH-01; 0 = never)
  */
 
 import { v4 as uuidv4 } from 'uuid';
@@ -13,16 +15,19 @@ import { all, one, sql } from '../repositories/sql-steps.js';
 import { ensureNamedJob } from '../scheduler/store.js';
 import { runWeeklySummary } from './weekly-summary.js';
 import { runRetention } from './retention.js';
+import { expireTrash } from './trash.js';
 import { logAudit } from '../services/audit-logger.js';
 
 export const MEMORY_JOB_ACTION = 'memory-job';
 export const WEEKLY_SUMMARY_CRON = '0 8 * * 1'; // Mondays 08:00
 export const RETENTION_CRON = '0 4 * * *'; // daily 04:00 (no-op while retention is off)
-export type MemoryJobName = 'weekly-summary' | 'retention';
-const JOBS: ReadonlySet<string> = new Set(['weekly-summary', 'retention']);
+export const TRASH_CRON = '30 3 * * *'; // daily 03:30 (no-op while trashDays is 0)
+export type MemoryJobName = 'weekly-summary' | 'retention' | 'trash';
+const JOBS: ReadonlySet<string> = new Set(['weekly-summary', 'retention', 'trash']);
 const SCHEDULE: ReadonlyArray<[MemoryJobName, string, string]> = [
   ['weekly-summary', WEEKLY_SUMMARY_CRON, 'Weekly memory summary (what I learned this week)'],
   ['retention', RETENTION_CRON, 'Memory retention rules (task TTL, experience consolidation); only when turned on'],
+  ['trash', TRASH_CRON, 'Memory Trash: forget what stayed longer than the keep-days'],
 ];
 
 async function isOwner(userId: unknown): Promise<boolean> {
@@ -51,6 +56,17 @@ export async function runMemoryJob(action: { job?: unknown; userId?: unknown }):
       });
     }
     return { runId: res.id, skipped: res.skipped ?? null, forgotten: res.forgotten, actions: res.actions.length };
+  }
+  if (job === 'trash') {
+    const res = await expireTrash(userId);
+    if (res.forgotten || res.projects) {
+      logAudit({
+        event_type: 'data.delete', event_category: 'data_modification', severity: 'info', user_id: userId,
+        resource_type: 'memory_trash', resource_id: userId, action: 'memory.trash_expire', success: true,
+        metadata: { scheduled: true, ...res },
+      });
+    }
+    return res;
   }
   throw new Error('Unknown memory job');
 }
