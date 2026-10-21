@@ -22,6 +22,8 @@ const env = {
   JWT_SECRET: randomBytes(64).toString('hex'), // throwaway, test only
   ENCRYPTION_KEY: randomBytes(32).toString('hex'), // throwaway, test only
   MEMORY_EMBEDDINGS: 'hash',
+  // Nothing listens here: the memory map's extraction never reaches a real local model in this test.
+  OLLAMA_URL: 'http://127.0.0.1:9',
 };
 test.after(() => rmSync(dir, { recursive: true, force: true }));
 
