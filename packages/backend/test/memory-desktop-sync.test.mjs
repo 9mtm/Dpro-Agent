@@ -98,6 +98,8 @@ test('coding apps and project folders connect on their own only after the owner 
   assert.match(readFileSync(join(dir, '.codex', 'config.toml'), 'utf8'), /dpro-memory/);
   assert.ok(!existsSync(join(dir, '.gemini')), 'an app that is not on this computer is left alone');
   assert.ok(readFileSync(join(folder, 'AGENTS.md'), 'utf8').includes(MARK_START), 'managed files written (default on)');
+  const agents = readFileSync(join(folder, 'AGENTS.md'), 'utf8');
+  assert.match(agents, /### Standing rules for this project\n- Start by reading this memory[\s\S]*DESIGN\.md[\s\S]*handoff_write/, 'the standing project rules travel with the brief');
   const status = await B.bridgeStatus(OWNER);
   const cc = status.clients.find((c) => c.client === 'claude-code');
   assert.equal(cc.enabled, true);
@@ -121,4 +123,11 @@ test('coding apps and project folders connect on their own only after the owner 
   assert.deepEqual((await B.autoConnect(OWNER, true)).folders, []);
   assert.equal(readFileSync(join(folder, 'AGENTS.md'), 'utf8'), before);
   assert.ok(readdirSync(join(dir, '.codex')).includes('config.toml'));
+});
+
+test('skill text: the standing project rules (memory + DESIGN.md first, docs in order, learnings, handoffs)', () => {
+  const skill = readFileSync(join(backendDir, 'skills', 'computer-discovery', 'SKILL.md'), 'utf8');
+  for (const want of ['## Standing project rules', 'DESIGN.md', 'project_design', 'BACKLOG.md', 'HANDOFF.md', 'right project', 'handoff', '**design**', '**database**', 'never a row, never a password']) {
+    assert.ok(skill.includes(want), `skill mentions ${want}`);
+  }
 });
