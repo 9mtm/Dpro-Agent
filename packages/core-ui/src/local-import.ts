@@ -61,6 +61,7 @@ export class LocalImportController {
     try {
       const r = await this.client.request({ method: 'POST', path, ...(body === undefined ? {} : { body }) } as never);
       if (r.status === 202 && record(r.body) && record(r.body.job)) { this.publish({ selected: [] }); this.#pollErrors = 0; this.job(r.body.job as ImportJob); }
+      else if (r.status === 409 && record(r.body) && r.body.code === 'import_running') this.publish({ busy: false, notice: 'Another import is not finished yet (running or paused). Resume it and let it end, then start this one.' });
       else this.publish({ busy: false, notice: 'The import could not start. Reload to check the saved job before trying again.' });
     } catch { this.publish({ busy: false, notice: 'Connection lost. The server may still be importing; reload to check saved progress.' }); }
     finally { this.#starting = false; }

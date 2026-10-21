@@ -1313,7 +1313,9 @@ button.status-item:hover { background:var(--row-hover); color:var(--text); }
 .app-shell .local-import-tools label.term-check { display:inline-flex; align-items:center; gap:6px; font-size:12.5px; }
 .app-shell .local-import-tools label.term-check input, .app-shell .local-import-group input[type="checkbox"] { inline-size:14px; block-size:14px; margin:0; padding:0; min-inline-size:0; flex:none; accent-color:var(--accent); }
 .app-shell .local-import-group ul { list-style:none; margin:0; padding:0; display:grid; gap:2px; }
-.app-shell .local-import-folder { margin:10px 0 4px; font:12px ui-monospace,SFMono-Regular,Menlo,monospace; color:var(--text-3); overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
+.app-shell .local-import-folder { margin:12px 0 4px; font-size:12px; color:var(--text-3); overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
+.app-shell .local-import-folder b { color:var(--text); font-weight:600; }
+.app-shell .local-import-folder .fine-print { font-family:ui-monospace,SFMono-Regular,Menlo,monospace; }
 .app-shell .local-import-group label { display:grid; grid-template-columns:auto minmax(0,1fr) auto; align-items:center; gap:10px; padding:6px 8px; border-radius:6px; cursor:pointer; font-size:13px; }
 .app-shell .local-import-group label:hover { background:var(--row-hover); }
 .app-shell .local-import-title { overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }

@@ -32,7 +32,8 @@ import { requestMeta } from '../../repositories/audit.js';
 import { ScopeError, actorOrReply, requireOwner } from '../../repositories/scope.js';
 import { ImportError, MAX_TOTAL_BYTES } from '../../memory/import/pipeline.js';
 import { MemoryFileError } from '../../memory/memory-files.js';
-import { listLocalSessions, findSession, readSession } from '../../memory/import/local-agents.js';
+import { listLocalSessions, findSession, readSession, matchProject, rootDrawerKey } from '../../memory/import/local-agents.js';
+import { listProjects } from '../../repositories/chat-conversations.js';
 import { automaticImportSettings, configureAutomaticImport, runDueAutomaticImports } from '../../memory/import/automatic-project-import.js';
 import { scanProjectDocuments, previewProjectDocument } from '../../memory/import/project-documents.js';
 import { MAX_SESSIONS_PER_IMPORT, getJob, importedSessions, latestImportJob, pauseImport, resumeImport, startImport } from '../../memory/import/local-import.js';
@@ -135,10 +136,20 @@ export async function memoryImportRoutes(fastify: FastifyInstance) {
   fastify.get('/api/memory/import/local', { config }, async (request, reply) => {
     const owner = localOwner(request, reply);
     if (owner === null) return reply;
-    const [sessions, done] = await Promise.all([listLocalSessions(), importedSessions(owner.userId!)]);
+    const [sessions, done, projects] = await Promise.all([listLocalSessions(), importedSessions(owner.userId!), listProjects(owner.userId!)]);
     const job = await latestImportJob(owner.userId!);
-    // Titles come from the first message: secrets are removed from them too.
-    return { sessions: sessions.map((x) => ({ ...x, title: redactImportText(x.title).text, imported: done.get(x.id) ?? null })), archive: '~/.dpro/imports', ...(job ? { job } : {}) };
+    // Where its project facts go: the owner's project (linked), else a project drawer named after the folder, else none (About you).
+    const projectOf = new Map<string, { slug: string; name: string; linked: boolean } | null>();
+    const linked = (cwd: string | null, root: string | null, rootName: string | null) => {
+      const k = `${cwd}\0${root}`;
+      if (!projectOf.has(k)) {
+        const p = matchProject(cwd, root, projects); const key = p ? null : rootDrawerKey(root);
+        projectOf.set(k, p ? { slug: p.slug, name: p.name, linked: true } : key ? { slug: key, name: rootName ?? key, linked: false } : null);
+      }
+      return projectOf.get(k)!;
+    };
+    // Titles come from the first message: secrets are removed from them too. Earlier ids stay on the server.
+    return { sessions: sessions.map(({ legacyId, ...x }) => ({ ...x, title: redactImportText(x.title).text, project: linked(x.cwd, x.root, x.rootName), imported: done.get(x.id) ?? done.get(legacyId) ?? null })), archive: '~/.dpro/imports', ...(job ? { job } : {}) };
   });
   fastify.post('/api/memory/import/local', { config }, async (request, reply) => {
     const owner = localOwner(request, reply);

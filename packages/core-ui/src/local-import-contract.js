@@ -8,6 +8,8 @@ const str = (x, max) => (typeof x === 'string' ? x.slice(0, max) : null);
 const n = x => (Number.isSafeInteger(x) && x >= 0 ? x : 0);
 export const LOCAL_IMPORT_PATH = '/api/memory/import/local';
 export const MAX_IMPORT_SESSIONS = 400;
+/** Every conversation on the computer is listed (MEM-IMPORT-03); this bounds the list. */
+export const MAX_LISTED_SESSIONS = 5000;
 export const LOCAL_SOURCES = ['claude-code', 'codex', 'antigravity', 'gemini-cli'];
 
 export function localImportPath(path) {
@@ -72,7 +74,8 @@ export function localImportResponse(path, status, body) {
   if (!Array.isArray(body.sessions)) throw Error('protocol');
   const j = job(body.job);
   return { archive: str(body.archive, 200) ?? '', ...(j ? { job: j } : {}),
-    sessions: body.sessions.slice(0, 400).filter(s => record(s) && typeof s.id === 'string' && ID.test(s.id) && LOCAL_SOURCES.includes(s.source)).map(s => ({
-      id: s.id, source: s.source, cwd: str(s.cwd, 1024), title: str(s.title, 200) ?? '', startedAt: str(s.startedAt, 40), updatedAt: str(s.updatedAt, 40) ?? '', bytes: n(s.bytes), turns: n(s.turns),
+    sessions: body.sessions.slice(0, MAX_LISTED_SESSIONS).filter(s => record(s) && typeof s.id === 'string' && ID.test(s.id) && LOCAL_SOURCES.includes(s.source)).map(s => ({
+      id: s.id, source: s.source, cwd: str(s.cwd, 1024), root: str(s.root, 1024), rootName: str(s.rootName, 200), title: str(s.title, 200) ?? '', startedAt: str(s.startedAt, 40), updatedAt: str(s.updatedAt, 40) ?? '', bytes: n(s.bytes), turns: s.turns === null ? null : n(s.turns),
+      project: record(s.project) && typeof s.project.slug === 'string' && typeof s.project.name === 'string' ? { slug: s.project.slug.slice(0, 120), name: s.project.name.slice(0, 200), linked: s.project.linked === true } : null,
       imported: record(s.imported) ? { importedAt: str(s.imported.importedAt, 40) ?? '', proposed: n(s.imported.proposed) } : null })) };
 }

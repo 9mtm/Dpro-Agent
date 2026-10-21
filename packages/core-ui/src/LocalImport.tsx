@@ -9,6 +9,9 @@ import type { SessionClient } from './session';
 
 const SOURCE: Record<LocalSource, string> = { 'claude-code': 'Claude Code', codex: 'Codex', antigravity: 'Antigravity', 'gemini-cli': 'Gemini CLI' };
 const shortPath = (p: string) => { const home = p.match(/^\/Users\/[^/]+/)?.[0]; return home ? `~${p.slice(home.length)}` : p; };
+const size = (b: number) => (b >= 1024 * 1024 ? `${(b / 1024 / 1024).toFixed(1)} MB` : `${Math.max(1, Math.round(b / 1024))} KB`);
+/** Rows shown per project; the count shows them all and search finds the rest. */
+const ROWS_PER_PROJECT = 25;
 
 /** Bring in what you told other agents: pick conversations, the local model proposes memories, you approve each one. */
 export function LocalImport({ client, active, onReview }: { client: SessionClient; active: boolean; onReview: () => void }) {
@@ -29,9 +32,10 @@ export function LocalImportView({ controller: c, active, onReview, client }: { c
   const [onlyNew, setOnlyNew] = useState(true);
   useEffect(() => { if (active && s.phase === 'idle') void c.load(); }, [active, c, s.phase]);
   const q = query.trim().toLowerCase();
-  const shown = s.sessions.filter(x => (source === 'all' || x.source === source) && (!onlyNew || !x.imported) && (!q || x.title.toLowerCase().includes(q) || (x.cwd ?? '').toLowerCase().includes(q)));
+  const shown = s.sessions.filter(x => (source === 'all' || x.source === source) && (!onlyNew || !x.imported) && (!q || [x.title, x.cwd, x.root, x.rootName, x.project?.name].some(t => (t ?? '').toLowerCase().includes(q))));
+  // One group per project folder (a worktree or the same folder on an older computer joins its project), newest first.
   const groups = new Map<string, LocalSession[]>();
-  for (const x of shown.slice(0, 200)) { const k = x.cwd ? shortPath(x.cwd) : 'No folder'; groups.set(k, [...(groups.get(k) ?? []), x]); }
+  for (const x of shown) { const k = x.root ?? ''; groups.set(k, [...(groups.get(k) ?? []), x]); }
   const running = s.busy || s.job?.status === 'running';
   return <section className="local-import" aria-label="Import from other agents">
     <div className="local-import-head">
@@ -77,19 +81,21 @@ export function LocalImportView({ controller: c, active, onReview, client }: { c
           {s.selected.length > 0 && !running && <button type="button" className="link-button" onClick={() => c.clear()}>Clear</button>}
         </div>
         {!shown.length ? <p className="fine-print">{s.sessions.length ? 'No conversation matches.' : 'No conversations from other agents were found on this computer.'}</p>
-          : [...groups].map(([folder, list]) => <div key={folder} className="local-import-group">
-            <p className="local-import-folder" dir="ltr" title={folder}>{folder}</p>
-            <ul>{list.map(x => <li key={x.id}>
+          : [...groups].map(([root, list]) => <div key={root} className="local-import-group">
+            <p className="local-import-folder"><b dir="ltr">{list[0].rootName ?? 'No folder'}</b> · {list.length} {list.length === 1 ? 'conversation' : 'conversations'}
+              {' · '}{list[0].project?.linked ? `Dpro project ${list[0].project.name}` : list[0].project ? `project facts go to Projects · ${list[0].project.slug}` : 'project facts go to About you'}
+              {root && <span className="fine-print" dir="ltr" title={root}> · {shortPath(root)}</span>}</p>
+            <ul>{list.slice(0, ROWS_PER_PROJECT).map(x => <li key={x.id}>
               <div className="local-import-row">
                 <input type="checkbox" aria-label={`Select ${x.title || 'conversation'}`} checked={s.selected.includes(x.id)} disabled={running} onChange={() => c.toggle(x.id)}/>
                 <button type="button" className="local-import-open" onClick={() => void c.preview(x.id)} aria-label={`Preview ${x.title || 'conversation'}`}>
                   <span className="local-import-title" dir="auto">{x.title || '(no text)'}</span>
-                  <span className="local-import-meta">{SOURCE[x.source]} · {new Date(x.updatedAt).toLocaleDateString()} · {x.turns} messages{x.imported ? ` · imported, ${x.imported.proposed} suggested` : ''} · Preview →</span>
+                  <span className="local-import-meta">{SOURCE[x.source]} · {new Date(x.updatedAt).toLocaleDateString()} · {x.turns === null ? size(x.bytes) : `${x.turns} messages`}{x.cwd && x.root && x.cwd !== x.root ? ` · ${shortPath(x.cwd)}` : ''}{x.imported ? ` · imported, ${x.imported.proposed} suggested` : ''} · Preview →</span>
                 </button>
               </div>
             </li>)}</ul>
+            {list.length > ROWS_PER_PROJECT && <p className="fine-print">Showing the newest {ROWS_PER_PROJECT} of {list.length}; search the folder name and use “Select all matching” for the rest.</p>}
           </div>)}
-        {shown.length > 200 && <p className="fine-print">Showing the newest 200; search to find older ones.</p>}
       </>)}
     </div>
   </section>;

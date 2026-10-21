@@ -160,3 +160,39 @@ test('a late progress poll cannot undo a confirmed pause',async()=>{
  await c.load();await entered;await c.pause();release({status:200,body:{job:running}});await new Promise(r=>setTimeout(r,10));
  assert.equal(c.getSnapshot().job.status,'paused');assert.equal(c.getSnapshot().busy,false);c.dispose();
 });
+
+// ---- MEM-IMPORT-03 ----
+test('conversations are grouped by project folder, with where project facts go; large logs show their size', async t => {
+  const base = createLoginMock();
+  const row = (i, extra) => ({ id: i.toString(16).padStart(32, '0'), source: 'claude-code', cwd: '/Users/me/htdocs/shop', root: '/Users/me/htdocs/shop', rootName: 'shop', title: `Shop talk ${i}`, startedAt: null, updatedAt: '2026-10-20T10:00:00Z', bytes: 2048, turns: 4, imported: null, project: { slug: 'shop', name: 'Shop', linked: true }, ...extra });
+  const sessions = [
+    ...Array.from({ length: 30 }, (_, i) => row(i, i === 1 ? { cwd: '/Users/me/htdocs/shop-wt/fix' } : {})),
+    row(40, { root: 'C:\\MAMP\\htdocs\\rare-pals', rootName: 'rare-pals', cwd: 'C:\\MAMP\\htdocs\\rare-pals', title: 'Old computer', project: { slug: 'rare-pals', name: 'rare-pals', linked: false }, turns: null, bytes: 3 * 1024 * 1024 }),
+    row(41, { root: null, rootName: null, cwd: null, title: 'No folder at all', project: null }),
+  ];
+  const client = new SessionClient({ live: async r => (r.path.startsWith('/api/memory/import/local') ? { status: 200, body: { archive: '~/.dpro/imports', sessions } } : base(r)) });
+  client.selectMode('live'); await client.login('demo@example.invalid', 'mock-only');
+  const c = new LocalImportController(client, 5); t.after(() => c.dispose()); await c.load();
+  assert.equal(c.getSnapshot().sessions[30].turns, null, 'unknown message count stays unknown');
+  assert.equal(c.getSnapshot().sessions[0].project.linked, true);
+  const { LocalImportView } = require('../src/LocalImport.tsx');
+  const html = renderToStaticMarkup(React.createElement(LocalImportView, { controller: c, active: false, onReview: () => {} }));
+  for (const words of ['<b dir="ltr">shop</b> · 30 conversations · Dpro project Shop', '~/htdocs/shop', 'Showing the newest 25 of 30', '~/htdocs/shop-wt/fix',
+    '<b dir="ltr">rare-pals</b> · 1 conversation · project facts go to Projects · rare-pals', '3.0 MB', '<b dir="ltr">No folder</b> · 1 conversation · project facts go to About you'])
+    assert.ok(html.includes(words), words);
+  assert.equal((html.match(/Select Shop talk/g) ?? []).length, 25, 'at most 25 rows per project');
+});
+
+test('a new import while another is unfinished says so plainly', async t => {
+  const base = createLoginMock();
+  const client = new SessionClient({ live: async r => {
+    if (!r.path.startsWith('/api/memory/import/local')) return base(r);
+    if (r.method === 'POST') return { status: 409, body: { error: 'x', code: 'import_running' } };
+    return { status: 200, body: { archive: '~/.dpro/imports', sessions: [{ id: SID, source: 'codex', cwd: null, root: null, rootName: null, project: null, title: 'T', startedAt: null, updatedAt: 'u', bytes: 1, turns: 1, imported: null }] } };
+  } });
+  client.selectMode('live'); await client.login('demo@example.invalid', 'mock-only');
+  const c = new LocalImportController(client, 5); t.after(() => c.dispose()); await c.load();
+  c.toggle(SID); await c.start();
+  assert.match(c.getSnapshot().notice, /Another import is not finished yet/);
+  assert.equal(c.getSnapshot().busy, false);
+});
