@@ -53,7 +53,7 @@ import {
 import { recordBaselineIfMissing, recordBaselineIfMissingStep, recordVersion, recordVersionStep, versionEntryOf, type VersionEntry } from './versions.js';
 import type { ImportanceLevel, Memory, MemoryType, MultiTierLayer } from './types.js';
 import { textSimilarity } from './embedding.js';
-import { detectContradiction } from './contradiction.js';
+import { detectContradiction, detectReplacement } from './contradiction.js';
 import { TopicKeyError, normalizeTopicKey } from './topic-key.js';
 import { TopicKeyTakenError } from './storage.js';
 import { ALWAYS_ASK, rulesForDrawer, type EffectiveRules } from './scopes/rules.js';
@@ -157,7 +157,8 @@ export function classifyLearning(c: LearningCandidate, ctx: LearningContext = {}
       const old = normText(s.content);
       if (old === norm) continue;
       // CORE-MEM-CONFLICT: the same subject negated or with an opposite word.
-      if (detectContradiction(s.content, text)) { conflictsWith.push(s.id); continue; }
+      // ... or the new text says the value changed ("is now green tea", "صار شاي").
+      if (detectContradiction(s.content, text) || detectReplacement(s.content, text)) { conflictsWith.push(s.id); continue; }
       if (s.similarity < CONFLICT_SIMILARITY) continue;
       if (old.split(' ').some((w) => !words.has(w))) conflictsWith.push(s.id);
     }

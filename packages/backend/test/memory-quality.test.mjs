@@ -122,6 +122,21 @@ test('contradiction: negation and opposite words on the same subject (pure)', ()
   assert.equal(c('The server runs on port 4000', 'We should not deploy on Friday'), null);
 });
 
+test('replacement: "is now", "صار", "jetzt" on the same subject is a change; detail or another subject is not (pure)', () => {
+  const r = C.detectReplacement;
+  assert.equal(r("Mohamed's favorite morning drink is cardamom coffee without sugar.", 'My favourite morning drink is now green tea with honey.'), true);
+  assert.equal(r('مشروب محمد المفضل في الصباح قهوة بالهيل بدون سكر', 'صار مشروبي المفضل الصبح شاي أخضر مع عسل'), true);
+  assert.equal(r('Lieblingsgetränk am Morgen ist Kaffee', 'Lieblingsgetränk am Morgen ist jetzt Tee'), true);
+  assert.equal(r('The team meets on Mondays at 9', 'The team meets on Tuesdays at 10 instead'), true);
+  // No change word, the same text, only added detail, or another subject: no change.
+  assert.equal(r('Favorite color is blue', 'Favorite color is green'), false);
+  assert.equal(r('Morning drink is green tea', 'Morning drink is now green tea'), false);
+  assert.equal(r('User likes tea', 'User now likes tea with lemon'), false);
+  assert.equal(r('The server runs on port 4000', 'We now deploy on Fridays'), false);
+  // A topic-key update keeps using detectContradiction only: a plain change there is evolution.
+  assert.equal(C.detectContradiction("Mohamed's favorite morning drink is cardamom coffee", 'My favourite morning drink is now green tea'), null);
+});
+
 // ---------------------------------------------------------------------------
 // CORE-MEM-TOPIC
 // ---------------------------------------------------------------------------
@@ -260,6 +275,17 @@ test('conflict: contradicting memory -> flagged proposal; keep old changes nothi
   assert.equal(versions(oldId).length, 1);
   assert.notEqual(snapshot(), before, 'only the proposal row changed');
   assert.equal((await decideConflict(proposalId, 'keep_new')).json().code, 'already_decided');
+});
+
+test('conflict: "is now" / "صار" replacing a saved value -> flagged proposal; keep new applies it', async () => {
+  const { oldId, proposalId } = await conflictPair("Mohamed's favorite morning drink is cardamom coffee without sugar", 'My favourite morning drink is now green tea with honey');
+  const p = (await call('GET', `/api/memory/proposals/${proposalId}`)).json();
+  assert.equal(p.conflictWith, oldId);
+  assert.ok(p.reasons.includes('conflict'));
+  assert.equal((await decideConflict(proposalId, 'keep_new')).statusCode, 200);
+  assert.equal(mem(oldId).content, 'My favourite morning drink is now green tea with honey');
+  const ar = await conflictPair('مشروب محمد المفضل في الصباح قهوة بالهيل بدون سكر', 'صار مشروبي المفضل الصبح شاي أخضر مع عسل');
+  assert.equal((await call('GET', `/api/memory/proposals/${ar.proposalId}`)).json().conflictWith, ar.oldId);
 });
 
 test('conflict: keep new -> the existing memory gets the new text as a new version', async () => {

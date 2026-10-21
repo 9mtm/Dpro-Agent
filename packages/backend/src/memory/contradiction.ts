@@ -15,6 +15,13 @@
  * first (text-normalize.ts). A plain value change ("blue" -> "green") is not
  * reported here: for a topic key it is the normal evolution of the memory,
  * and the learning classifier has its own close-but-different rule.
+ *
+ * detectReplacement (separate, used for new facts only): the new text says the
+ * old value changed ("is now", "instead", "no longer", "jetzt", "صار",
+ * "الآن", "بدل" ...), shares the old text's subject (at least two content
+ * words and 40% of the shorter side) and brings a value the old one lacks:
+ * "favorite morning drink is cardamom coffee" -> "my favourite morning drink
+ * is now green tea". British spellings count as American ones.
  */
 
 import { lexicalTokens, normalizeArabicLetters } from './text-normalize.js';
@@ -50,6 +57,21 @@ const OPPOSITES: ReadonlyArray<readonly [readonly string[], readonly string[]]> 
 
 const PAIR_WORDS = new Set(OPPOSITES.flatMap(([a, b]) => [...a, ...b]));
 
+/** Words that say a value changed (after normalizeArabicLetters; both alef forms listed). */
+const CHANGE_MARKERS = new Set([
+  'now', 'anymore', 'instead', 'longer', 'switched', 'changed', 'became', 'become', 'becomes', 'nowadays',
+  'jetzt', 'nun', 'inzwischen', 'mehr', 'stattdessen', 'geworden', 'gewechselt',
+  'الان', 'الآن', 'صار', 'صارت', 'صرت', 'صرنا', 'اصبح', 'أصبح', 'اصبحت', 'أصبحت', 'بدل', 'بدلا', 'بدلاً', 'عاد', 'يعد', 'تعد', 'حاليا', 'هسه', 'هسا', 'هلق', 'دلوقتي',
+]);
+/** Shared subject for a replacement: at least this many content words and this share of the shorter side. */
+const REPLACE_MIN_SHARED = 2;
+export const REPLACE_OVERLAP = 0.4;
+/** British spellings mapped to American ones so both sides compare. */
+const SPELLING: Record<string, string> = {
+  favourite: 'favorite', favourites: 'favorites', favour: 'favor', colour: 'color', colours: 'colors', behaviour: 'behavior',
+  centre: 'center', organise: 'organize', organisation: 'organization', realise: 'realize', grey: 'gray', programme: 'program',
+};
+
 function words(text: string): string[] {
   return normalizeArabicLetters(String(text ?? ''))
     .toLowerCase()
@@ -73,6 +95,25 @@ function jaccard(a: ReadonlySet<string>, b: ReadonlySet<string>): number {
 
 function subject(ws: readonly string[]): Set<string> {
   return new Set(lexicalTokens(ws.filter((w) => !NEGATIONS.has(w) && !PAIR_WORDS.has(w)).join(' ')));
+}
+
+/** Content words without change markers and negations, spelling unified. */
+function changeSubject(ws: readonly string[]): Set<string> {
+  return new Set(lexicalTokens(ws.filter((w) => !NEGATIONS.has(w) && !CHANGE_MARKERS.has(w)).map((w) => SPELLING[w] ?? w).join(' ')));
+}
+
+/** True when `next` says the value in `prev` changed (see the module comment). */
+export function detectReplacement(prev: string, next: string): boolean {
+  const b = words(next);
+  if (!b.some((w) => CHANGE_MARKERS.has(w))) return false;
+  const sa = changeSubject(words(prev));
+  const sb = changeSubject(b);
+  if (!sa.size || !sb.size) return false;
+  let shared = 0;
+  for (const x of sa) if (sb.has(x)) shared++;
+  if (shared < REPLACE_MIN_SHARED || shared / Math.min(sa.size, sb.size) < REPLACE_OVERLAP) return false;
+  // A new value in, an old value out: a plain restatement or added detail is no change.
+  return [...sb].some((x) => !sa.has(x)) && [...sa].some((x) => !sb.has(x));
 }
 
 /** How `next` contradicts `prev`, or null when it does not. */
