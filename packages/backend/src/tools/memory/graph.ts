@@ -6,11 +6,13 @@
  *   op 'links'     active links in the open drawers
  *   op 'related'   memories reached from the entities named in `query`
  *                  (named entities -> up to two links -> attached memories)
+ *   op 'pending'   links waiting for the owner's review (decide them with
+ *                  memory_graph_review, which needs the owner's approval)
  *
  * Same gates as the owner-only graph API: read-only, the run user must be the
  * owner account, never in a turn that answers an outsider, and only what the
  * drawers open for this run hold (memory/graph/read.ts scope). Pending links
- * are not shown to agents.
+ * are never used by recall and only listed by op 'pending'.
  */
 
 import type { Tool, ToolResult, ToolExecutionContext } from '../types.js';
@@ -19,7 +21,7 @@ import { one, sql } from '../../repositories/sql-steps.js';
 import { entityDetail, findEntity, graphRecall, listEntities, listLinks, type GraphScope } from '../../memory/graph/index.js';
 
 const fail = (msg: string): ToolResult => ({ content: [{ type: 'text', text: `Memory graph: ${msg}` }], error: msg });
-const OPS = ['entities', 'entity', 'links', 'related'] as const;
+const OPS = ['entities', 'entity', 'links', 'related', 'pending'] as const;
 
 async function isOwnerAccount(userId: string): Promise<boolean> {
   const row = await sql().read(one<{ role: string }>('SELECT role FROM users WHERE id = ?', userId));
@@ -35,6 +37,7 @@ Ops:
 - entity: one entity by name or id, with its links and the memories that mention it (oldest first)
 - links: list links
 - related: memories reached from the names in "query" through their links (use when a question names a person or project but shares no words with the facts)
+- pending: links waiting for the owner's review (approve or reject one with memory_graph_review)
 
 Only the memory drawers open for this conversation are read. Read-only.`,
   input_schema: {
@@ -72,6 +75,14 @@ Only the memory drawers open for this conversation are read. Read-only.`,
     if (op === 'links') {
       const links = await listLinks(scope, { status: 'active', limit });
       const text = links.length ? links.map((l) => `- ${l.from.name} ${l.type} ${l.to.name}`).join('\n') : 'No links in the open memory drawers.';
+      return { content: [{ type: 'text', text }], data: { success: true, links } } as ToolResult;
+    }
+
+    if (op === 'pending') {
+      const links = await listLinks(scope, { status: 'pending', limit });
+      const text = links.length
+        ? links.map((l) => `- ${l.from.name} ${l.type} ${l.to.name} (link ${l.id}, from memory ${l.memoryIds.join(', ')})`).join('\n')
+        : 'No links waiting for review in the open memory drawers.';
       return { content: [{ type: 'text', text }], data: { success: true, links } } as ToolResult;
     }
 

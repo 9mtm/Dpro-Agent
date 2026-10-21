@@ -214,3 +214,76 @@ test('3. board task runs get the pinned facts of their scope, with the same acce
   const pu = await ok('POST', `/api/memory/scopes/projects/${project.slug}/preview`, { action: 'unarchive' });
   await ok('POST', `/api/memory/scopes/projects/${project.slug}/apply`, { action: 'unarchive', expectedPreviewHash: pu.previewHash, confirm: true });
 });
+
+test('4. agent tools: decide a conflict, review a pending link, read its own reply trace; owner gates and approvals', async () => {
+  const D = await import(join(backendDir, 'src/memory/drawers.ts'));
+  const T = await import(join(backendDir, 'src/tools/memory/index.ts'));
+  const { approvalCategory } = await import(join(backendDir, 'src/tools/approvals.ts'));
+  const { DEFAULT_AGENT_TOOLS } = await import(join(backendDir, 'src/tools/grants.ts'));
+  const ctx = { workspaceDir: dir, userId: OWNER, agentId: 'mg-main', sessionId: conv.id, memoryDrawers: D.selectDrawers({ audience: 'owner', project: project.slug }) };
+  const member = { ...ctx, userId: 'mg-user' };
+  const outsider = { ...ctx, toolPolicy: { channel: 'telegram', allowedTools: [] } };
+  for (const name of ['memory_review_decide', 'memory_graph_review']) assert.ok(approvalCategory({ name }), `${name} needs owner approval`);
+  for (const name of ['memory_review', 'memory_recall']) assert.equal(approvalCategory({ name }), null);
+  for (const name of ['memory_review', 'memory_review_decide', 'memory_graph_review', 'memory_recall']) assert.ok(DEFAULT_AGENT_TOOLS.includes(name));
+
+  // Conflicts: list (read only) -> decide with the review hash.
+  const a = await T.memorySaveTool.execute({ content: 'The staging server is online', type: 'fact', drawer: `project:${project.slug}` }, ctx);
+  const b = await T.memorySaveTool.execute({ content: 'The staging server is not online', type: 'fact', drawer: `project:${project.slug}` }, ctx);
+  assert.equal(b.data?.conflict, true, b.content?.[0]?.text);
+  const list = await T.memoryReviewTool.execute({}, ctx);
+  const c = list.data.conflicts.find((x) => x.id === b.data.proposalId);
+  assert.ok(c, list.content[0].text);
+  assert.equal(c.memoryId, a.data.memoryId);
+  assert.match(c.oldText, /is online/);
+  assert.match(c.newText, /not online/);
+  for (const bad of [member, outsider]) {
+    assert.ok((await T.memoryReviewTool.execute({}, bad)).error);
+    assert.ok((await T.memoryReviewDecideTool.execute({ proposal_id: c.id, decision: 'keep_new', review_hash: c.reviewHash }, bad)).error);
+  }
+  // Not in the open drawers -> not listed, not decided.
+  const elsewhere = { ...ctx, memoryDrawers: D.selectDrawers({ audience: 'owner' }) };
+  assert.ok(!(await T.memoryReviewTool.execute({}, elsewhere)).data.conflicts.some((x) => x.id === c.id));
+  assert.ok((await T.memoryReviewDecideTool.execute({ proposal_id: c.id, decision: 'keep_new', review_hash: c.reviewHash }, elsewhere)).error);
+  assert.ok((await T.memoryReviewDecideTool.execute({ proposal_id: c.id, decision: 'keep_new', review_hash: 'wrong' }, ctx)).error, 'review hash binds the decision');
+  assert.ok((await T.memoryReviewDecideTool.execute({ proposal_id: c.id, decision: 'maybe', review_hash: c.reviewHash }, ctx)).error);
+  const decided = await T.memoryReviewDecideTool.execute({ proposal_id: c.id, decision: 'keep_new', review_hash: c.reviewHash }, ctx);
+  assert.ok(decided.data?.success, decided.error);
+  assert.equal(db.prepare('SELECT content FROM memories WHERE id = ?').get(a.data.memoryId).content, 'The staging server is not online');
+  assert.equal(db.prepare('SELECT decision FROM memory_file_proposals WHERE id = ?').get(c.id).decision, 'keep_new');
+  assert.ok((await T.memoryReviewDecideTool.execute({ proposal_id: c.id, decision: 'keep_old', review_hash: c.reviewHash }, ctx)).error, 'decided once');
+
+  // Graph: an important link learned by an agent waits; listed by memory_graph op pending; reviewed with approval.
+  const saved = await T.memorySaveTool.execute({ content: 'The Ledger Service replaces the Legacy Router.', type: 'fact', importance: 5, drawer: `project:${project.slug}` }, ctx);
+  assert.ok(!saved.error, saved.error);
+  await G.graphIdle();
+  const pending = await T.memoryGraphTool.execute({ op: 'pending' }, ctx);
+  const link = pending.data.links.find((l) => l.type === 'replaces');
+  assert.ok(link, pending.content[0].text);
+  assert.ok((await T.memoryGraphReviewTool.execute({ link_id: link.id, decision: 'approve' }, member)).error);
+  assert.ok((await T.memoryGraphReviewTool.execute({ link_id: link.id, decision: 'approve' }, outsider)).error);
+  assert.ok((await T.memoryGraphReviewTool.execute({ link_id: link.id, decision: 'approve' }, elsewhere)).error, 'link of a closed drawer');
+  const approved = await T.memoryGraphReviewTool.execute({ link_id: link.id, decision: 'approve' }, ctx);
+  assert.ok(approved.data?.success, approved.error);
+  assert.equal(db.prepare('SELECT status FROM memory_graph_links WHERE id = ?').get(link.id).status, 'active');
+  assert.ok((await T.memoryGraphReviewTool.execute({ link_id: link.id, decision: 'reject' }, ctx)).error, 'no longer pending');
+
+  // Reply trace: its own newest reply in this conversation, by message id, never another agent's.
+  const replyAgent = db.prepare('SELECT agent_id FROM memory_recall_traces WHERE session_id = ? LIMIT 1').get(conv.id).agent_id;
+  Object.assign(ctx, { agentId: replyAgent });
+  Object.assign(member, { agentId: replyAgent });
+  Object.assign(outsider, { agentId: replyAgent });
+  const latest = await T.memoryRecallTool.execute({ op: 'trace' }, ctx);
+  assert.ok(latest.data?.success, latest.error);
+  assert.ok(latest.data.trace.items.some((i) => i.kind === 'fact' && i.id === facts.company.id));
+  assert.match(latest.content[0].text, /pinned fact \[company\]: We are Dpro\./);
+  const msg = db.prepare("SELECT m.id FROM chat_messages m WHERE m.session_id = ? AND m.role = 'assistant' ORDER BY m.created_at ASC LIMIT 1").get(conv.id);
+  assert.ok((await T.memoryRecallTool.execute({ op: 'trace', message_id: msg.id }, ctx)).data?.success);
+  assert.ok((await T.memoryRecallTool.execute({ op: 'trace', message_id: msg.id }, { ...ctx, agentId: 'other-agent' })).error, 'not its reply');
+  assert.ok((await T.memoryRecallTool.execute({ op: 'trace' }, member)).error);
+  assert.ok((await T.memoryRecallTool.execute({ op: 'trace' }, outsider)).error);
+  assert.ok((await T.memoryRecallTool.execute({ op: 'summaries' }, ctx)).data?.success);
+  assert.ok((await T.memoryRecallTool.execute({ op: 'summaries' }, { ...ctx, sessionId: 'not-a-conversation' })).error);
+  const m = await T.memoryRecallTool.execute({ op: 'metrics' }, ctx);
+  assert.ok(m.data.recent.turns >= 3);
+});

@@ -14,3 +14,5 @@ export { memoryGraphTool } from './graph.js';
 export { memoryScopesTool, memoryScopeApplyTool, memoryAccessApplyTool, memoryScopeForgetTool } from './scopes.js';
 export { memoryMoveTool } from './move.js';
 export { memoryBridgeTool, memoryBridgeApplyTool } from './bridge.js';
+export { memoryReviewTool, memoryReviewDecideTool, memoryGraphReviewTool } from './review.js';
+export { memoryRecallTool } from './recall.js';
