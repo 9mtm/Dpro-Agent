@@ -79,7 +79,7 @@ export function MemoryWindow({ client, active = false, focus, sidebarSlot, onOpe
   const k = useControllers(client);
   const ds = useStore(k?.d), xs = useStore(k?.x), ss = useStore(k?.sc), rs = useStore(k?.rv), ms = useStore(k?.mv);
   const menu = useMenu();
-  const [sheet, setSheet] = useState<null | { kind: 'remember' } | { kind: 'history' } | { kind: 'weekly' } | { kind: 'group'; projects: string[] } | { kind: 'rename-group'; id: string } | { kind: 'project'; action: ProjectAction; slug: string } | { kind: 'forget'; ids?: string[] } | { kind: 'trash-project'; slug: string }>(null);
+  const [sheet, setSheet] = useState<null | { kind: 'remember' } | { kind: 'history' } | { kind: 'weekly' } | { kind: 'group'; projects: string[] } | { kind: 'rename-group'; id: string } | { kind: 'project'; action: ProjectAction; slug: string } | { kind: 'forget'; ids?: string[] } | { kind: 'trash-project'; slug: string } | { kind: 'edit-pinned'; fact: PinnedFact }>(null);
   const [filters, setFilters] = useState(false);
   const searchRef = useRef<HTMLInputElement>(null);
 
@@ -230,7 +230,7 @@ export function MemoryWindow({ client, active = false, focus, sidebarSlot, onOpe
     : project && ds.projectView === 'design' ? <DesignView d={d} slug={project.slug}/>
     : project && ds.projectView === 'databases' ? <DatabasesView d={d} slug={project.slug}/>
     : project && ds.projectView === 'files' ? <div className="dk-files"><MemoryPanel client={client} active={active}/><p className="fine-print">Read-only. Edits in these files come back as questions in Needs you.</p></div>
-    : <MemoryList k={k} pinned={ds.pinned} showPinned={place === 'all' || !!project} onMenu={(e, i) => menu.at(e, memoryMenu(i))} onPinnedMenu={(e, f) => menu.at(e, [{ label: 'Unpin', icon: 'pin', run: () => void d.unpin(f) }])}
+    : <MemoryList k={k} pinned={ds.pinned} showPinned={place === 'all' || !!project} onMenu={(e, i) => menu.at(e, memoryMenu(i))} onPinnedMenu={(e, f) => menu.at(e, [{ label: 'Edit…', icon: 'pencil', run: () => setSheet({ kind: 'edit-pinned', fact: f }) }, { label: 'Unpin', icon: 'pin', run: () => void d.unpin(f) }])}
       empty={project ? <><p>Nothing remembered here yet. Dpro remembers on its own while you chat. You can add something yourself too.</p><button type="button" className="primary" onClick={() => { x.startAdd(); setSheet({ kind: 'remember' }); }}>Remember</button></>
         : xs.query ? <p>No memory matches. Put words in "quotes" for exact words.</p> : <p>Nothing here yet. Dpro remembers on its own while you chat.</p>}/>;
 
@@ -261,7 +261,7 @@ export function MemoryWindow({ client, active = false, focus, sidebarSlot, onOpe
       </header>
       {selection.length > 0 && listPlace && <div className="dk-bulk" role="toolbar" aria-label="Selected memories">
         <span>{selection.length} selected</span>
-        <IconButton icon="move" label="Move…" onClick={() => { const i = x.item(selection[0]); if (i) void mv.open({ id: i.id, text: i.preview, drawerId: i.drawerId, topicKey: i.topicKey }); }} disabled={selection.length !== 1}/>
+        <IconButton icon="move" label="Move…" shortcut={`${mod}M`} onClick={() => { const i = x.item(selection[0]); if (i) void mv.open({ id: i.id, text: i.preview, drawerId: i.drawerId, topicKey: i.topicKey }); }}/>
         <IconButton icon="pin" label="Pin for every agent" onClick={() => { for (const id of selection) { const i = x.item(id); if (i) void d.pin(i.preview, i.drawerId); } }}/>
         <IconButton icon="trash" label="Move to Trash" shortcut="⌫" onClick={() => void trashIds(selection)}/>
         <IconButton icon="close" label="Clear the selection" shortcut="Esc" onClick={() => x.checkAllShown(false)}/>
@@ -282,7 +282,8 @@ export function MemoryWindow({ client, active = false, focus, sidebarSlot, onOpe
       <p>All memories of <b>{ss.tree?.projects.find(p => p.slug === sheet.slug)?.name ?? sheet.slug}</b> go to Trash. No agent reads them there. Restore within the Trash time, or undo with {mod}Z.</p>
     </Sheet>}
     {sheet?.kind === 'forget' && <ForgetSheet k={k} ids={sheet.ids} onClose={() => setSheet(null)}/>}
-    {ms?.memory && <MoveSheet k={k} onClose={() => mv.close()}/>}
+    {ms?.memory && <MoveSheet k={k} several={selection.length > 1 ? [...selection] : null} onClose={() => mv.close()}/>}
+    {sheet?.kind === 'edit-pinned' && <EditPinnedSheet k={k} fact={sheet.fact} onClose={() => setSheet(null)}/>}
     <Notice toast={ds.toast} onUndo={() => void d.undo().then(() => { void x.load(); void sc.load(true); })} onShow={ds.toast?.show ? () => d.open(ds.toast!.show!) : undefined} onDone={id => d.dismiss(id)}/>
   </section>;
 }
@@ -609,13 +610,23 @@ function RememberSheet({ k, onClose, onSaved }: { k: K; onClose: () => void; onS
   </Sheet>;
 }
 
-function MoveSheet({ k, onClose }: { k: K; onClose: () => void }) {
-  const { mv, d } = k; const s = useStore(mv)!;
+function MoveSheet({ k, several, onClose }: { k: K; several: string[] | null; onClose: () => void }) {
+  const { mv, d, x } = k; const s = useStore(mv)!;
   const m = s.memory!;
   const toName = s.to ? s.targets.find(t => t.drawer === s.to)?.name ?? drawerName(s.to) : null;
-  const move = async () => { const from = m.drawerId; const to = s.to; if (await mv.move() && to) d.moved(m.id, from, to, m.text); };
-  return <Sheet title="Move to another place" onClose={onClose} actions={<><button type="button" onClick={onClose}>Cancel</button><button type="button" className="primary" disabled={!s.to || s.busy} onClick={() => void move()}>Move</button></>}>
-    <p className="dk-quote" dir="auto"><WithSwatches text={oneLine(m.text)}/></p>
+  const move = async () => {
+    const to = s.to; if (!to) return;
+    if (several) {
+      // Several at once: each keeps where it was, so Undo moves each one back.
+      const from = several.map(id => ({ id, drawer: x.item(id)?.drawerId ?? '' })).filter(f => f.drawer && f.drawer !== to);
+      x.askBulk('move'); x.setBulkTo(to); await x.runBulk(); mv.close();
+      d.movedMany(from, to);
+      return;
+    }
+    const from = m.drawerId; if (await mv.move()) d.moved(m.id, from, to, m.text);
+  };
+  return <Sheet title={several ? `Move ${several.length} memories` : 'Move to another place'} onClose={onClose} actions={<><button type="button" onClick={onClose}>Cancel</button><button type="button" className="primary" disabled={!s.to || s.busy} onClick={() => void move()}>Move</button></>}>
+    <p className="dk-quote" dir="auto">{several ? `${several.length} memories, the first: ` : ''}<WithSwatches text={oneLine(m.text)}/></p>
     <label className="dk-field">To<input type="search" autoFocus placeholder="Search projects and places…" value={s.query} onChange={e => void mv.search(e.target.value)}/></label>
     <div className="dk-pick" role="listbox" aria-label="Places">
       {s.targets.length === 0 && <p className="fine-print">No place matches.</p>}
@@ -718,5 +729,14 @@ function ForgetSheet({ k, ids, onClose }: { k: K; ids?: string[]; onClose: () =>
     actions={<><button type="button" onClick={onClose}>Cancel</button><button type="button" className="danger-solid" disabled={ds.busy || !items.length} onClick={() => void d.forgetForGood(ids).then(ok => { if (ok) onClose(); })}>Forget for good</button></>}>
     <p>Their text and history are removed from Dpro and from every memory file. This cannot be undone.</p>
     {projects.map(p => <p key={p.id} className="fine-print">Also the {p.count} memories of the project {p.text || p.id.slice(8)}.</p>)}
+  </Sheet>;
+}
+
+function EditPinnedSheet({ k, fact, onClose }: { k: K; fact: PinnedFact; onClose: () => void }) {
+  const { d } = k;
+  const [text, setText] = useState(fact.text);
+  const save = async () => { if (await d.editPinned(fact, text.trim())) onClose(); };
+  return <Sheet title="Edit pinned fact" onClose={onClose} actions={<><button type="button" onClick={onClose}>Cancel</button><button type="button" className="primary" disabled={!text.trim() || text.trim() === fact.text} onClick={() => void save()}>Save</button></>}>
+    <label className="dk-field">Every agent{fact.scope === 'company' ? '' : ` of ${drawerName(fact.scope)}`} reads this first<textarea autoFocus rows={3} dir="auto" maxLength={1000} value={text} onChange={e => setText(e.target.value)}/></label>
   </Sheet>;
 }

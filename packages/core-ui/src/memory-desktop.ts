@@ -184,6 +184,23 @@ export class MemoryDesktopController extends Store<DesktopState> {
   moved(id: string, from: string, to: string, text: string) {
     this.remember(`Moved “${text.slice(0, 50)}” to ${drawerName(to)}.`, async () => (await this.req('POST', `/api/memory/${encodeURIComponent(id)}/move`, { drawer: from })).status === 200);
   }
+  movedMany(from: ReadonlyArray<{ id: string; drawer: string }>, to: string) {
+    if (!from.length) return;
+    this.remember(`Moved ${from.length} memories to ${drawerName(to)}.`, async () => {
+      let ok = 0;
+      for (const f of from) { try { if ((await this.req('POST', `/api/memory/${encodeURIComponent(f.id)}/move`, { drawer: f.drawer })).status === 200) ok++; } catch { /* counted */ } }
+      return ok === from.length;
+    });
+  }
+  async editPinned(fact: PinnedFact, text: string): Promise<boolean> {
+    try {
+      const r = await this.req('PATCH', `/api/memory/scopes/pinned/${encodeURIComponent(fact.id)}`, { text });
+      if (r.status !== 200) { this.say('The pinned fact was not changed.'); return false; }
+      this.remember('Changed the pinned fact.', async () => (await this.req('PATCH', `/api/memory/scopes/pinned/${encodeURIComponent(fact.id)}`, { text: fact.text })).status === 200 && (await this.loadPinned(), true));
+      void this.loadPinned();
+      return true;
+    } catch { return false; }
+  }
   edited(id: string, before: { content: string; importance: number }) {
     this.remember('Saved the change.', async () => (await this.req('PUT', `/api/memory/${encodeURIComponent(id)}`, before)).status === 200);
   }

@@ -1,3 +1,4 @@
+import { AgentWorksOn } from './AgentWorksOn';
 import {SpecialtyLibrary} from './SpecialtyLibrary';
 import { useState, useSyncExternalStore } from 'react';
 import {
@@ -84,6 +85,7 @@ export function HireAgent({ controller, onClose }: { controller: HireController;
       <p><bdi>{who}</bdi> is hired. Choose what it may do with memory. Memory stays inside your company.</p>
       <ToolList tools={memory} selected={s.selected} disabled={busy || s.phase === 'unknown'} onToggle={t => controller.toggle(t)} empty="No memory tools on this server."/>
       {s.permissions && <MemoryScope controller={controller} p={s.permissions} disabled={busy || s.phase === 'unknown'}/>}
+      {s.agent && <AgentWorksOn client={controller.client} agentId={s.agent.id} agentName={who}/>}
       <div className="hire-actions"><button type="button" className="primary" disabled={busy} onClick={() => controller.next()}>Next: permissions</button></div>
     </div>}
 

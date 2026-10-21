@@ -194,6 +194,17 @@ export function ChatView({ controller, mode, productName = 'Dpro Agent', client,
   const [remember, setRemember] = useState<RememberSeed | null>(null);
   const canRemember = owner && !!memCtl && !!s.activeId;
   const openRemember = (t: Turn, text: string) => { const ref = messageRef(t); if (ref) setRemember({ ref, text: rememberDraft(text), key: Date.now() }); };
+  // ⌘⇧R / Ctrl+Shift+R: Remember this — the last reply (or the last message) of the open chat (board M28).
+  useEffect(() => {
+    if (!active || !canRemember) return;
+    const onKey = (e: globalThis.KeyboardEvent) => {
+      if (!(e.metaKey || e.ctrlKey) || !e.shiftKey || e.key.toLowerCase() !== 'r') return;
+      const last = [...s.turns].reverse().find(t => messageRef(t) && t.content.trim());
+      if (!last) return;
+      e.preventDefault(); openRemember(last, last.content);
+    };
+    window.addEventListener('keydown', onKey); return () => window.removeEventListener('keydown', onKey);
+  }, [active, canRemember, s.turns]);
   const byRun = proposalsByRun(mem?.memories ?? [], s.turns);
   useEffect(() => { if (wasRunning.current && !running) { void cardsCtl?.refresh(); void memCtl?.refresh(); } wasRunning.current = running; }, [running, cardsCtl, memCtl]);
   const [cardForm, setCardForm] = useState<CardFormSeed | null>(null);
@@ -803,7 +814,7 @@ function TurnFooter({ text, ms, stopped, onRemember, recall }: { text: string; m
 }
 
 function RememberButton({ onClick }: { onClick: () => void }) {
-  return <button type="button" className="ghost-action" aria-label="Remember this" title="Remember this (save it to memory)" onClick={onClick}><UiIcon name="brain" size={13}/></button>;
+  return <button type="button" className="ghost-action" aria-label="Remember this" title="Remember this (⌘⇧R)" onClick={onClick}><UiIcon name="brain" size={13}/></button>;
 }
 
 type RememberSeed = { ref: { messageId: string } | { runId: string }; text: string; key: number };
