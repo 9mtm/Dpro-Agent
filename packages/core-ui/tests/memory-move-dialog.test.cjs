@@ -27,6 +27,7 @@ function backend({ taken = false } = {}) {
     if (path === '/api/memory/scopes/memories/mem-1') return out({ memory: detail });
     if (path === '/api/memory/scopes/memories') return out({ scope: 'company', items: [{ id: 'mem-1', type: 'fact', preview: detail.content, drawerId: 'project:flowxtra', topicKey: 'tel-agent.price', importance: 7, layer: 'factual', createdAt: '2026-10-20 10:00:00', sourceAgentId: 'writer', source: 'agent', usedIn: 3 }], nextCursor: null, total: 1, facets: { type: { fact: 1 }, layer: {}, drawer: { 'project:flowxtra': 1 }, source: { agent: 1, owner: 4 } } });
     if (path === '/api/memory/access/agents') return out({ scope: p.get('scope'), column: p.get('column'), mode: 'read', count: p.get('scope') === 'project:tel-agent' ? 5 : 12, total: 30, agents: [], nextCursor: null });
+    if (path === '/api/memory/scopes/tree') return out({ generatedAt: '2026-10-21 10:00:00', company: { memories: 1, drawers: {} }, departments: [], projects: [{ slug: 'flowxtra', name: 'Flowxtra', departmentId: 'general', pinned: false, archived: false, memories: 12 }, { slug: 'tel-agent', name: 'Tel-Agent', departmentId: 'marketing', pinned: false, archived: false, memories: 1120 }, { slug: 'old', name: 'Old', departmentId: 'general', pinned: false, archived: true, memories: 3 }], people: [{ key: 'sara', memories: 4 }], agents: {} });
     if (path === '/api/memory/scopes/search') return out({ hits: [{ kind: 'project', id: 'tel-agent', name: 'Tel-Agent', departmentId: 'marketing', archived: false, memories: 1120 }, { kind: 'project', id: 'old', name: 'Old', archived: true, memories: 3 }] });
     if (path === '/api/memory/mem-1/move') return taken ? out({ error: 'x', code: 'topic_key_taken' }, 409) : out({ memory: { id: 'mem-1' }, from: 'project:flowxtra', to: r.body.drawer });
     if (path === '/api/memory/mem-1/versions') return { status: 200, body: { versions: [] } };
@@ -79,4 +80,13 @@ test('explorer: source / importance / date filters reach the server; the open me
     assert.ok(html.includes(words), words);
   c.moved('mem-1', 'project:tel-agent');
   assert.equal(c.getSnapshot().items[0].drawerId, 'project:tel-agent');
+});
+
+test('with an empty search box the dialog lists the projects (most memories first) and people, without the current drawer (board M13)', async () => {
+  const { client, calls } = backend();
+  const c = new MemoryMoveController(client);
+  await c.open({ id: 'mem-1', text: detail.content, drawerId: 'project:flowxtra' });
+  assert.ok(calls.some(r => r.path === '/api/memory/scopes/tree'));
+  assert.ok(!calls.some(r => r.path.startsWith('/api/memory/scopes/search')), 'no search without a word');
+  assert.deepEqual(c.getSnapshot().targets.map(x => x.drawer), ['project:tel-agent', 'people:sara', 'owner', 'experience']);
 });

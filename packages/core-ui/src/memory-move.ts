@@ -5,7 +5,7 @@
 import { Store, codeOf, drawerName } from './memory-store';
 import type { Requester } from './memory-store';
 import { queryString } from './memory-pages-contract.js';
-import type { MemoryDetail, ScopeAgents, ScopeHit } from './memory-pages-contract.js';
+import type { MemoryDetail, ScopeAgents, ScopeHit, ScopeTree } from './memory-pages-contract.js';
 import { memoryMovePath } from './memory-recall-contract.js';
 
 export type MoveTarget = { drawer: string; name: string; note: string };
@@ -24,6 +24,15 @@ function readersQuery(drawer: string): { scope: string; column: string } {
   const i = drawer.indexOf(':');
   const kind = i < 0 ? drawer : drawer.slice(0, i);
   return kind === 'project' ? { scope: drawer, column: 'project' } : { scope: 'company', column: kind };
+}
+
+/** Projects (most memories first) and people of the scope tree as move targets, at most 20. */
+function treeHits(tree: ScopeTree | null): ScopeHit[] {
+  if (!tree) return [];
+  const projects = tree.projects.filter(p => !p.archived && !p.mergedInto).sort((a, b) => b.memories - a.memories || a.name.localeCompare(b.name))
+    .map(p => ({ kind: 'project' as const, id: p.slug, name: p.name, departmentId: p.departmentId, archived: false, memories: p.memories }));
+  const people = tree.people.map(p => ({ kind: 'people' as const, id: p.key, name: p.key, archived: false, memories: p.memories }));
+  return [...projects, ...people].slice(0, 20);
 }
 
 export class MemoryMoveController extends Store<MoveState> {
@@ -59,9 +68,12 @@ export class MemoryMoveController extends Store<MoveState> {
     const here = this.getSnapshot().memory?.drawerId;
     // The fixed drawers stay listed under the matches (board M13).
     const fixed = FIXED.filter(x => x.drawer !== here);
-    const hits = await this.read<{ hits: ScopeHit[] }>('/api/memory/scopes/search' + queryString({ q: query.trim() || undefined, kinds: 'project,people', limit: 20 }));
+    // An empty box lists the projects (most memories first) and people from the scope tree; the search needs a word.
+    const hits: ScopeHit[] = query.trim()
+      ? (await this.read<{ hits: ScopeHit[] }>('/api/memory/scopes/search' + queryString({ q: query.trim(), kinds: 'project,people', limit: 20 })))?.hits ?? []
+      : treeHits(await this.read<ScopeTree>('/api/memory/scopes/tree'));
     if (t !== this.#t || this.getSnapshot().query !== query) return;
-    const found = (hits?.hits ?? []).filter(h => !h.archived).map(h => ({ drawer: `${h.kind}:${h.id}`, name: drawerName(`${h.kind}:${h.id}`).replace(` · ${h.id}`, ` · ${h.name}`), note: `${h.memories} ${h.memories === 1 ? 'memory' : 'memories'}` }))
+    const found = hits.filter(h => !h.archived).map(h => ({ drawer: `${h.kind}:${h.id}`, name: drawerName(`${h.kind}:${h.id}`).replace(` · ${h.id}`, ` · ${h.name}`), note: `${h.memories} ${h.memories === 1 ? 'memory' : 'memories'}` }))
       .filter(x => x.drawer !== here);
     this.publish({ targets: [...found, ...fixed] });
   }
