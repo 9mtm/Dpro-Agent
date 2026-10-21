@@ -7,8 +7,8 @@
 import { Store, codeOf } from './memory-store';
 import type { Requester } from './memory-store';
 import { messageRef } from './chat-memory';
-import { recallCorrectPath, recallForgetPath, recallMessagePath, recallRunPath } from './memory-recall-contract.js';
-import type { RecallTrace } from './memory-recall-contract.js';
+import { CACHE_METRICS_PATH, conversationSummariesPath, recallCorrectPath, recallForgetPath, recallMessagePath, recallRunPath } from './memory-recall-contract.js';
+import type { CacheMetrics, RecallTrace, TurnSummary } from './memory-recall-contract.js';
 import { queryString } from './memory-pages-contract.js';
 import type { Handoff } from './memory-pages-contract.js';
 
@@ -20,6 +20,8 @@ export type RecallState = Readonly<{
   open: string | null; correcting: { key: string; memoryId: string; text: string } | null; confirmForget: { key: string; memoryId: string } | null;
   busy: boolean; notes: Readonly<Record<string, string>>;
   handoff: Handoff | null; handoffPhase: 'idle' | 'loading' | 'ready' | 'error'; draft: HandoffDraft | null; handoffNotice?: string;
+  /** Board M15: the stored summaries of older turns (read on request) and the speed numbers. */
+  summaries: readonly TurnSummary[] | null; showSummaries: boolean; metrics: CacheMetrics | null;
 }>;
 
 const lines = (x: string) => x.split('\n').map(l => l.trim()).filter(Boolean).slice(0, 8).map(l => l.slice(0, 300));
@@ -27,13 +29,32 @@ const lines = (x: string) => x.split('\n').map(l => l.trim()).filter(Boolean).sl
 export class ChatRecallController extends Store<RecallState> {
   #pending = new Set<string>();
   constructor(client: Requester) {
-    super({ conversationId: null, traces: {}, open: null, correcting: null, confirmForget: null, busy: false, notes: {}, handoff: null, handoffPhase: 'idle', draft: null }, client);
+    super({ conversationId: null, traces: {}, open: null, correcting: null, confirmForget: null, busy: false, notes: {}, handoff: null, handoffPhase: 'idle', draft: null, summaries: null, showSummaries: false, metrics: null }, client);
   }
 
   setConversation(id: string | null) {
     if (id === this.getSnapshot().conversationId) return;
     this.#pending.clear();
-    this.publish({ conversationId: id, traces: {}, open: null, correcting: null, confirmForget: null, notes: {}, handoff: null, handoffPhase: 'idle', draft: null, handoffNotice: undefined });
+    this.publish({ conversationId: id, traces: {}, open: null, correcting: null, confirmForget: null, notes: {}, handoff: null, handoffPhase: 'idle', draft: null, handoffNotice: undefined, summaries: null, showSummaries: false });
+  }
+
+  /** "Read the summaries of turns 1–N": the stored summaries of the older turns of this conversation. */
+  async toggleSummaries() {
+    const s = this.getSnapshot();
+    if (s.showSummaries) { this.publish({ showSummaries: false }); return; }
+    this.publish({ showSummaries: true });
+    if (s.summaries || !s.conversationId) return;
+    const conv = s.conversationId;
+    const r = await this.read<{ summaries: TurnSummary[] }>(conversationSummariesPath(conv));
+    if (this.getSnapshot().conversationId === conv) this.publish({ summaries: r?.summaries ?? [] });
+  }
+  /** Speed (Health › cache): hit rates, pack size, time to first word. */
+  async loadMetrics() { const m = await this.read<CacheMetrics>(CACHE_METRICS_PATH); if (m) this.publish({ metrics: m }); }
+  /** After "Wrong place" moved a memory: the replies that used it show "moved" and where it is now. */
+  moved(memoryId: string, drawer: string) {
+    const traces = { ...this.getSnapshot().traces };
+    for (const [k, e] of Object.entries(traces)) if (e.state === 'ready' && e.trace.items.some(i => i.id === memoryId)) traces[k] = { state: 'ready', trace: { ...e.trace, items: e.trace.items.map(i => (i.id === memoryId && i.kind === 'memory' ? { ...i, state: 'moved' as const, nowIn: drawer } : i)) } };
+    this.publish({ traces });
   }
 
   /** Reads a finished reply's trace once (kept for the conversation). */

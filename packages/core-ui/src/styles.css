@@ -2009,3 +2009,23 @@ button.status-item:hover { background:var(--row-hover); color:var(--text); }
 .mem-topic-key input { flex:1; font-family:ui-monospace, Menlo, monospace; font-size:12px; }
 .mem-topic-preview { display:grid; gap:6px; font-size:12.5px; }
 @media (max-width: 1200px) { .mem-map-review { grid-template-columns:minmax(0,1fr); } .mem-cluster-canvas { grid-template-columns:minmax(0,1fr); } }
+
+/* MEM-FINISH-01 · M15 reply trace */
+.recall-panel .recall-head { display:flex; justify-content:space-between; align-items:baseline; }
+.recall-panel .recall-row { display:grid; grid-template-columns:92px minmax(0,1fr) auto; gap:12px; align-items:start; padding:8px 0; border-block-start:1px solid var(--border); }
+.recall-why { justify-self:start; padding:2px 8px; border-radius:999px; font-size:11px; background:var(--canvas); color:var(--text-2); box-shadow:inset 0 0 0 1px var(--border); }
+.recall-why[data-why="pinned"] { background:var(--mem-warn-bg); color:var(--mem-warn); box-shadow:none; }
+.recall-why[data-why="topic"] { background:var(--mem-ok-bg); color:var(--mem-ok); box-shadow:none; }
+.recall-why[data-why="graph"] { box-shadow:none; }
+.recall-why[data-why="meaning"] { background:var(--mem-link-bg); color:var(--mem-link); box-shadow:none; }
+.recall-what { display:grid; gap:3px; min-inline-size:0; }
+.recall-row[data-state="forgotten"] .recall-text, .recall-row[data-state="deleted"] .recall-text { color:var(--text-4); font-style:italic; }
+.recall-state { padding:2px 8px; border-radius:999px; font-size:11px; background:var(--mem-warn-bg); color:var(--mem-warn); }
+.recall-state[data-state="moved"] { background:var(--mem-link-bg); color:var(--mem-link); }
+.recall-state[data-state="forgotten"] { background:var(--mem-bad-bg); color:var(--mem-bad); }
+.recall-correct { display:grid; gap:10px; margin-block-start:10px; padding:14px 16px; border-radius:12px; background:var(--surface); box-shadow:inset 0 0 0 1px var(--mem-link); }
+.recall-correct h3 { margin:0; font-size:13px; }
+.context-rows [data-tone="ok"] { color:var(--mem-ok); }
+:root, .shell { --mem-map:#7A4FC0; --mem-map-bg:#F1E9FB; }
+.shell[data-theme="dark"] { --mem-map:#C79BFF; --mem-map-bg:#241B33; }
+.recall-why[data-why="graph"] { background:var(--mem-map-bg); color:var(--mem-map); }

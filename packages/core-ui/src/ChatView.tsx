@@ -25,7 +25,9 @@ import { ChatMemoryController, messageRef, proposalsByRun, rememberDraft, MAX_RE
 import type { ChatMemory, RememberDrawer, RememberType } from './chat-memory';
 import { drawerLabel } from './MemoryViews';
 import { ChatRecallController } from './chat-recall';
-import { ContextCard, HandoffCard, RecallChip, RecallPanel } from './ChatRecall';
+import { ContextCard, HandoffCard, RecallChip, RecallPanel, SpeedDetails } from './ChatRecall';
+import { MemoryMoveController } from './memory-move';
+import { MoveDialog } from './MemoryDialogs';
 import { exportConversation, exportNote } from './chat-export';
 import { secretLabel, splitSecrets } from './chat-secrets';
 import { SavedKeys } from './SavedKeys';
@@ -178,6 +180,9 @@ export function ChatView({ controller, mode, productName = 'Dpro Agent', client,
   const [recallCtl, setRecallCtl] = useState<ChatRecallController | null>(null);
   useEffect(() => { if (!client || !owner) return; const r = new ChatRecallController(client); setRecallCtl(r); return () => r.dispose(); }, [client, owner]);
   useEffect(() => { recallCtl?.setConversation(s.activeId); }, [recallCtl, s.activeId]);
+  // Board M15 → M13: a reply's "Wrong place" opens the move dialog; the reply then shows "moved".
+  const [moveCtl, setMoveCtl] = useState<MemoryMoveController | null>(null);
+  useEffect(() => { if (!client || !owner || !recallCtl) return; const m = new MemoryMoveController(client, (id, drawer) => recallCtl.moved(id, drawer)); setMoveCtl(m); return () => m.dispose(); }, [client, owner, recallCtl]);
   const [remember, setRemember] = useState<RememberSeed | null>(null);
   const canRemember = owner && !!memCtl && !!s.activeId;
   const openRemember = (t: Turn, text: string) => { const ref = messageRef(t); if (ref) setRemember({ ref, text: rememberDraft(text), key: Date.now() }); };
@@ -226,7 +231,8 @@ export function ChatView({ controller, mode, productName = 'Dpro Agent', client,
           ? <UserMessage key={t.key} turn={t} highlight={flash === t.key} onKey={client ? setKeysOpen : undefined} onRemember={canRemember && messageRef(t) ? () => openRemember(t, t.content) : undefined}/>
           : <AssistantTurn recovery={t.code === 'run_interrupted' && client && s.activeId ? <RecoveryApprovals key={`${s.activeId}:${client.getSnapshot().epoch}`} client={client} conversationId={s.activeId}/> : undefined} key={t.key} turn={t} highlight={flash === t.key} writer={teamChat ? nameOf(t.agentId ?? convAgentId) : undefined} last={i === s.turns.length - 1} onRetry={lastUser ? () => void controller.send(t.code === 'run_interrupted' ? 'Continue the interrupted work from the saved checkpoints. Review what is already done and inspect unknown outcomes before repeating any action. Ask me to approve each tool call.' : lastUser.content) : undefined}
             onSuggest={owner && cardsCtl && s.activeId ? openCardForm : undefined} onRemember={canRemember && messageRef(t) ? text => openRemember(t, text) : undefined}
-            proposals={t.runId && memCtl ? <MemoryProposals controller={memCtl} items={byRun.get(t.runId) ?? []}/> : null} recall={recallCtl}/>)}
+            proposals={t.runId && memCtl ? <MemoryProposals controller={memCtl} items={byRun.get(t.runId) ?? []}/> : null} recall={recallCtl} onWrongPlace={moveCtl ? m => void moveCtl.open(m) : undefined}/>)}
+        {moveCtl && <MoveDialog c={moveCtl} from="From a reply’s “wrong place”"/>}
         {cardsCtl && <ChatCards controller={cardsCtl} nameOf={id => s.agents.find(a => a.id === id)?.name ?? 'Former agent'} onOpen={onOpenCard}/>}
         {s.starting && !s.turns.some(t => t.status === 'running') && <WorkingRow since={Date.now()} label="Starting"/>}
       </div>}
@@ -367,6 +373,7 @@ function ChatSidePanel({ controller, client, onAddConnector, memory, onOpenMemor
     <WhoAnswers controller={controller} agent={agent}/>
     {recall && s.activeId && <HandoffCard c={recall} agentId={conv?.agentId || s.agentId || s.agents[0]?.id || ''} agentName={agent}/>}
     {recall && <RecallContext c={recall} keys={replies.map(t => t.key)}/>}
+    {recall && <SpeedDetails c={recall}/>}
     <section className="panel-card">
       <h3>Environment</h3>
       <dl className="panel-list">
@@ -407,7 +414,7 @@ function ChatSidePanel({ controller, client, onAddConnector, memory, onOpenMemor
 /** Details › Context of the newest reply that has a trace. */
 function RecallContext({ c, keys }: { c: ChatRecallController; keys: readonly string[] }) {
   useSyncExternalStore(c.subscribe, c.getSnapshot, c.getSnapshot);
-  return <ContextCard trace={c.latest(keys)}/>;
+  return <ContextCard trace={c.latest(keys)} c={c}/>;
 }
 
 /** The branch against GitHub: upstream, ahead/behind (last known state, offline), last commit, links to open on github.com. */
@@ -525,7 +532,7 @@ function SecretChip({ type, id, onOpen }: { type: string; id: string; onOpen?: (
 }
 
 /** One assistant turn: live parts in order while running; work folded once finished. */
-function AssistantTurn({ turn, last, onRetry, writer, recovery, onSuggest, onRemember, proposals, highlight, recall }: { turn: Turn; last: boolean; onRetry?: () => void; writer?: string; recovery?: ReactNode; onSuggest?: (s: CardSuggestion) => void; onRemember?: (text: string) => void; proposals?: ReactNode; highlight?: boolean; recall?: ChatRecallController | null }) {
+function AssistantTurn({ turn, last, onRetry, writer, recovery, onSuggest, onRemember, proposals, highlight, recall, onWrongPlace }: { turn: Turn; last: boolean; onRetry?: () => void; writer?: string; recovery?: ReactNode; onSuggest?: (s: CardSuggestion) => void; onRemember?: (text: string) => void; proposals?: ReactNode; highlight?: boolean; recall?: ChatRecallController | null; onWrongPlace?: (m: { id: string; text: string; drawerId: string }) => void }) {
   const live = turn.status === 'running';
   const plan = turnPlan(turn.parts);
   const suggestions = turnSuggestions(turn.parts);
@@ -554,7 +561,7 @@ function AssistantTurn({ turn, last, onRetry, writer, recovery, onSuggest, onRem
         {proposals}
         {recovery}
         <TurnFooter text={answerText || turn.content} ms={turn.durationMs} stopped={turn.status === 'stopped'} onRemember={onRemember} recall={recall ? <RecallChip c={recall} turn={turn}/> : null}/>
-        {recall && <RecallPanel c={recall} turnKey={turn.key}/>}
+        {recall && <RecallPanel c={recall} turnKey={turn.key} onWrongPlace={onWrongPlace}/>}
       </>}
   </article>;
 }
