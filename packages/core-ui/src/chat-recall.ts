@@ -17,7 +17,7 @@ export type HandoffDraft = { done: string; left: string; next: string; questions
 export type RecallState = Readonly<{
   conversationId: string | null;
   traces: Readonly<Record<string, TraceEntry>>;
-  open: string | null; correcting: { key: string; memoryId: string; text: string } | null; confirmForget: { key: string; memoryId: string } | null;
+  open: string | null; correcting: { key: string; memoryId: string; text: string } | null; confirmForget: { key: string; memoryId: string } | null; trashed: { key: string; memoryId: string } | null;
   busy: boolean; notes: Readonly<Record<string, string>>;
   handoff: Handoff | null; handoffPhase: 'idle' | 'loading' | 'ready' | 'error'; draft: HandoffDraft | null; handoffNotice?: string;
   /** Board M15: the stored summaries of older turns (read on request) and the speed numbers. */
@@ -29,13 +29,13 @@ const lines = (x: string) => x.split('\n').map(l => l.trim()).filter(Boolean).sl
 export class ChatRecallController extends Store<RecallState> {
   #pending = new Set<string>();
   constructor(client: Requester) {
-    super({ conversationId: null, traces: {}, open: null, correcting: null, confirmForget: null, busy: false, notes: {}, handoff: null, handoffPhase: 'idle', draft: null, summaries: null, showSummaries: false, metrics: null }, client);
+    super({ conversationId: null, traces: {}, open: null, correcting: null, confirmForget: null, trashed: null, busy: false, notes: {}, handoff: null, handoffPhase: 'idle', draft: null, summaries: null, showSummaries: false, metrics: null }, client);
   }
 
   setConversation(id: string | null) {
     if (id === this.getSnapshot().conversationId) return;
     this.#pending.clear();
-    this.publish({ conversationId: id, traces: {}, open: null, correcting: null, confirmForget: null, notes: {}, handoff: null, handoffPhase: 'idle', draft: null, handoffNotice: undefined, summaries: null, showSummaries: false });
+    this.publish({ conversationId: id, traces: {}, open: null, correcting: null, confirmForget: null, trashed: null, notes: {}, handoff: null, handoffPhase: 'idle', draft: null, handoffNotice: undefined, summaries: null, showSummaries: false });
   }
 
   /** "Read the summaries of turns 1–N": the stored summaries of the older turns of this conversation. */
@@ -96,7 +96,34 @@ export class ChatRecallController extends Store<RecallState> {
       this.note(c.key, r.status === 201 ? 'Correction sent to Memory › Review. It changes after you approve it there.' : recallNotice(codeOf(r)));
     } catch { this.publish({ busy: false }); this.note(c.key, 'The correction was not sent (no connection).'); }
   }
-  /** "Forget": removes the memory completely (text, history, copies). */
+  /** "Move to Trash" (board M28 H1): no agent reads it any more; Undo puts it back while it is in Trash. */
+  async trash(key: string, memoryId: string) {
+    const t = this.trace(key);
+    this.publish({ busy: true, confirmForget: null, correcting: null });
+    try {
+      const r = await this.req('DELETE', `/api/memory/${encodeURIComponent(memoryId)}`);
+      this.publish({ busy: false });
+      if (r.status !== 200) { this.note(key, 'It was not moved to Trash.'); return; }
+      if (t) this.patchTrace(key, { state: 'ready', trace: { ...t, items: t.items.map(i => (i.id === memoryId ? { ...i, state: 'deleted' as const } : i)) } });
+      this.publish({ trashed: { key, memoryId } });
+      this.note(key, 'Moved to Trash. No agent reads it now.');
+    } catch { this.publish({ busy: false }); this.note(key, 'It was not moved to Trash (no connection).'); }
+  }
+  async untrash() {
+    const x = this.getSnapshot().trashed;
+    if (!x) return;
+    this.publish({ busy: true });
+    try {
+      const r = await this.req('POST', `/api/memory/${encodeURIComponent(x.memoryId)}/restore`);
+      this.publish({ busy: false });
+      if (r.status !== 200) { this.note(x.key, r.status === 404 ? 'Restore arrives with the next backend update; Memory › Trash will have it.' : 'It could not be restored.'); return; }
+      const t = this.trace(x.key);
+      if (t) this.patchTrace(x.key, { state: 'ready', trace: { ...t, items: t.items.map(i => (i.id === x.memoryId ? { ...i, state: 'active' as const } : i)) } });
+      this.publish({ trashed: null });
+      this.note(x.key, 'Back where it was.');
+    } catch { this.publish({ busy: false }); this.note(x.key, 'It could not be restored (no connection).'); }
+  }
+  /** "Forget": removes the memory completely (text, history, copies). Kept for agent tools; the window forgets only from Trash. */
   async forget() {
     const f = this.getSnapshot().confirmForget;
     const id = f && this.messageIdOf(f.key);

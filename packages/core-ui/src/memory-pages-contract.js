@@ -302,7 +302,9 @@ function routineFilter(b, extra) {
   return record(b) && onlyKeys(b, ['scope', 'agent', ...extra]) && (b.scope === undefined || ruleScopeOrDrawer(b.scope)) && (b.agent === undefined || agentId(b.agent));
 }
 function rulesBody(b) {
-  if (!record(b) || !onlyKeys(b, ['scope', 'routine', 'important', 'contradiction', 'reviewerAgentId', 'weeklyDay', 'weeklyHour']) || !validRuleScope(b.scope) || Object.keys(b).length < 2) return false;
+  if (!record(b) || !onlyKeys(b, ['scope', 'routine', 'important', 'contradiction', 'reviewerAgentId', 'weeklyDay', 'weeklyHour', 'trashDays']) || !validRuleScope(b.scope) || Object.keys(b).length < 2) return false;
+  // MEM-TRASH-01: how long Trash keeps things (company only; 0 = never on its own, null = back to 30).
+  if (b.trashDays !== undefined && (b.scope !== 'company' || !(b.trashDays === null || [0, 7, 30, 90].includes(b.trashDays)))) return false;
   const pick = (k, list) => b[k] === undefined || b[k] === null || list.includes(b[k]);
   const hour = (k, max) => b[k] === undefined || b[k] === null || (Number.isInteger(b[k]) && b[k] >= 0 && b[k] <= max);
   return pick('routine', ROUTINE_RULES) && pick('important', IMPORTANT_RULES) && pick('contradiction', CONTRADICTION_RULES)
@@ -338,6 +340,8 @@ function project(p) {
   return {
     slug: p.slug, name: clip(p.name, 120) || p.slug, departmentId: idOr(p.departmentId, departmentId, 'general'), pinned: p.pinned === true, archived: p.archived === true,
     archivedAt: whenOrNull(p.archivedAt), mergedInto: idOr(p.mergedInto, slug), ...(record(p) && 'memories' in p ? counts(p) : {}),
+    // MEM-TRASH-01 / groups: a project in the Trash, and its group.
+    ...(whenOrNull(p.trashedAt) ? { trashedAt: whenOrNull(p.trashedAt) } : {}), ...(typeof p.groupId === 'string' && /^[A-Za-z0-9][A-Za-z0-9_-]{0,63}$/.test(p.groupId) ? { groupId: p.groupId } : {}),
   };
 }
 function tree(b) {
@@ -488,6 +492,7 @@ function rulesView(b) {
       from: { routine: fromScope(f.routine), important: fromScope(f.important), contradiction: fromScope(f.contradiction) },
       reviewerAgentId: idOr(e.reviewerAgentId, agentId),
       weekly: { day: Number.isInteger(w.day) && w.day >= 0 && w.day <= 6 ? w.day : 0, hour: Number.isInteger(w.hour) && w.hour >= 0 && w.hour <= 23 ? w.hour : 9 },
+      trashDays: [0, 7, 30, 90].includes(e.trashDays) ? e.trashDays : 30,
     },
   };
 }

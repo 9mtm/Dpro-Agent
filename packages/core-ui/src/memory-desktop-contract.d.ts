@@ -1,0 +1,22 @@
+export type DatabaseLevel = 'exists' | 'tables' | 'data';
+export type DatabaseKind = 'sqlite' | 'mysql' | 'postgres' | 'other';
+export const TRASH_DAYS: readonly number[];
+export const DATABASE_LEVELS: readonly DatabaseLevel[];
+export const DATABASE_KINDS: readonly DatabaseKind[];
+export const MAX_GROUP_PROJECTS: number;
+export const MAX_TRASH_IDS: number;
+/** One Trash row: a memory, or a whole project (id `project:<slug>`, `count` = its memories). */
+export type TrashItem = { id: string; kind: 'memory' | 'project'; text: string; drawer: string; project: string | null; deletedAt: string; deletedBy: string; forgetAt: string | null; count: number };
+export type TrashList = { items: TrashItem[]; trashDays: number };
+export type ProjectGroup = { id: string; name: string; label: string | null; shareWithin: boolean; projects: string[] };
+export type DesignColour = { name: string; value: string; source: string; main: boolean };
+export type DesignLogo = { id: string; path: string; kind: string; main: boolean; bytes: number };
+export type DesignConflict = { kind: 'main-colour'; question: string; options: DesignColour[] };
+export type ProjectDesign = { project: string; colours: DesignColour[]; fonts: Array<{ name: string; source: string }>; logos: DesignLogo[]; rules: Array<{ text: string; source: string }>; sources: Array<{ path: string; kind: string }>;
+  conflicts: DesignConflict[]; hiddenLogos: number; writeFile: boolean; file: { path: string | null; writtenAt: string | null; problem: string | null }; canUndo: boolean };
+export type ProjectDatabase = { id: string; kind: string; engine: string; name: string; path: string; host: string | null; port: string | null; database: string | null; service: string | null; image: string | null; tables: string[]; tableCount: number; tablesNote: string | null; bytes: number };
+export type ProjectDatabases = { project: string; databases: ProjectDatabase[]; access: Array<{ agentId: string; level: DatabaseLevel }>; defaultLevel: DatabaseLevel };
+export function memoryDesktopPath(path: string): { route: string; id?: string } | null;
+export function memoryDesktopRoute(path: string): boolean;
+export function allowedMemoryDesktop(method: string, path: string, body?: unknown): boolean;
+export function memoryDesktopResponse(path: string, status: number, body: unknown): unknown;

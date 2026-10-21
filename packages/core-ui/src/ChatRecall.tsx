@@ -1,11 +1,12 @@
-// MEM-UI-01 P5 (board M5, v3 in M15): "Remembered N" under a reply with what
-// it used, in the order it was loaded and why (Correct → Review, Wrong place →
-// the M13 move, Forget), the drawers open and not loaded; the Details cards
+// MEM-UI-01 P5 (board M5, v3 in M15, desktop in M28): "Used N memories" under
+// a reply with what it used, in the order it was loaded and why (Correct →
+// Needs you, Move…, Move to Trash with Undo), the drawers open and not loaded; the Details cards
 // "Where we left off", how the context was built (summaries) and speed.
 import { useEffect, useSyncExternalStore } from 'react';
 import { ChatRecallController } from './chat-recall';
 import { ago, drawerName, oneLine } from './memory-store';
 import { SpeedCard } from './MemoryHealth';
+import { UiIcon } from './ui-icons';
 import type { RecallItem, RecallTrace } from './memory-recall-contract.js';
 
 const WHY: Record<string, string> = { pinned: 'Pinned', topic: 'Topic', graph: 'Map', meaning: 'Meaning', keyword: 'Words', handoff: 'Handoff' };
@@ -18,7 +19,7 @@ function whereOf(i: RecallItem): string {
   const where = i.drawer ? drawerName(i.drawer) : 'Memory';
   return i.state === 'moved' && i.nowIn ? `${where} → now in ${drawerName(i.nowIn)}` : `${where}${typeof i.score === 'number' && (i.why === 'meaning' || i.why === 'keyword') ? ` · score ${i.score.toFixed(2)}` : ''}`;
 }
-const textOf = (i: RecallItem) => (i.preview ? oneLine(i.preview) : i.state === 'forgotten' ? '(forgotten since this reply)' : i.state === 'deleted' ? '(deleted since this reply)' : i.kind === 'handoff' ? 'The note from the last session.' : '—');
+const textOf = (i: RecallItem) => (i.preview ? oneLine(i.preview) : i.state === 'forgotten' ? '(forgotten since this reply)' : i.state === 'deleted' ? '(moved to Trash since this reply)' : i.kind === 'handoff' ? 'The note from the last session.' : '—');
 
 /** The chip under a finished reply; opens the list of what it used. */
 export function RecallChip({ c, turn }: { c: ChatRecallController; turn: { key: string; role: string; runId: string | null; pending?: boolean; status?: string } }) {
@@ -28,10 +29,11 @@ export function RecallChip({ c, turn }: { c: ChatRecallController; turn: { key: 
   // A reply that used nothing still shows the chip when a drawer was closed to it (board M15: "not loaded").
   if (!t || (t.items.length === 0 && !t.notLoaded?.drawers.length && !t.context.drawers?.noAccess.length)) return null;
   const open = s.open === turn.key;
-  return <button type="button" className="recall-chip" aria-expanded={open} onClick={() => c.toggle(turn.key)}>Remembered {t.items.length} {open ? '⌃' : '⌄'}</button>;
+  // Board M28 H1: one quiet chip; it opens what the reply used.
+  return <button type="button" className="recall-chip" aria-expanded={open} title="What this reply used" onClick={() => c.toggle(turn.key)}><UiIcon name="layers" size={12}/>Used {t.items.length} {t.items.length === 1 ? 'memory' : 'memories'}<span className="recall-chevron" data-open={open || undefined}><UiIcon name="chevron" size={10}/></span></button>;
 }
 
-/** "What this reply used" (board M15): why · what · where, with Correct / Wrong place / Forget for memories it used. */
+/** "What this reply used" (boards M15, M28 H1): why · what · where, with Correct, Move… and Move to Trash (undo) as icons. */
 export function RecallPanel({ c, turnKey, onWrongPlace }: { c: ChatRecallController; turnKey: string; onWrongPlace?: (m: { id: string; text: string; drawerId: string }) => void }) {
   const s = useSyncExternalStore(c.subscribe, c.getSnapshot, c.getSnapshot);
   const t = c.trace(turnKey);
@@ -51,11 +53,11 @@ export function RecallPanel({ c, turnKey, onWrongPlace }: { c: ChatRecallControl
         <span className="recall-what"><span dir="auto" className="recall-text">{textOf(i)}</span><span className="fine-print">{whereOf(i)}</span></span>
         <span className="recall-actions">
           {['changed', 'moved', 'forgotten'].includes(i.state) && <span className="recall-state" data-state={i.state}>{i.state}</span>}
-          {i.kind === 'memory' && ['active', 'changed', 'moved'].includes(i.state) && (s.confirmForget?.key === turnKey && s.confirmForget.memoryId === i.id
-            ? <><span className="mem-warn-text">Forget for good?</span><button type="button" className="danger-text" disabled={s.busy} onClick={() => void c.forget()}>Forget</button><button type="button" onClick={() => c.cancel()}>Keep</button></>
-            : <><button type="button" onClick={() => c.startCorrect(turnKey, i.id, i.preview ?? '')}>Correct</button>
-              {onWrongPlace && i.drawer && <button type="button" onClick={() => onWrongPlace({ id: i.id, text: i.preview ?? '', drawerId: i.nowIn ?? i.drawer! })}>Wrong place</button>}
-              <button type="button" className="danger-text" onClick={() => c.askForget(turnKey, i.id)}>Forget</button></>)}
+          {i.kind === 'memory' && ['active', 'changed', 'moved'].includes(i.state) && <>
+            <button type="button" className="recall-icon" aria-label="Correct" title="Correct (the fix waits in Needs you)" onClick={() => c.startCorrect(turnKey, i.id, i.preview ?? '')}><UiIcon name="pencil" size={13}/></button>
+            {onWrongPlace && i.drawer && <button type="button" className="recall-icon" aria-label="Move…" title="Wrong place: move it" onClick={() => onWrongPlace({ id: i.id, text: i.preview ?? '', drawerId: i.nowIn ?? i.drawer! })}><UiIcon name="move" size={13}/></button>}
+            <button type="button" className="recall-icon" aria-label="Move to Trash" title="Move to Trash (undo)" disabled={s.busy} onClick={() => void c.trash(turnKey, i.id)}><UiIcon name="trash" size={13}/></button></>}
+          {i.kind === 'memory' && i.state === 'deleted' && s.trashed?.key === turnKey && s.trashed.memoryId === i.id && <button type="button" className="link-button" disabled={s.busy} onClick={() => void c.untrash()}>Undo</button>}
         </span>
       </div>)}
       {s.notes[turnKey] && <span className="fine-print" role="status">{s.notes[turnKey]}</span>}
@@ -64,7 +66,7 @@ export function RecallPanel({ c, turnKey, onWrongPlace }: { c: ChatRecallControl
     {correcting && <form className="recall-correct" aria-label="Correct a memory" onSubmit={e => { e.preventDefault(); void c.correct(); }}>
       <h3>Correct: “{oneLine(fixing?.preview ?? '')}”</h3>
       <input aria-label="Corrected fact" dir="auto" value={correcting.text} maxLength={50000} onChange={e => c.editCorrect(e.target.value)}/>
-      <span className="actions"><button type="submit" className="primary" disabled={s.busy || !correcting.text.trim()}>Send to Review</button><button type="button" onClick={() => c.cancel()}>Cancel</button><span className="fine-print">The fix waits in Review with this reply as the reason.</span></span>
+      <span className="actions"><button type="submit" className="primary" disabled={s.busy || !correcting.text.trim()}>Send fix</button><button type="button" onClick={() => c.cancel()}>Cancel</button><span className="fine-print">The fix waits in Needs you with this reply as the reason.</span></span>
     </form>}
   </>;
 }

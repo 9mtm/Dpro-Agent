@@ -41,6 +41,8 @@ function backend() {
     if (r.path === '/api/memory/cache/metrics') return twice(200, { process: { since: '2026-10-21T07:00:00.000Z', caches: { pack: { hits: 8, misses: 2, hitRate: 0.8 }, recall: { hits: 5, misses: 5, hitRate: 0.47 }, embedding: { hits: 90, misses: 9, hitRate: 0.91 } }, packChars: { last: 12000, avg: 12400, samples: 10 }, ttftMs: { last: 1200, p50: 1400, p90: 3200, samples: 10 } }, recent: { turns: 50, packHitRate: 0.82, avgPackChars: 12400, avgPromptTokens: 3100, ttftMs: { p50: 1400, p90: 3200 } }, budget: { numCtx: 32768, promptTokens: 8192, summaryTokens: 1500, keepAlive: '30m' } });
     if (r.path.startsWith('/api/memory/access/agents')) return twice(200, { scope: 'company', column: 'project', mode: 'read', count: 5, total: 9, agents: [], nextCursor: null });
     if (r.path.startsWith('/api/memory/scopes/search')) return twice(200, { hits: [] });
+    if (r.path === `/api/memory/${MID}` && r.method === 'DELETE') return { status: 200, body: { success: true } };
+    if (r.path === `/api/memory/${MID}/restore`) return { status: 200, body: { id: MID, restored: true } };
     if (r.path === '/api/memory/m-2/move') return twice(200, { memory: { id: 'm-2' }, from: 'project:flowxtra', to: r.body.drawer });
     if (r.path === `/api/handoffs/conversation/${CONV}` && r.method === 'PUT') return twice(200, { handoff: { ...handoff, ...r.body, version: 4, source: 'owner', createdAt: '2026-10-21T09:00:00.000Z' } });
     return { status: 404, body: null };
@@ -49,22 +51,22 @@ function backend() {
 }
 const turn = { key: MSG, role: 'assistant', runId: null, status: 'complete' };
 
-test('a reply shows "Remembered N" and what it used; Correct goes to review, Forget asks first (board M5)', async () => {
+test('a reply shows "Used N memories" and what it used; Correct goes to Needs you, Move to Trash has Undo (boards M5, M28)', async () => {
   const { client, calls } = backend();
   const c = new ChatRecallController(client);
   c.setConversation(CONV);
   await c.ensure(turn); await c.ensure(turn);
   assert.equal(calls.filter(r => r.path.endsWith(MSG)).length, 1, 'each trace is read once');
-  assert.match(renderToStaticMarkup(React.createElement(RecallChip, { c, turn })), /Remembered 6 ⌄/);
+  assert.match(renderToStaticMarkup(React.createElement(RecallChip, { c, turn })), /Used 6 memories/);
   c.toggle(MSG);
   const html = renderToStaticMarkup(React.createElement(RecallPanel, { c, turnKey: MSG, onWrongPlace: () => {} }));
   for (const words of ['What this reply used', 'In the order it was loaded', '>Topic<', 'صار ما يشرب شاي، بس قهوة بدون سكر.', 'About you', '>Map<', 'Projects · flowxtra', '>Handoff<', 'Handoff · this chat', '>Pinned<', 'Projects · flowxtra · pinned fact', 'Never name a competitor.',
-    '>Meaning<', 'score 0.82', '>changed<', '(forgotten since this reply)', 'was in People · sara', '>forgotten<', 'Correct', 'Wrong place', 'Forget',
+    '>Meaning<', 'score 0.82', '>changed<', '(forgotten since this reply)', 'was in People · sara', '>forgotten<', 'aria-label="Correct"', 'aria-label="Move…"', 'aria-label="Move to Trash"',
     'Drawers open for this reply: About you, Projects · flowxtra. Not loaded: People · sara, Projects · tel-agent.'])
     assert.ok(html.includes(words), words);
   c.startCorrect(MSG, MID, 'Coffee without sugar.');
   const fix = renderToStaticMarkup(React.createElement(RecallPanel, { c, turnKey: MSG }));
-  assert.ok(fix.includes('Correct: “صار ما يشرب شاي، بس قهوة بدون سكر.”') && fix.includes('Send to Review') && fix.includes('The fix waits in Review with this reply as the reason.'));
+  assert.ok(fix.includes('Correct: “صار ما يشرب شاي، بس قهوة بدون سكر.”') && fix.includes('Send fix') && fix.includes('The fix waits in Needs you with this reply as the reason.'));
   await c.correct();
   assert.deepEqual(calls.find(r => r.path.endsWith('/correct')).body, { memoryId: MID, content: 'Coffee without sugar.' });
   assert.match(c.getSnapshot().notes[MSG], /Memory › Review/);
@@ -117,7 +119,20 @@ test('a reply that used nothing still shows its chip when a drawer was closed to
   const client = { request: async r => ({ status: 200, body: memoryRecallResponse(r.path, 200, { trace: blocked }) }) };
   const c = new ChatRecallController(client);
   c.setConversation(CONV); await c.ensure(turn);
-  assert.match(renderToStaticMarkup(React.createElement(RecallChip, { c, turn })), /Remembered 0/);
+  assert.match(renderToStaticMarkup(React.createElement(RecallChip, { c, turn })), /Used 0 memories/);
   c.toggle(MSG);
   assert.ok(renderToStaticMarkup(React.createElement(RecallPanel, { c, turnKey: MSG })).includes('Drawers open for this reply: Lessons. Not loaded: About you (no access).'));
+});
+
+test('Move to Trash from a reply sends one DELETE, marks the memory, and Undo restores it (board M28 H1)', async () => {
+  const { client, calls } = backend();
+  const c = new ChatRecallController(client);
+  c.setConversation(CONV); await c.ensure(turn); c.toggle(MSG);
+  await c.trash(MSG, MID);
+  assert.ok(calls.some(r => r.method === 'DELETE' && r.path === `/api/memory/${MID}`));
+  assert.equal(c.trace(MSG).items[0].state, 'deleted'); assert.match(c.getSnapshot().notes[MSG], /Moved to Trash/);
+  assert.match(renderToStaticMarkup(React.createElement(RecallPanel, { c, turnKey: MSG })), />Undo</);
+  await c.untrash();
+  assert.equal(c.trace(MSG).items[0].state, 'active'); assert.equal(c.getSnapshot().trashed, null); assert.match(c.getSnapshot().notes[MSG], /Back where it was/);
+  c.dispose();
 });

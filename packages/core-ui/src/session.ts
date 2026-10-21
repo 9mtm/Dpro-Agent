@@ -19,6 +19,7 @@ import { allowedMemoryPages, memoryPagesRoute, memoryPagesResponse } from './mem
 import { allowedMemoryRecall, memoryRecallRoute, memoryRecallResponse } from './memory-recall-contract.js';
 import { allowedMemoryBridge, memoryBridgeRoute, memoryBridgeResponse } from './memory-bridge-contract.js';
 import { allowedDiscovery, discoveryRoute, discoveryResponse } from './discovery-contract.js';
+import { allowedMemoryDesktop, memoryDesktopRoute, memoryDesktopResponse } from './memory-desktop-contract.js';
 import { allowedTerminal, terminalPath, terminalRoute, terminalResponse, TerminalEventParser, TERMINAL_STREAM_MS } from './terminal-contract.js';
 import type { TerminalFrame } from './terminal-contract.js';
 import { allowedConversation, conversationPath, conversationRoute, conversationResponse, RunEventParser, RUN_IDLE_MS, RUN_STREAM_MS } from './conversation-contract.js';
@@ -73,6 +74,7 @@ export function allowedRequest(method: string, path: string, body?: unknown): bo
   if (mcpImportPath(path)) return allowedMcpImport(method,path,body);
   if (templatePath(path)) return allowedTemplates(method,path,body);
   if (skillLibraryPath(path)) return allowedSkillLibrary(method,path,body);
+  if (memoryDesktopRoute(path)) return allowedMemoryDesktop(method, path, body);
   if (memoryPagesRoute(path)) return allowedMemoryPages(method, path, body);
   if (memoryRecallRoute(path)) return allowedMemoryRecall(method, path, body);
   if (memoryBridgeRoute(path)) return allowedMemoryBridge(method, path, body);
@@ -146,6 +148,7 @@ function projectResponse(path: string, response: WireResponse): WireResponse {
   if (chatSearchRoute(path)) return { status: response.status, body: chatSearchResponse(path, response.status, response.body) };
   if (chatExportRoute(path)) return { status: response.status, body: chatExportResponse(path, response.status, response.body) };
   if (chatSecretsRoute(path)) return { status: response.status, body: chatSecretsResponse(path, response.status, response.body) };
+  if (memoryDesktopRoute(path)) return { status: response.status, body: memoryDesktopResponse(path, response.status, response.body) };
   if (memoryPagesRoute(path)) return { status: response.status, body: memoryPagesResponse(path, response.status, response.body) };
   if (memoryRecallRoute(path)) return { status: response.status, body: memoryRecallResponse(path, response.status, response.body) };
   if (memoryBridgeRoute(path)) return { status: response.status, body: memoryBridgeResponse(path, response.status, response.body) };
@@ -395,7 +398,7 @@ export class SessionClient {
     if ((conversationRoute(request.path) || chatSearchRoute(request.path) || chatExportRoute(request.path) || chatSecretsRoute(request.path)) && this.#state.user?.role === 'guest') throw new SessionFailure('blocked');
     if (request.path === CLEANUP_PATH && this.#state.user?.role !== 'owner') throw new SessionFailure('blocked');
     if ((request.path === '/api/chat/project-folders' || approvalRoute(request.path) || connectionsRoute(request.path) || templatePath(request.path) || mcpImportPath(request.path) || channelRoute(request.path) || connectorRoute(request.path) || localImportRoute(request.path) || chatBoardRoute(request.path) || chatMemoryRoute(request.path)) && this.#state.user?.role !== 'owner') throw new SessionFailure('blocked');
-    if ((memoryPagesRoute(request.path) || memoryRecallRoute(request.path) || memoryBridgeRoute(request.path) || discoveryRoute(request.path)) && this.#state.user?.role !== 'owner') throw new SessionFailure('blocked');
+    if ((memoryDesktopRoute(request.path) || memoryPagesRoute(request.path) || memoryRecallRoute(request.path) || memoryBridgeRoute(request.path) || discoveryRoute(request.path)) && this.#state.user?.role !== 'owner') throw new SessionFailure('blocked');
     if (terminalRoute(request.path) && (this.#state.user?.role !== 'owner' || terminalPath(request.path)?.kind === 'stream')) throw new SessionFailure('blocked');
     if (request.method === 'PUT' && !conversationRoute(request.path) && this.#state.user?.role !== 'owner') throw new SessionFailure('blocked');
     if (request.method === 'POST' && request.path.startsWith('/api/memory/') && this.#state.user?.role !== 'owner') throw new SessionFailure('blocked');

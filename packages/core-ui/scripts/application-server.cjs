@@ -28,6 +28,7 @@ const { allowedMemoryPages, memoryPagesRoute, memoryPagesResponse } = require('.
 const { allowedMemoryRecall, memoryRecallRoute, memoryRecallResponse } = require('../src/memory-recall-contract.js');
 const { allowedMemoryBridge, memoryBridgeRoute, memoryBridgeResponse } = require('../src/memory-bridge-contract.js');
 const { allowedDiscovery, discoveryRoute, discoveryResponse } = require('../src/discovery-contract.js');
+const { allowedMemoryDesktop, memoryDesktopRoute, memoryDesktopResponse } = require('../src/memory-desktop-contract.js');
 const { validChatBody, validKey, validId, chatError, SSEParser, CHAT_BYTES, CHAT_DEADLINE_MS, CHAT_IDLE_MS } = require('../src/chat-protocol.js');
 const http = require('node:http');
 const { performance } = require('node:perf_hooks');
@@ -68,6 +69,7 @@ function allowed(method, target, body) {
   if (mcpImportPath(target)) return allowedMcpImport(method,target,body);
   if (templatePath(target)) return allowedTemplates(method,target,body);
   if (skillLibraryPath(target)) return allowedSkillLibrary(method,target,body);
+  if (memoryDesktopRoute(target)) return allowedMemoryDesktop(method, target, body);
   if (memoryPagesRoute(target)) return allowedMemoryPages(method, target, body);
   if (memoryRecallRoute(target)) return allowedMemoryRecall(method, target, body);
   if (memoryBridgeRoute(target)) return allowedMemoryBridge(method, target, body);
@@ -138,6 +140,7 @@ function project(target, status, body) {
   if (chatSearchRoute(target)) return chatSearchResponse(target, status, body);
   if (chatExportRoute(target)) return chatExportResponse(target, status, body);
   if (chatSecretsRoute(target)) return chatSecretsResponse(target, status, body);
+  if (memoryDesktopRoute(target)) return memoryDesktopResponse(target, status, body);
   if (memoryPagesRoute(target)) return memoryPagesResponse(target, status, body);
   if (memoryRecallRoute(target)) return memoryRecallResponse(target, status, body);
   if (memoryBridgeRoute(target)) return memoryBridgeResponse(target, status, body);

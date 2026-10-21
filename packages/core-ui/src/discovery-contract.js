@@ -8,8 +8,8 @@ const record = x => typeof x === 'object' && x !== null && !Array.isArray(x);
 const str = (x, max) => (typeof x === 'string' ? x.slice(0, max) : null);
 const n = x => (Number.isSafeInteger(x) && x >= 0 ? x : 0);
 export const DISCOVERY_PATH = '/api/memory/import/discovery';
-export const DISCOVERY_KINDS = ['memory', 'note', 'tool', 'skill', 'mcp', 'ssh'];
-export const FILE_KINDS = ['notes', 'tools', 'skills', 'mcp', 'ssh'];
+export const DISCOVERY_KINDS = ['memory', 'note', 'tool', 'skill', 'mcp', 'ssh', 'design', 'database'];
+export const FILE_KINDS = ['notes', 'tools', 'skills', 'mcp', 'ssh', 'design', 'databases'];
 export const DISCOVERY_STATES = ['new', 'changed', 'decision', 'imported', 'ignored', 'gone'];
 export const MAX_DISCOVERY_IMPORT = 100;
 

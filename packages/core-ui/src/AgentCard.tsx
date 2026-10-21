@@ -18,6 +18,7 @@ const TABS: { key: CardTab; label: string }[] = [
   // Board M6: Memory next to the persona; tools and MCP together; drawer and action permissions under Access.
   { key: 'profile', label: 'Profile' }, { key: 'persona', label: 'Persona' }, { key: 'memory', label: 'Memory' }, { key: 'skills', label: 'Skills' }, { key: 'mcp', label: 'Tools & MCP' }, { key: 'permissions', label: 'Access' },
 ];
+const VIEWS: { label: string; tabs: CardTab[] }[] = [{ label: 'Profile', tabs: ['profile', 'persona'] }, { label: 'Memory', tabs: ['memory'] }, { label: 'Skills and tools', tabs: ['skills', 'mcp', 'permissions'] }];
 const ROLE_LABEL: Record<string, string> = { '': 'No role', main: 'Main agent', manager: 'Manager', specialist: 'Specialist', evaluator: 'Evaluator' };
 const TRAIT: Record<TraitName, [string, string, string]> = {
   doubt: ['Doubt', 'Trusts quickly', 'Checks everything'], caution: ['Caution', 'Bold', 'Careful'], creativity: ['Creativity', 'Conventional', 'Inventive'],
@@ -56,8 +57,11 @@ export function CardView({ card, agents, personality, onBack, onOpenMemory }: { 
           <p className="agent-card-sub">{[ROLE_LABEL[a?.role ?? ''], a?.department].filter(Boolean).join(' · ')}{s.persona && <> · {s.persona.locked ? 'Persona locked' : `Persona v${s.persona.version}`}</>}</p>
         </div>
       </div>
-      <div className="seg" role="tablist" aria-label="Agent card">{TABS.map(t =>
-        <button key={t.key} type="button" role="tab" aria-selected={s.tab === t.key} onClick={() => void card.openTab(t.key)}>{t.label}</button>)}</div>
+      {/* Board M28 H4: three views (Profile · Memory · Skills and tools); each keeps its parts as a short second row. */}
+      <div className="seg" role="tablist" aria-label="Agent card">{VIEWS.map(v =>
+        <button key={v.label} type="button" role="tab" aria-selected={v.tabs.includes(s.tab)} onClick={() => void card.openTab(v.tabs[0])}>{v.label}</button>)}</div>
+      {(VIEWS.find(v => v.tabs.includes(s.tab))?.tabs.length ?? 0) > 1 && <div className="seg small" role="tablist" aria-label="Parts">{VIEWS.find(v => v.tabs.includes(s.tab))!.tabs.map(k =>
+        <button key={k} type="button" role="tab" aria-selected={s.tab === k} onClick={() => void card.openTab(k)}>{TABS.find(t => t.key === k)!.label}</button>)}</div>}
     </header>
     {s.notice && <p className="card-notice" role="alert">{s.notice}</p>}
     {s.saved && <p className="card-saved" role="status"><UiIcon name="check" size={12}/>{s.saved}</p>}

@@ -34,7 +34,7 @@ export type HandoffKind = 'conversation' | 'task';
 export type ConflictDecision = 'keep_new' | 'keep_old' | 'keep_both';
 export type Health = 'ok' | 'attention' | 'problem';
 export type ScopeCounts = { memories: number; pendingReviews: number; conflicts: number; pinnedFacts: number; lastMemoryAt: string | null; health: Health; reasons: string[] };
-export type TreeProject = ScopeCounts & { slug: string; name: string; departmentId: string; pinned: boolean; archived: boolean; archivedAt: string | null; mergedInto: string | null };
+export type TreeProject = ScopeCounts & { slug: string; name: string; departmentId: string; pinned: boolean; archived: boolean; archivedAt: string | null; mergedInto: string | null; trashedAt?: string; groupId?: string };
 export type ProjectRef = Omit<TreeProject, keyof ScopeCounts> & Partial<ScopeCounts>;
 export type TreeDepartment = ScopeCounts & { id: string; name: string; isDefault: boolean; projects: number; archivedProjects: number };
 export type ScopeTree = {
@@ -79,7 +79,7 @@ export type EntityDetail = { entity: GraphEntity; links: GraphLink[]; timeline: 
 export type Handoff = { id: string; agentId: string; kind: HandoffKind; scopeId: string; projectId: string | null; version: number; source: 'agent' | 'model' | 'fallback' | 'owner'; createdAt: string; done: string[]; left: string[]; next: string[]; questions: string[]; /** The chat or board card name (list only). */ title?: string | null };
 export type CodingHandoff = { id: string; projectId: string; client: 'claude-code' | 'codex' | 'gemini-cli' | 'antigravity'; done: string[]; left: string[]; next: string[]; questions: string[]; createdAt: string };
 export type OwnRules = { routine: RoutineRule | null; important: ImportantRule | null; contradiction: ContradictionRule | null; reviewerAgentId: string | null; weeklyDay: number | null; weeklyHour: number | null; updatedAt: string | null };
-export type ScopeRules = { scope: string; own: OwnRules; effective: { routine: RoutineRule; important: ImportantRule; contradiction: ContradictionRule; from: { routine: string; important: string; contradiction: string }; reviewerAgentId: string | null; weekly: { day: number; hour: number } } };
+export type ScopeRules = { scope: string; own: OwnRules; effective: { routine: RoutineRule; important: ImportantRule; contradiction: ContradictionRule; from: { routine: string; important: string; contradiction: string }; reviewerAgentId: string | null; weekly: { day: number; hour: number }; trashDays: number } };
 export type RulesChange = { scope: string; routine?: RoutineRule | null; important?: ImportantRule | null; contradiction?: ContradictionRule | null; reviewerAgentId?: string | null; weeklyDay?: number | null; weeklyHour?: number | null };
 export type MemoryDetail = {
   id: string; type: string; content: string; drawerId: string; topicKey: string | null; importance: number; layer: string; createdAt: string; sourceAgentId: string | null; source: string | null;

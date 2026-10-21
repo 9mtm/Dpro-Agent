@@ -15,7 +15,7 @@ export type ExplorerState = Readonly<{
   phase: 'idle' | 'loading' | 'ready' | 'error'; notice?: string; busy: boolean;
   scope: string; query: string; meaning: boolean; type: string; topic: '' | 'has' | 'none';
   /** MEM-GAPS-02 filters: who saved it, how important, how recent (days). */
-  source: string; importance: '' | '8-10' | '5-7' | '1-4'; since: '' | '7' | '30' | '90';
+  source: string; agent: string; importance: '' | '8-10' | '5-7' | '1-4'; since: '' | '7' | '30' | '90';
   items: readonly ExplorerItem[]; total: number; nextCursor: string | null; facets: ExplorerPage['facets'];
   open: string | null; versions: readonly MemoryVersion[] | null; full: string | null; detail: MemoryDetail | null;
   editing: boolean; draft: string; draftImportance: number;
@@ -34,7 +34,7 @@ const EMPTY_FACETS = { type: {}, layer: {}, drawer: {} };
 export class MemoryExplorerController extends Store<ExplorerState> {
   #ticket = 0;
   constructor(client: Requester) {
-    super({ phase: 'idle', busy: false, scope: 'company', query: '', meaning: false, type: '', topic: '', source: '', importance: '', since: '', items: [], total: 0, nextCursor: null, facets: EMPTY_FACETS,
+    super({ phase: 'idle', busy: false, scope: 'company', query: '', meaning: false, type: '', topic: '', source: '', agent: '', importance: '', since: '', items: [], total: 0, nextCursor: null, facets: EMPTY_FACETS,
       open: null, versions: null, full: null, detail: null, editing: false, draft: '', draftImportance: 5, moving: false, moveTo: '', confirmForget: false,
       checked: [], bulk: null, bulkTo: '', adding: null }, client);
   }
@@ -42,7 +42,7 @@ export class MemoryExplorerController extends Store<ExplorerState> {
   private path(cursor?: string | null) {
     const s = this.getSnapshot();
     const from = s.since ? new Date(Date.now() - Number(s.since) * 86400000).toISOString().slice(0, 10) : undefined;
-    return '/api/memory/scopes/memories' + queryString({ scope: s.scope, q: s.query.trim().slice(0, 200), type: s.type, topic: s.topic, source: s.source, importance: s.importance, from, cursor: cursor ?? undefined, limit: 50 });
+    return '/api/memory/scopes/memories' + queryString({ scope: s.scope, q: s.query.trim().slice(0, 200), type: s.type, topic: s.topic, source: s.source, agent: s.agent, importance: s.importance, from, cursor: cursor ?? undefined, limit: 50 });
   }
 
   /** First page of the current scope, search and filters (words; the server counts). */
@@ -106,10 +106,15 @@ export class MemoryExplorerController extends Store<ExplorerState> {
   }
   close() { this.publish({ open: null, versions: null, full: null, detail: null, editing: false, moving: false, confirmForget: false }); }
   setSource(source: string) { this.publish({ source }); void this.load(); }
+  setAgent(agent: string) { this.publish({ agent }); void this.load(); }
+  /** Clears every filter at once (the filter popover's Clear). */
+  clearFilters() { this.publish({ type: '', topic: '', source: '', agent: '', importance: '', since: '' }); void this.load(); }
   setImportance(importance: ExplorerState['importance']) { this.publish({ importance }); void this.load(); }
   setSince(since: ExplorerState['since']) { this.publish({ since }); void this.load(); }
   /** After a move made elsewhere (the M13 dialog): the row shows its new drawer. */
   moved(id: string, drawer: string) { const s = this.getSnapshot(); this.publish({ result: `Moved to ${drawerName(drawer)}.`, items: s.items.map(x => (x.id === id ? { ...x, drawerId: drawer } : x)) }); if (s.open === id) void this.openMemory(id); }
+  /** Memories that left this list (moved to Trash elsewhere): drop them and close the panel if one was open. */
+  removed(ids: readonly string[]) { const s = this.getSnapshot(); const gone = new Set(ids); this.publish({ items: s.items.filter(i => !gone.has(i.id)), total: Math.max(0, s.total - s.items.filter(i => gone.has(i.id)).length), checked: s.checked.filter(i => !gone.has(i)), ...(s.open && gone.has(s.open) ? { open: null, versions: null, full: null, detail: null } : {}) }); }
   item(id: string | null) { return id ? this.getSnapshot().items.find(i => i.id === id) ?? null : null; }
 
   startEdit() { const s = this.getSnapshot(); const i = this.item(s.open); if (i) this.publish({ editing: true, moving: false, confirmForget: false, draft: s.full ?? i.preview, draftImportance: Math.max(1, i.importance) }); }
