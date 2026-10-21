@@ -18,26 +18,28 @@ const xtermOptions = (p: TerminalPrefs) => ({
  * (new tab, clear, settings, maximize) and a status line. The look is the
  * owner's saved terminal settings, applied live.
  */
-export function TerminalPane({ tabs, prefs, projectId, maximized, onToggleMax }: { tabs: TerminalTabs; prefs: TerminalPrefsController; projectId: string | null; maximized: boolean; onToggleMax: () => void }) {
+export function TerminalPane({ tabs, prefs, projectId, maximized, onToggleMax, onClose }: { tabs: TerminalTabs; prefs: TerminalPrefsController; projectId: string | null; maximized: boolean; onToggleMax: () => void; onClose?: () => void }) {
   const t = useSyncExternalStore(tabs.subscribe, tabs.getSnapshot, tabs.getSnapshot);
   const p = useSyncExternalStore(prefs.subscribe, prefs.getSnapshot, prefs.getSnapshot);
   const [settings, setSettings] = useState(false);
   const [size, setSize] = useState<Record<string, string>>({});
   const project = useRef<string | null | undefined>(undefined);
   useEffect(() => { void prefs.load(); }, [prefs]);
-  // A different project restarts the shells in its folder; an empty pane opens one shell.
+  // Opening the pane, or a different project, starts one shell in its folder. Closing the
+  // last tab closes the pane instead of starting a new shell.
   useEffect(() => {
     if (project.current !== undefined && project.current !== projectId) tabs.closeAll();
     project.current = projectId;
     if (!tabs.getSnapshot().tabs.length) tabs.add();
-  }, [tabs, projectId, t.tabs.length]);
+  }, [tabs, projectId]);
+  const closeTab = (key: string) => { const last = tabs.getSnapshot().tabs.length === 1; tabs.close(key); if (last) onClose?.(); };
   const active = t.tabs.find(x => x.key === t.active) ?? null;
   const pal = PALETTES[p.theme];
   return <div className="pane terminal-pane" aria-label="Terminal" data-term-dark={pal.dark || undefined}
     style={{ ['--term-bg' as string]: pal.background, ['--term-fg' as string]: pal.foreground }}>
     <div className="term-bar">
       <div className="term-tabs" role="tablist" aria-label="Terminals">
-        {t.tabs.map(x => <TabButton key={x.key} n={x.n} terminal={x.terminal} active={x.key === t.active} onSelect={() => tabs.select(x.key)} onClose={() => tabs.close(x.key)}/>)}
+        {t.tabs.map(x => <TabButton key={x.key} n={x.n} terminal={x.terminal} active={x.key === t.active} onSelect={() => tabs.select(x.key)} onClose={() => closeTab(x.key)}/>)}
         <button type="button" className="term-tool" aria-label="New terminal" title={t.tabs.length >= MAX_TERMINAL_TABS ? `Up to ${MAX_TERMINAL_TABS} terminals` : 'New terminal'}
           disabled={t.tabs.length >= MAX_TERMINAL_TABS} onClick={() => tabs.add()}><UiIcon name="plus" size={12}/></button>
       </div>
@@ -45,6 +47,7 @@ export function TerminalPane({ tabs, prefs, projectId, maximized, onToggleMax }:
         <button type="button" className="term-tool" aria-label="Clear" title="Clear the screen" disabled={!active} onClick={() => active?.terminal.clear()}><UiIcon name="eraser" size={12}/></button>
         <button type="button" className="term-tool" aria-label="Terminal settings" aria-expanded={settings} title="Theme, font and cursor" onClick={() => setSettings(v => !v)}><UiIcon name="gear" size={12}/></button>
         <button type="button" className="term-tool" aria-label={maximized ? 'Restore' : 'Maximize'} title={maximized ? 'Restore' : 'Maximize'} onClick={onToggleMax}><UiIcon name={maximized ? 'shrink' : 'expand'} size={12}/></button>
+        {onClose && <button type="button" className="term-tool" aria-label="Hide terminal" title="Hide terminal (shells keep running)" onClick={onClose}><UiIcon name="close" size={11}/></button>}
       </div>
     </div>
     {settings && <TerminalSettings prefs={prefs} p={p} onClose={() => setSettings(false)}/>}
