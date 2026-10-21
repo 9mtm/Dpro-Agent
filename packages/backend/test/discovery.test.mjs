@@ -240,7 +240,7 @@ test('a command becomes a skill for no agent; don\'t show a kind; kinds a scan r
   v = (await call('GET', BASE)).json();
   assert.ok(!v.items.some((i) => i.kind === 'tool' && i.rootId === shopRoot.id)); assert.deepEqual(v.roots.find((r) => r.id === shopRoot.id).hidden, ['tool']);
   await call('PUT', `${BASE}/roots/${shopRoot.id}/hidden`, { kind: 'tool', on: false });
-  assert.deepEqual((await call('PUT', `${BASE}/kinds`, { ssh: false })).json().kinds, { notes: true, tools: true, skills: true, mcp: true, ssh: false });
+  assert.deepEqual((await call('PUT', `${BASE}/kinds`, { ssh: false })).json().kinds, { notes: true, tools: true, skills: true, mcp: true, ssh: false, design: true, databases: true });
   assert.ok(!(await call('GET', BASE)).json().items.some((i) => i.kind === 'ssh'));
   await call('PUT', `${BASE}/kinds`, { ssh: true });
   assert.equal((await call('PUT', `${BASE}/kinds`, { pdf: true })).statusCode, 400);

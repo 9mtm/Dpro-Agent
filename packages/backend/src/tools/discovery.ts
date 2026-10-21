@@ -39,17 +39,19 @@ async function guarded(context: ToolExecutionContext | undefined, fn: (owner: st
 export const discoveryTool: Tool = {
   name: 'discovery',
   description: `What coding agents left on this computer (read only): Claude Code memory files, project notes (CLAUDE / AGENTS / HANDOFF / BACKLOG.md …), skills, MCP servers and SSH hosts, grouped by project folder.
-action "list" (optional kind: memory | note | skill | mcp | ssh, state: new | changed | decision | imported | ignored | gone, project_id, limit): items with where each would go in Dpro.
+action "list" (optional kind: memory | note | skill | mcp | ssh | design | database, or kinds: [...], state: new | changed | decision | imported | ignored | gone, project_id, limit): items with where each would go in Dpro.
 action "scan": read the computer again now.
 action "preview" (item_id): the item's redacted text and its previewHash.
 action "places" (optional parent_id): the folders and drives the owner can allow, with their state (allowed, left out, inherited).
-Private keys, .env files and secrets are never read or shown. To import, ignore, remove or keep an item, call discovery_apply (the owner approves the call).`,
+A project's design (colours, fonts, logos, rules) and local databases (names and SQLite table names only) join the project on their own.
+Private keys, .env files (except DB_* connection names) and secrets are never read or shown. To import, ignore, remove or keep an item, call discovery_apply (the owner approves the call).`,
   input_schema: {
     type: 'object',
     properties: {
       action: { type: 'string', enum: ['list', 'scan', 'preview', 'places'] },
       parent_id: { type: 'string' },
       kind: { type: 'string', enum: [...D.DISCOVERY_KINDS] },
+      kinds: { type: 'array', items: { type: 'string', enum: [...D.DISCOVERY_KINDS] }, description: 'Only these kinds (e.g. memory, note, design, database for memory sources)' },
       state: { type: 'string', enum: ['new', 'changed', 'decision', 'imported', 'ignored', 'gone'] },
       project_id: { type: 'string' },
       item_id: { type: 'string' },
@@ -62,7 +64,8 @@ Private keys, .env files and secrets are never read or shown. To import, ignore,
       if (params.action === 'list' || params.action === 'scan') {
         const v = await D.view(owner, { rescan: params.action === 'scan' });
         const limit = typeof params.limit === 'number' ? Math.max(1, Math.min(500, Math.floor(params.limit))) : 50;
-        const items = v.items.filter((i) => (!params.kind || i.kind === params.kind) && (!params.state || i.state === params.state) && (!params.project_id || (i.rootId ?? 'computer') === params.project_id)).slice(0, limit);
+        const kinds = Array.isArray(params.kinds) ? params.kinds.filter((k): k is string => typeof k === 'string') : null;
+        const items = v.items.filter((i) => (!params.kind || i.kind === params.kind) && (!kinds || kinds.includes(i.kind)) && (!params.state || i.state === params.state) && (!params.project_id || (i.rootId ?? 'computer') === params.project_id)).slice(0, limit);
         const roots = v.roots.map((r) => `${r.name} (${r.id}) ${r.count} items, ${r.fresh} new`).join('; ');
         const text = `${v.items.length} items in ${v.roots.length} places. Projects: ${roots}\n${items.map((i) => `- ${i.id} [${i.kind}] ${i.name} · ${i.state} · → ${i.to}`).join('\n') || 'Nothing matches.'}`;
         return ok(text, { scannedAt: v.scannedAt, roots: v.roots, items });
@@ -92,7 +95,7 @@ action "set_watch" (enabled, interval_minutes 15 | 30 | 60): read the computer a
 action "set_project_watch" (project_id, enabled): stop or start watching one project folder.
 action "set_places" (allow?, deny?, exclude?: place ids from discovery "places"): allow several folders at once, take allowed ones back, leave subfolders out.
 action "add_place" (path): allow a folder or drive by its full path.
-action "set_kinds" (kinds: { notes?, tools?, skills?, mcp?, ssh? }): which kinds a scan reads.
+action "set_kinds" (kinds: { notes?, tools?, skills?, mcp?, ssh?, design?, databases? }): which kinds a scan reads.
 action "hide_kind" (project_id, kind, on): don't show one kind from one project (or show it again).
 action "merge" (name, project_ids): show several project folders as one project (the folders stay where they are).
 action "separate" (group_id): show a merged project's folders apart again.

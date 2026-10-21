@@ -19,7 +19,7 @@ import os from 'node:os';
 import path from 'node:path';
 import { q } from '../repositories/sql-steps.js';
 
-export const FILE_KINDS = ['notes', 'tools', 'skills', 'mcp', 'ssh'] as const;
+export const FILE_KINDS = ['notes', 'tools', 'skills', 'mcp', 'ssh', 'design', 'databases'] as const;
 export type FileKind = (typeof FILE_KINDS)[number];
 export type Kinds = Record<FileKind, boolean>;
 export type PlaceState = 'allow' | 'exclude' | null;
@@ -163,7 +163,7 @@ export async function countFolder(p: string, limit = 50_000, ms = 4000): Promise
 }
 
 // ---- kinds and "don't show" ----
-const DEFAULT_KINDS: Kinds = { notes: true, tools: true, skills: true, mcp: true, ssh: true };
+const DEFAULT_KINDS: Kinds = { notes: true, tools: true, skills: true, mcp: true, ssh: true, design: true, databases: true };
 export async function kinds(userId: string): Promise<Kinds> {
   await initPlaces();
   const r = await q.one<{ kinds: string }>('SELECT kinds FROM discovery_kinds WHERE user_id = ?', userId);

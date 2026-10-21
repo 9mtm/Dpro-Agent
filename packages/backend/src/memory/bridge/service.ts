@@ -4,11 +4,12 @@
  *
  *   owner        status, kill switch per CLI, managed files (preview -> confirm),
  *                registration (preview -> confirm -> undo), back-flow, sync
- *   MCP server   read tools (project_brief, pinned_facts, latest_handoff, memory_search)
+ *   MCP server   read tools (project_brief, pinned_facts, latest_handoff, memory_search, project_design)
  *                and write tools that only create review proposals (memory_propose)
  *                or handoff notes (handoff_write), for the project whose folder the
  *                CLI runs in; nothing for a folder Dpro does not know
  */
+import { designBlock, getDesign } from '../project-design.js';
 import os from 'node:os';
 import type { Project } from '../../repositories/chat-conversations.js';
 import { findProject, listProjects } from '../../repositories/chat-conversations.js';
@@ -198,7 +199,7 @@ export async function syncOwner(ownerId: string): Promise<{ written: number; pro
 
 // --- MCP server ------------------------------------------------------------
 
-export const MCP_TOOLS = ['project_brief', 'pinned_facts', 'latest_handoff', 'memory_search', 'memory_propose', 'handoff_write'] as const;
+export const MCP_TOOLS = ['project_brief', 'pinned_facts', 'latest_handoff', 'memory_search', 'project_design', 'memory_propose', 'handoff_write'] as const;
 export type McpTool = (typeof MCP_TOOLS)[number];
 
 /** Session start of the MCP server: install proof -> the CLI's token (only while the CLI is on). */
@@ -247,6 +248,12 @@ export async function mcpCall(c: unknown, token: unknown, cwd: unknown, tool: un
       const hits = await getMemoryStorage().search({ userId: ownerId, query, drawers: [projectDrawer(project)], limit } as any);
       const results = hits.slice(0, limit).map((h) => ({ id: h.memory.id, content: clean(h.memory.content), score: Number(h.similarity.toFixed(3)) }));
       return { text: results.length ? results.map((r) => `- ${r.content}`).join('\n') : 'Nothing found in this project.', data: { results } };
+    }
+    case 'project_design': {
+      // DESIGN-FIND-01: the design Dpro found for this project (the same text as DESIGN.md's Dpro section).
+      const v = await getDesign(ownerId, projectDrawer(project).key!).catch(() => null);
+      const has = !!v && (v.colours.length + v.fonts.length + v.logos.length + v.rules.length) > 0;
+      return { text: has ? designBlock(v!) : 'Dpro has not found a design for this project yet.', data: { colours: v?.colours.length ?? 0, fonts: v?.fonts.length ?? 0, logos: v?.logos.length ?? 0, rules: v?.rules.length ?? 0, conflicts: v?.conflicts.length ?? 0 } };
     }
     case 'memory_propose': {
       const content = typeof a.content === 'string' ? a.content.trim() : '';

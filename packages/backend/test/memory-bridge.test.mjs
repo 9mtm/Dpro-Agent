@@ -375,7 +375,7 @@ test('the real stdio server starts the way a CLI starts it, lists its tools and 
   const c = new Client({ name: 'stdio-test', version: '1' });
   await c.connect(transport);
   const tools = (await c.listTools()).tools.map((t) => t.name).sort();
-  assert.deepEqual(tools, ['handoff_write', 'latest_handoff', 'memory_propose', 'memory_search', 'pinned_facts', 'project_brief']);
+  assert.deepEqual(tools, ['handoff_write', 'latest_handoff', 'memory_propose', 'memory_search', 'pinned_facts', 'project_brief', 'project_design']);
   const r = await c.callTool({ name: 'project_brief', arguments: {} });
   assert.ok(r.isError);
   assert.match(r.content[0].text, /Cannot reach Dpro/);

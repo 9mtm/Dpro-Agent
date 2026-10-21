@@ -3,7 +3,8 @@
  * /api/memory/import*) and only from this computer (loopback), like the other
  * local imports. Every change is audited.
  *
- *   GET  /api/memory/import/discovery                  projects, items, settings (scans when nothing was read yet)
+ *   GET  /api/memory/import/discovery[?kinds=a,b]      projects, items, settings (scans when nothing was read yet); kinds = only these
+ *                                                      (memory, note, tool, skill, mcp, ssh, design, database)
  *   POST /api/memory/import/discovery/scan             read again now
  *   PUT  /api/memory/import/discovery/settings         { watch, intervalMinutes: 15 | 30 | 60 }
  *   PUT  /api/memory/import/discovery/roots/:id        { watch } one project folder
@@ -56,9 +57,18 @@ export async function discoveryRoutes(fastify: FastifyInstance, options: D.Disco
     return reply.code(500).send({ code: 'discovery_failed' });
   };
 
+  // ?kinds=memory,note,design,database — each section asks for its own kinds (Memory › Sources, Skills, MCP, Terminal).
+  const kindsOf = (request: FastifyRequest): string[] | undefined | null => {
+    const raw = (request.query as Record<string, unknown> | undefined)?.kinds;
+    if (raw === undefined || raw === '') return undefined;
+    const list = typeof raw === 'string' ? raw.split(',').map((k) => k.trim()).filter(Boolean) : null;
+    return list && list.length && list.every((k) => (D.DISCOVERY_KINDS as readonly string[]).includes(k)) ? list : null;
+  };
   fastify.get(BASE, { config }, async (request, reply) => {
     const a = owner(request, reply); if (!a) return reply;
-    try { return await D.view(a.userId!, options); } catch (e) { return fail(reply, e); }
+    const kinds = kindsOf(request);
+    if (kinds === null) return reply.code(400).send({ code: 'invalid_input' });
+    try { return await D.view(a.userId!, { ...options, ...(kinds ? { kinds } : {}) }); } catch (e) { return fail(reply, e); }
   });
   fastify.post(`${BASE}/scan`, { config }, async (request, reply) => {
     const a = owner(request, reply); if (!a) return reply;

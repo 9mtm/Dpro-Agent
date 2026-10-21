@@ -17,6 +17,15 @@
  *   PATCH  /api/memory/groups/:id                   { name?, label?, shareWithin? } -> { group }
  *   DELETE /api/memory/groups/:id                   -> { id, projects } (the projects stay)
  *   PUT    /api/memory/groups/:id/projects          { projects: [slugs] } -> { group }
+ * A project's design (DESIGN-FIND-01; found and added by "Found on this computer")
+ *   GET   /api/memory/projects/:slug/design           { colours, fonts, logos, rules, sources, conflicts, writeFile, file, canUndo, … }
+ *   PATCH /api/memory/projects/:slug/design           { mainLogo?, notLogo?, mainColour?, writeFile? } (logo = its id or shown path)
+ *   POST  /api/memory/projects/:slug/design/undo      the last automatic change goes back
+ *   GET   /api/memory/projects/:slug/design/logos/:id the image itself (preview only)
+ *   GET   /api/memory/projects/design-conflicts       open design questions of every project (Needs you)
+ * A project's databases (PROJECT-TECH-01; metadata + SQLite table names only)
+ *   GET   /api/memory/projects/:slug/databases        { databases, access: [{ agentId, level }], defaultLevel }
+ *   PATCH /api/memory/projects/:slug/databases        { agentId, level: exists | tables | data | null }
  *
  * Errors: 400 { error, code }, 404 not_found, 409 (no_change, not_in_trash, name_taken, too_many).
  */
@@ -30,6 +39,9 @@ import { actorOrReply, requireOwner } from '../../repositories/scope.js';
 import { ScopeInputError } from '../../memory/scopes/store.js';
 import { createGroup, deleteGroup, listGroups, setGroupProjects, updateGroup } from '../../memory/scopes/groups.js';
 import { emptyTrash, listTrash, restoreMemory, restoreProject, trashProject } from '../../memory/trash.js';
+import { designConflicts, getDesign, logoFile, patchDesign, undoDesign } from '../../memory/project-design.js';
+import { getDatabases, setDatabaseAccess } from '../../memory/project-databases.js';
+import { readRegularFile } from '../../services/read-regular-file.js';
 
 function body(request: FastifyRequest): Record<string, unknown> {
   const b = request.body;
@@ -110,5 +122,36 @@ export async function memoryDesktopRoutes(fastify: FastifyInstance) {
     const group = await setGroupProjects(owner.userId!, param(request, 'id'), body(request).projects);
     audit(request, owner, 'memory_group.projects', 'memory_group', group.id, { projects: group.projects, shareWithin: group.shareWithin });
     return { group };
+  });
+
+  // ---- A project's design ----
+  route('GET', '/api/memory/projects/design-conflicts', async (owner) => ({ conflicts: await designConflicts(owner.userId!) }));
+  route('GET', '/api/memory/projects/:slug/design', async (owner, request) => getDesign(owner.userId!, param(request, 'slug')));
+  route('PATCH', '/api/memory/projects/:slug/design', async (owner, request) => {
+    const b = body(request);
+    const design = await patchDesign(owner.userId!, param(request, 'slug'), b);
+    audit(request, owner, 'memory_project.design', 'memory_project', design.project, { fields: Object.keys(b), writeFile: design.writeFile });
+    return design;
+  });
+  route('POST', '/api/memory/projects/:slug/design/undo', async (owner, request) => {
+    const design = await undoDesign(owner.userId!, param(request, 'slug'));
+    audit(request, owner, 'memory_project.design_undo', 'memory_project', design.project, {});
+    return design;
+  });
+  route('GET', '/api/memory/projects/:slug/design/logos/:id', async (owner, request, reply) => {
+    const { file, type } = await logoFile(owner.userId!, param(request, 'slug'), param(request, 'id'));
+    let data: Buffer;
+    try { data = (await readRegularFile(file, 5 * 1024 * 1024)).data; } catch { throw new ScopeInputError('Logo not found', 404, 'not_found'); }
+    // Preview only: an SVG never runs scripts or loads anything from here.
+    return reply.header('content-type', type).header('x-content-type-options', 'nosniff')
+      .header('content-security-policy', "default-src 'none'; style-src 'unsafe-inline'; img-src data:; sandbox").header('cache-control', 'no-store').send(data);
+  });
+
+  // ---- A project's databases ----
+  route('GET', '/api/memory/projects/:slug/databases', async (owner, request) => getDatabases(owner.userId!, param(request, 'slug')));
+  route('PATCH', '/api/memory/projects/:slug/databases', async (owner, request) => {
+    const out = await setDatabaseAccess(owner.userId!, param(request, 'slug'), body(request), owner.userId!);
+    audit(request, owner, 'memory_project.database_access', 'memory_project', out.project, { agentId: out.agentId, level: out.level });
+    return out;
   });
 }
