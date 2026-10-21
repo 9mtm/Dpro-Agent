@@ -8,7 +8,7 @@
 import type { Tool, ToolResult } from '../types.js';
 import type { MemoryType } from '../../memory/types.js';
 import type { ToolExecutionContext } from '../types.js';
-import { toolMemoryUser } from './scope.js';
+import { toolMemoryUser, toolOwnerTurn } from './scope.js';
 import { repositories } from '../../repositories/index.js';
 import { toolMemoryActor } from '../../repositories/actor.js';
 import { isUserConversation, linkAgentProposal } from '../../services/chat-memory.js';
@@ -170,10 +170,13 @@ Examples:
       // CHAT-PRO-02 E: in a saved chat conversation the owner decides every
       // memory in the chat (Accept / Reject); nothing is saved by itself.
       const chat = context?.chatPlan === true && !context.toolPolicy && await isUserConversation(context.userId, context.sessionId);
+      // MEM-OWNER-01: in a board task run (no owner turn) a topic_key save could
+      // overwrite one of the owner's memories: it waits for the owner instead.
+      const boardTopic = !toolOwnerTurn(context) && params.topic_key !== undefined && params.topic_key !== null && params.topic_key !== '';
       const outcome = await repositories.memory.learn(actor, {
         candidates: [{ content: params.content, type, importance, drawer, ...(params.topic_key !== undefined ? { topicKey: params.topic_key } : {}) }],
         metadata: { ...params.metadata, tags: params.tags || [], savedAt: new Date().toISOString() },
-        ...(chat ? { review: true } : {}),
+        ...(chat || boardTopic ? { review: true } : {}),
       });
       const memory = outcome.saved[0];
       const proposal = outcome.proposed[0];

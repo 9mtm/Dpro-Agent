@@ -2,7 +2,9 @@
 // run's owner (user_id = owner); the agent is recorded as source_agent_id, as
 // in the owner's chats. Every access check stays: open drawers, write kinds,
 // review rules (important facts wait for the owner as proposals); owner-only
-// memory tools stay refused in a board run (no owner turn).
+// memory tools stay refused in a board run (no owner turn); there the agent
+// edits/deletes only memories it saved, never forgets, and a topic_key save
+// waits for the owner.
 // In process: a stubbed Claude API (no network), throwaway DB/keys/HOME, a
 // dead OLLAMA_URL (no local model is ever reached).
 // Run: node --import tsx --test test/task-run-memory-owner.test.mjs
@@ -151,4 +153,32 @@ test('owner-only memory tools stay refused in a board run (no owner turn)', asyn
   assert.equal(results.length, 2, results.join(' | '));
   for (const r of results) assert.match(r, /refused|only for the owner|owner/i, r);
   assert.doesNotMatch(results[0], /"ok"|issues/i, results[0]);
+});
+
+test('a board run cannot change or erase the owner\'s other memories; topic saves wait for the owner', async () => {
+  const r = await app.inject({ method: 'POST', url: '/api/memory', headers: { authorization: `Bearer ${generateToken(OWNER, 1)}` },
+    payload: { type: 'fact', importance: 4, content: 'The owner likes green tea', topicKey: 'owner-drink' } });
+  assert.equal(r.statusCode, 200, r.body);
+  const ownerMem = r.json().memory.id;
+  const own = db.prepare('SELECT id FROM memories WHERE content = ?').get('The weekly report goes out on Fridays').id;
+  await grants.setAgentGrants(WRITER, { grants: ['memory_save', 'memory_search', 'memory_doctor', 'memory_review', 'memory_edit', 'memory_delete', 'memory_forget'] }, OWNER, avail);
+  SCRIPTS.GUARD = [
+    ['memory_edit', { id: ownerMem, content: 'The owner likes coffee' }],
+    ['memory_save', { content: 'The owner likes black coffee', type: 'fact', importance: 4, topic_key: 'owner-drink' }],
+    ['memory_edit', { id: own, content: 'The weekly report goes out on Thursdays' }],
+  ];
+  const { results } = await boardRun(WRITER, 'GUARD');
+  assert.equal(results.length, 3, results.join(' | '));
+  assert.match(results[0], /only memories this agent saved/, results[0]);
+  assert.match(results[1], /Waiting for owner approval|proposal/i, results[1]);
+  // memory_delete / memory_forget wait for an approval first; the approved call runs with the board-run context.
+  const T = await import(join(backendDir, 'src/tools/memory/index.ts'));
+  const boardCtx = { workspaceDir: dir, userId: WRITER, agentId: WRITER, accessOwnerId: OWNER, sessionId: 'cron-x' };
+  assert.match((await T.memoryDeleteTool.execute({ id: ownerMem }, boardCtx)).content[0].text, /only memories this agent saved/);
+  assert.match((await T.memoryForgetTool.execute({ id: ownerMem }, boardCtx)).content[0].text, /owner's own turn/);
+  const kept = db.prepare('SELECT content, status FROM memories WHERE id = ?').get(ownerMem);
+  assert.equal(kept?.content, 'The owner likes green tea', 'owner memory unchanged');
+  assert.equal(kept.status, 'active');
+  assert.match(results[2], /updated/i, results[2]);
+  assert.equal(db.prepare('SELECT content FROM memories WHERE id = ?').get(own).content, 'The weekly report goes out on Thursdays', 'its own memory can be corrected');
 });

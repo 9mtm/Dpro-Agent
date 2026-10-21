@@ -9,14 +9,28 @@
  */
 
 import type { Tool, ToolResult, ToolExecutionContext } from '../types.js';
-import { toolMemoryUser } from './scope.js';
+import { toolMemoryUser, toolOwnerTurn } from './scope.js';
+import { one, sql } from '../../repositories/sql-steps.js';
 import type { AgentChangeResult } from '../../memory/learning.js';
 import { repositories } from '../../repositories/index.js';
 import { toolMemoryActor } from '../../repositories/actor.js';
 import { ScopeError } from '../../repositories/scope.js';
 
+/**
+ * MEM-OWNER-01: in a board task run (no owner turn) the agent changes only
+ * memories it saved itself; the owner's other memories are not its to change.
+ */
+async function boardRunRefusal(context: ToolExecutionContext | undefined, memoryId: string): Promise<string | null> {
+  if (toolOwnerTurn(context)) return null;
+  const row = await sql().read(one<{ source_agent_id: string | null }>('SELECT source_agent_id FROM memories WHERE id = ? AND user_id = ?', memoryId, toolMemoryUser(context)));
+  return row && row.source_agent_id && row.source_agent_id === context?.agentId ? null
+    : "in a board task run only memories this agent saved can be changed; ask the owner";
+}
+
 /** B1.6: the memory repository reaches only the run user's memories in open drawers. */
 async function change(context: ToolExecutionContext | undefined, input: Parameters<typeof repositories.memory.change>[1]): Promise<AgentChangeResult> {
+  const refused = await boardRunRefusal(context, input.memoryId);
+  if (refused) return { status: 'refused', reason: refused };
   try {
     return await repositories.memory.change(await toolMemoryActor(context), input);
   } catch (err) {
