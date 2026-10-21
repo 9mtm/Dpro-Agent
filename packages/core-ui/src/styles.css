@@ -1673,7 +1673,7 @@ button.status-item:hover { background:var(--row-hover); color:var(--text); }
 .app-shell .page-ui .mem-menu button.danger, .link-button.danger { color:var(--danger); }
 .mem-tabs-row { display:flex; align-items:flex-end; gap:8px; flex-wrap:wrap; }
 .mem-tabs-row .pane-tabs { margin-inline-end:auto; }
-.mem-head-search { inline-size:min(320px,100%); margin-block-end:6px; }
+.mem-head-search { inline-size:min(260px,100%); margin-block-end:6px; }
 .mem-tabs-row > button { margin-block-end:6px; }
 .mem-panel { flex:1; overflow:auto; padding:18px 24px 32px; min-block-size:0; container-type:inline-size; }
 .mem-home { display:grid; grid-template-columns:minmax(0,1fr) 300px; gap:16px; align-items:start; }
@@ -1860,3 +1860,26 @@ button.status-item:hover { background:var(--row-hover); color:var(--text); }
 .mem-secret-note { padding:10px 12px; border-radius:8px; background:var(--mem-ok-bg); color:var(--mem-ok); font-size:12.5px; }
 @container (max-width: 980px) { .mem-health-grid { grid-template-columns:minmax(0,1fr) minmax(0,1fr); } }
 @container (max-width: 640px) { .mem-health-grid { grid-template-columns:minmax(0,1fr); } }
+/* MEM-UI-01 (board M9): access by inheritance */
+.mem-access { display:grid; gap:12px; }
+.mem-access-head { display:flex; align-items:flex-end; justify-content:space-between; gap:12px; flex-wrap:wrap; }
+.app-shell .page-ui .mem-access-head h3 { margin:0; font-size:18px; }
+.mem-access-body { display:grid; grid-template-columns:minmax(0,1fr) 340px; gap:16px; align-items:start; }
+.mem-access-main { display:grid; gap:10px; min-inline-size:0; }
+.mem-grid { display:grid; border-radius:10px; overflow:hidden; box-shadow:inset 0 0 0 1px var(--border); font-size:12.5px; }
+.mem-grid-row { display:grid; grid-template-columns:minmax(150px,1.6fr) repeat(5,minmax(0,1fr)); border-block-start:1px solid var(--border); }
+.mem-grid-head { background:var(--surface); color:var(--text-2); font-weight:600; border-block-start:0; }
+.mem-grid-head > span { padding:9px 10px; }
+.mem-grid-level { display:grid; gap:1px; padding:8px 10px; }
+.mem-grid-row[data-own] .mem-grid-level { background:var(--row-hover); }
+.app-shell .page-ui .mem-grid-cell { justify-self:stretch; justify-content:center; border-radius:0; box-shadow:none; background:transparent; color:var(--text-3); font-size:12.5px; }
+.app-shell .page-ui .mem-grid-cell[data-own] { color:var(--text); font-weight:700; background:var(--row-active); }
+.app-shell .page-ui .mem-grid-cell:hover:not(:disabled) { background:var(--row-hover); }
+.mem-templates { display:grid; grid-template-columns:repeat(3,minmax(0,1fr)); gap:10px; }
+.mem-template { display:grid; gap:4px; padding:10px 12px; border-radius:8px; background:var(--canvas); box-shadow:inset 0 0 0 1px var(--border); font-size:12.5px; }
+.app-shell .page-ui .mem-check-agent { box-shadow:inset 0 0 0 1px color-mix(in srgb,var(--accent) 50%,var(--border)); font-size:12.5px; }
+.app-shell .page-ui .mem-preview { background:var(--mem-warn-bg); box-shadow:inset 0 0 0 1px var(--mem-warn-line); font-size:12.5px; }
+.app-shell .page-ui .mem-preview h3 { color:var(--mem-warn); }
+.mem-sample { margin:0; padding-inline-start:18px; font-size:12px; display:grid; gap:2px; }
+.mem-exception { gap:10px; }
+@container (max-width: 900px) { .mem-access-body { grid-template-columns:minmax(0,1fr); } .mem-templates { grid-template-columns:repeat(2,minmax(0,1fr)); } }

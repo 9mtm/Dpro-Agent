@@ -18,6 +18,8 @@ import { MemoryMapController } from './memory-map';
 import { KnowledgeMap } from './MemoryMap';
 import { MemoryHealthController } from './memory-health';
 import { HealthView } from './MemoryHealth';
+import { MemoryAccessController } from './memory-access';
+import { AccessView } from './MemoryAccess';
 
 const KIND_LABEL: Record<string, string> = { owner: 'About you', experience: 'Lessons', project: 'Project', task: 'Task', people: 'Person' };
 const KIND_PLURAL: Record<string, string> = { project: 'Projects', task: 'Tasks', people: 'People' };
@@ -59,7 +61,7 @@ export function MemoryCard({ item, actions, children, focused }: { item: MemoryI
  * archived) and the open scope on the right with its views: Overview (the
  * memory home for Everything), Review, Explorer and Import.
  */
-export type MemoryTab = 'home' | 'review' | 'explorer' | 'map' | 'health' | 'import';
+export type MemoryTab = 'home' | 'review' | 'explorer' | 'map' | 'access' | 'health' | 'import';
 export function MemoryPage({ client, active = false, focus }: { client: SessionClient; active?: boolean; focus?: MemoryFocus | null }) {
   const [tab, setTab] = useState<MemoryTab>('home');
   const owner = useSyncExternalStore(client.subscribe, client.getSnapshot, client.getSnapshot).user?.role === 'owner';
@@ -69,6 +71,9 @@ export function MemoryPage({ client, active = false, focus }: { client: SessionC
   useEffect(() => { const x = new MemoryScopesController(client); setScopes(x); return () => x.dispose(); }, [client]);
   const [review, setReview] = useState<MemoryReviewController>();
   const [map, setMap] = useState<MemoryMapController>();
+  const [access, setAccess] = useState<MemoryAccessController>();
+  useEffect(() => { const x = new MemoryAccessController(client); setAccess(x); return () => x.dispose(); }, [client]);
+  useEffect(() => { if (active && access && owner && tab === 'access') void access.load(); }, [active, access, owner, tab]);
   const [health, setHealth] = useState<MemoryHealthController>();
   useEffect(() => { const x = new MemoryHealthController(client); setHealth(x); return () => x.dispose(); }, [client]);
   useEffect(() => { if (active && health && owner && tab === 'health') void health.load(); }, [active, health, owner, tab]);
@@ -93,15 +98,16 @@ export function MemoryPage({ client, active = false, focus }: { client: SessionC
     if (scope.startsWith('_')) { scopes.toggle(scope); return; }
     if (scope.startsWith('people:') || scope.startsWith('agent:')) { setTab('explorer'); setExplorerView('table'); c?.setScope(scope); return; }
     scopes.select(scope);
-    if (tab === 'explorer') c?.setScope(scope); else if (tab !== 'review' && tab !== 'import') setTab('home');
+    // The explorer and Access follow the scope; the other views stay where they are.
+    if (tab === 'explorer') c?.setScope(scope);
   }
   function go(next: 'review' | 'explorer' | 'health' | 'import' | 'map' | 'access', drawer?: string) {
-    if (next === 'review' || next === 'explorer' || next === 'import' || next === 'map' || next === 'health') setTab(next);
+    if (next === 'review' || next === 'explorer' || next === 'import' || next === 'map' || next === 'health' || next === 'access') setTab(next);
     if (next === 'explorer' && c) { setExplorerView('table'); c.setQuery(''); c.setScope(drawer === 'owner' || drawer === 'experience' ? drawer : s?.scope ?? 'company'); }
   }
   const waiting = s?.tree?.company.pendingReviews;
   const tabs: { value: MemoryTab; label: string }[] = [
-    { value: 'home', label: s && s.scope !== 'company' ? 'Overview' : 'Home' }, { value: 'review', label: waiting ? `Review · ${waiting}` : 'Review' }, { value: 'explorer', label: 'Explorer' }, { value: 'map', label: 'Map' }, { value: 'health', label: 'Health & rules' },
+    { value: 'home', label: s && s.scope !== 'company' ? 'Overview' : 'Home' }, { value: 'review', label: waiting ? `Review · ${waiting}` : 'Review' }, { value: 'explorer', label: 'Explorer' }, { value: 'map', label: 'Map' }, { value: 'access', label: 'Access' }, { value: 'health', label: 'Health & rules' },
     ...(owner ? [{ value: 'import' as const, label: 'Import' }] : []),
   ];
   return <section className="mem" aria-label="Memory">
@@ -130,6 +136,7 @@ export function MemoryPage({ client, active = false, focus }: { client: SessionC
             : c ? <Explorer c={c} agents={s?.agents ?? {}}/> : null}
         </>}
         {tab === 'map' && map && <KnowledgeMap c={map} onOpenMemories={name => { if (!c) return; setTab('explorer'); setExplorerView('table'); c.setQuery(name); c.setScope('company'); }}/>}
+        {tab === 'access' && access && <AccessView c={access} scope={s?.scope.startsWith('project:') || s?.scope.startsWith('department:') ? s.scope : 'company'} tree={s?.tree ?? null}/>}
         {tab === 'health' && health && <HealthView c={health} conflicts={s?.tree ? s.tree.company.conflicts : null} onReview={() => setTab('review')} onFiles={() => { setTab('explorer'); setExplorerView('files'); }}/>}
         {tab === 'import' && <LocalImport client={client} active={active} onReview={() => setTab('review')}/>}
         {tab === 'review' && review && <ReviewInbox c={review}/>}
