@@ -159,13 +159,18 @@ test('skill ids and marketplace paths cannot traverse out of the skills director
   assert.equal(install.statusCode, 400);
 });
 
-test('valid marketplace install writes only inside .data/skills; uninstall never deletes outside it', async () => {
+test('legacy marketplace install refuses; uninstall never deletes outside its existing skill directory', async () => {
   const res = await call('POST', '/api/skills/marketplace/install', 'u-admin', { skillName: 'pdf', skillPath: 'skills/document/pdf' });
-  assert.equal(res.statusCode, 200, res.body);
-  assert.deepEqual(fetched, ['skills/document/pdf']);
-  assert.ok(existsSync(join(dir, '.data', 'skills', 'pdf.md')));
-  const row = db.prepare(`SELECT id FROM installed_skills WHERE skill_name = 'pdf'`).get();
-  assert.ok(row);
+  assert.equal(res.statusCode, 409, res.body);
+  assert.equal(res.json().code, 'reviewed_install_required');
+  assert.deepEqual(fetched, []);
+  assert.ok(!existsSync(join(dir, '.data', 'skills', 'pdf.md')));
+  assert.equal(db.prepare("SELECT id FROM installed_skills WHERE skill_name = 'pdf'").get(), undefined);
+  // Seed historical state explicitly to retain uninstall path-boundary coverage.
+  const legacyFile=join(process.cwd(),'.data','skills','pdf.md');mkdirSync(join(process.cwd(),'.data','skills'),{recursive:true});writeFileSync(legacyFile,'Fictional legacy PDF guide');
+  const legacySource=db.prepare("SELECT id FROM skill_sources WHERE name='Anthropic Official'").get();
+  db.prepare("INSERT INTO installed_skills(source_id,skill_name,file_path) VALUES(?,'pdf',?)").run(legacySource.id,legacyFile);
+  const row=db.prepare("SELECT id FROM installed_skills WHERE skill_name='pdf'").get();assert.ok(row);
 
   // A row whose stored path points outside the skills directory: the file stays.
   const outside = join(dir, 'keep-me.md');

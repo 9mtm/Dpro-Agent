@@ -3,7 +3,7 @@ import { safeConsole } from './safe-error-log.js';
  * Anthropic Skills Service
  *
  * Integrates with Anthropic's official skills repository on GitHub
- * to browse, search, and install Claude Skills.
+ * to browse/search skills and maintain existing legacy installations.
  */
 
 import { dataPathOr } from '../config/data-root.js';
@@ -40,6 +40,12 @@ interface SkillMetadata {
   author?: string;
   version?: string;
   tags?: string[];
+}
+
+export const SKILL_INSTALL_REVIEW_REQUIRED = 'reviewed_install_required';
+export class SkillInstallReviewRequiredError extends Error {
+  readonly code = SKILL_INSTALL_REVIEW_REQUIRED;
+  constructor() { super('Skill installation requires an exact content review and owner verification.'); }
 }
 
 export class AnthropicSkillsService {
@@ -237,77 +243,12 @@ export class AnthropicSkillsService {
     };
   }
 
-  /**
-   * Install a skill locally
-   */
+  /** Legacy entry cannot install mutable remote content or enable a skill automatically. */
   async installSkill(skillName: string, skillPath: string): Promise<string> {
-
-    // SECURITY (S0-Q.19): the name becomes a local file name, the path a repo path.
     if (!isValidSkillName(skillName) || !isValidSkillSourcePath(skillPath)) {
       throw new Error('Invalid skill name or path');
     }
-
-    try {
-      safeConsole.log(`[AnthropicSkills] 📦 Installing skill: ${skillName} from path: ${skillPath}`);
-
-      // 1. Fetch skill content from GitHub
-      console.log(`[AnthropicSkills] 📥 Fetching content from GitHub...`);
-      const content = await this.fetchSkillContent(skillPath);
-      console.log(`[AnthropicSkills] ✅ Content fetched, size: ${content.length} bytes`);
-
-      // 2. Parse metadata
-      console.log(`[AnthropicSkills] 📋 Parsing metadata...`);
-      const metadata = this.parseSkillMetadata(content);
-      console.log(`[AnthropicSkills] ✅ Metadata parsed:`, metadata);
-
-      // 3. Ensure local skills directory exists
-      await fs.mkdir(LOCAL_SKILLS_DIR, { recursive: true });
-
-      // 4. Save SKILL.md locally
-      const fileName = `${skillName}.md`;
-      const localPath = path.join(LOCAL_SKILLS_DIR, fileName);
-      if (!isInsideLocalSkillsDir(localPath)) {
-        throw new Error('Invalid skill name');
-      }
-      await fs.writeFile(localPath, content, 'utf-8');
-      console.log(`[AnthropicSkills] ✅ File saved to: ${localPath}`);
-
-      // 5. Get Anthropic source ID
-      const source = await q.one<{ id: string }>(`SELECT id FROM skill_sources WHERE name = 'Anthropic Official'`);
-
-      if (!source) {
-        throw new Error('Anthropic source not found in database');
-      }
-      console.log(`[AnthropicSkills] ✅ Source ID: ${source.id}`);
-
-      // 6. Insert into database
-      const category = this.extractCategoryFromPath(skillPath);
-      safeConsole.log(`[AnthropicSkills] 💾 Saving to database with category: ${category}`);
-
-      await q.run(`
-        INSERT INTO installed_skills (
-          source_id, skill_name, display_name, description,
-          category, file_path, metadata, is_enabled
-        ) VALUES (?, ?, ?, ?, ?, ?, ?, 1)
-        ON CONFLICT(source_id, skill_name)
-        DO UPDATE SET
-          file_path = excluded.file_path,
-          metadata = excluded.metadata`,
-        source.id,
-        skillName,
-        metadata.name,
-        metadata.description,
-        category,
-        localPath,
-        JSON.stringify(metadata)
-      );
-
-      console.log(`[AnthropicSkills] ✅ Skill installed successfully!`);
-      return localPath;
-    } catch (error) {
-      console.error(`[AnthropicSkills] ❌ Error installing skill ${skillName}:`, error);
-      throw error;
-    }
+    throw new SkillInstallReviewRequiredError();
   }
 
   /**

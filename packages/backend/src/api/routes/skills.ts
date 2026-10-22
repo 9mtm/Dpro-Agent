@@ -391,7 +391,7 @@ export async function skillsRoutes(fastify: FastifyInstance) {
     }
   });
 
-  // POST /api/skills/marketplace/install - Install skill from Anthropic
+  // POST /api/skills/marketplace/install - Refuse legacy installation without exact review
   fastify.post<{ Body: { skillName: string; skillPath: string } }>(
     '/api/skills/marketplace/install',
     async (request, reply) => {
@@ -413,15 +413,11 @@ export async function skillsRoutes(fastify: FastifyInstance) {
           return reply.status(400).send({ success: false, error: 'Invalid skillName or skillPath' });
         }
 
-        const localPath = await anthropicSkillsService.installSkill(skillName, skillPath);
-
-        console.log('[Skills Marketplace] ✅ Skill installed:', { skillName, localPath });
-
-        return {
-          success: true,
-          message: `Skill "${skillName}" installed successfully`,
-          localPath,
-        };
+        return reply.status(409).send({
+          success: false,
+          code: 'reviewed_install_required',
+          error: 'Skill installation requires an exact content review and owner verification.',
+        });
       } catch (error: any) {
         // SECURITY: never echo error.message (H-09); details stay in the server log.
         return handleError(reply, error, 'internal', '[Skills Marketplace] Install failed');

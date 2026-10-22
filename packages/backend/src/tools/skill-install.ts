@@ -1,7 +1,7 @@
 /**
  * Skill Install Tool
  *
- * Allows AI agents to search for and install Claude Skills from Anthropic
+ * Allows agents to search skills and list existing installations
  */
 
 import type { ToolResult } from './types.js';
@@ -9,14 +9,9 @@ import { anthropicSkillsService } from '../services/anthropic-skills-service.js'
 
 export const skillInstallTool = {
   name: 'skill_install',
-  description: `Search for and install Claude Skills from Anthropic's official repository.
-
-Use this tool when the user asks to:
-- Install a specific skill (e.g., "install pdf skill")
-- Search for available skills (e.g., "what skills are available for Excel?")
-- Get skills for a specific task (e.g., "get me a skill for web testing")
-
-The tool will search Anthropic's repository, find matching skills, and install them automatically.`,
+  description: `Search available skills and list existing installed skills.
+Installation requires a separate exact content review and owner verification.
+The legacy install action returns reviewed_install_required and never downloads or installs a skill.`,
 
   input_schema: {
     type: 'object' as const,
@@ -26,7 +21,7 @@ The tool will search Anthropic's repository, find matching skills, and install t
         enum: ['search', 'install', 'list_installed'],
         description: `Action to perform:
 - "search": Search for skills matching a query
-- "install": Install a specific skill by name
+- "install": Report the required reviewed installation workflow
 - "list_installed": List all currently installed skills`,
       },
       query: {
@@ -128,7 +123,7 @@ The tool will search Anthropic's repository, find matching skills, and install t
             alreadyInstalled: false,
           })),
           message: `Found ${matches.length} available skill(s) matching "${query}". Showing top 10.`,
-          hint: `To install, use: skill_install with action="install", query="<skill-name>", skillPath="<path>"`,
+          hint: 'Installation requires an exact content review and owner verification.',
         });
       }
 
@@ -141,14 +136,11 @@ The tool will search Anthropic's repository, find matching skills, and install t
           });
         }
 
-        const localPath = await anthropicSkillsService.installSkill(query, skillPath);
-
         return JSON.stringify({
-          success: true,
+          success: false,
           action: 'install',
-          skillName: query,
-          localPath,
-          message: `✅ Skill "${query}" installed successfully! It's now available for use.`,
+          code: 'reviewed_install_required',
+          error: 'Skill installation requires an exact content review and owner verification.',
         });
       }
 
