@@ -33,3 +33,20 @@ test('invalid identifiers never reach transport; disabled installation permits h
  const invalid=fixture(async()=>{throw Error('unexpected');});for(const id of ['../one','\ud800','',null])await invalid.c.select(id);assert.equal(invalid.calls.length,0);assert.equal(invalid.c.getSnapshot().phase,'unavailable');
  const f=fixture(async r=>({status:200,body:r.path.endsWith('availability')?{...availability,state:'disabled'}:account('one')}));await f.c.select('one');assert.equal(f.c.getSnapshot().phase,'ready');assert.equal(f.c.getSnapshot().availability.executeOrders,false);assert.equal(f.c.getSnapshot().availability.state,'disabled');
 });
+test('discovery exposes immutable descriptors without auto-selection and rejects absent selection',async()=>{
+ const f=fixture(async r=>({status:200,body:r.path.endsWith('availability')?availability:r.path==='/api/trading-paper/accounts'?{mode:'paper',accounts:[{accountId:'one',currency:'USD',appEnabled:true,stopped:false}],hasMore:false}:account('one')}));
+ await f.c.load();assert.equal(f.c.getSnapshot().phase,'ready');assert.equal(f.c.getSnapshot().account,null);assert.equal(f.c.getSnapshot().accountId,null);assert.ok(Object.isFrozen(f.c.getSnapshot().accounts[0]));const before=f.calls.length;await f.c.select('other');assert.equal(f.calls.length,before);await f.c.select('one');assert.equal(f.c.getSnapshot().accountId,'one');f.signout();assert.equal(f.c.getSnapshot().accounts,null);
+});
+test('discovery distinguishes empty and truncated lists and refuses unprovisioned reads',async()=>{
+ for(const size of [0,100]){const f=fixture(async r=>({status:200,body:r.path.endsWith('availability')?availability:{mode:'paper',accounts:Array.from({length:size},(_,i)=>({accountId:'a'+i,currency:'USD',appEnabled:true,stopped:false})),hasMore:size===100}}));await f.c.load();assert.equal(f.c.getSnapshot().accounts.length,size);assert.equal(f.c.getSnapshot().hasMore,size===100);assert.equal(f.c.getSnapshot().accountId,null);}
+ const f=fixture(async()=>({status:200,body:{...availability,state:'not_provisioned',readAccounts:false}}));await f.c.load();assert.equal(f.calls.length,1);assert.equal(f.c.getSnapshot().phase,'unavailable');assert.equal(f.c.getSnapshot().accounts,null);
+});
+test('delayed discovery cannot overwrite a newer load or expose accounts after logout',async()=>{
+ let release,started;const wait=new Promise(r=>release=r),ready=new Promise(r=>started=r);let count=0;
+ const f=fixture(async r=>{if(r.path.endsWith('availability'))return {status:200,body:availability};const first=++count===1;if(first){started();await wait;}return {status:200,body:{mode:'paper',accounts:first?[{accountId:'stale',currency:'USD',appEnabled:true,stopped:false}]:[],hasMore:false}};});const old=f.c.load();await ready;await f.c.load();release();await old;assert.equal(f.c.getSnapshot().phase,'ready');assert.deepEqual(f.c.getSnapshot().accounts,[]);f.signout();assert.equal(f.c.getSnapshot().accounts,null);await f.c.load();assert.equal(f.c.getSnapshot().phase,'closed');
+});
+
+test('logout during discovery rejects late private account list',async()=>{
+ let release,started;const wait=new Promise(r=>release=r),ready=new Promise(r=>started=r);
+ const f=fixture(async r=>{if(r.path.endsWith('availability'))return {status:200,body:availability};started();await wait;return {status:200,body:{mode:'paper',accounts:[{accountId:'private',currency:'USD',appEnabled:true,stopped:false}],hasMore:false}};});const pending=f.c.load();await ready;f.signout();release();await pending;assert.equal(f.c.getSnapshot().phase,'closed');assert.equal(f.c.getSnapshot().accounts,null);
+});
