@@ -22,9 +22,9 @@ test('access projection bounds permissions and strips arbitrary connector fields
  const preview=templatesResponse(P+'/'+id+'/preview',200,{revision:1,confirmation:'a'.repeat(64),agents:[{id:'main-agent',name:'Lina'}],changes:[{field:'instructions',before:'old',after:'new'}],private:'secret'});assert.equal(preview.changes[0].after,'new');assert.doesNotMatch(JSON.stringify(preview),/secret/);
 });
 test('shared editor renders plain-text sources, safe Markdown and no textarea',()=>{
- const content='# Guide\n<script>alert(1)</script>\n\n```html\n<img src=x onerror=alert(1)>\n```';
+ const content='# Guide\n<script>alert(1)</script>\n<SCRIPT>alert(2)</SCRIPT>\n\n```html\n<img src=x onerror=alert(1)>\n```';
  const editor=renderToStaticMarkup(React.createElement(DocumentEditor,{title:'Instructions',files:[{id:'main',name:'SKILL.md',content},{id:'ref',name:'references/policy.md',content:'# Rules'}],onChange(){},onClose(){}}));assert.doesNotMatch(editor,/<textarea/);assert.match(editor,/Document outline/);assert.match(editor,/Markdown preview/);assert.match(editor,/Find and replace/);assert.match(editor,/SKILL.md/);
- const html=renderToStaticMarkup(React.createElement(MarkdownDocument,{text:content}));assert.match(html,/&lt;script&gt;/);assert.doesNotMatch(html,/<script>|<img src=x/);assert.match(html,/data-line="0"/);
+ const html=renderToStaticMarkup(React.createElement(MarkdownDocument,{text:content}));assert.match(html,/&lt;script&gt;/);assert.match(html,/&lt;SCRIPT&gt;/);assert.doesNotMatch(html,/<script\b|<img\s+src=x/i);assert.match(html,/data-line="0"/);
 });
 
 
