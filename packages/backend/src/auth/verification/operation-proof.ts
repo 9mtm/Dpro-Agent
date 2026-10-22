@@ -85,13 +85,19 @@ export async function completeOperationChallenge(token:unknown,context:Operation
  });
  return accepted?{receipt,expiresAt}:null;
 }
-/** Caller MUST run this step with its own action CAS in the same sql().tx transaction. */
-export function* consumeOperationReceiptStep(receipt:unknown,context:OperationContext,operation:VerificationOperation,now=Date.now()):Step<boolean>{
+/** Read-only proof check; does not authorize an action or replace final transactional consumption. */
+export function* verifyOperationReceiptStep(receipt:unknown,context:OperationContext,operation:VerificationOperation,now=Date.now()):Step<boolean>{
  const b=binding(context,operation,now);
  if(typeof receipt!=='string'||!/^[A-Za-z0-9_-]{43}$/.test(receipt))return false;
  if(!(yield* currentContext(context)))return false;
  const d=yield* dialect();
  const row=yield* one<{user_id:string;session_hash:string;operation_hash:string;token_version:number;factor_version:number;expires_at:number;consumed_at:number|null}>(`SELECT * FROM verification_receipts WHERE token_hash=?${forUpdate(d)}`,hash(receipt));
  if(!row||row.consumed_at!==null||Number(row.expires_at)<=now||row.user_id!==context.userId||row.session_hash!==context.sessionHash||row.operation_hash!==b.operationHash||Number(row.token_version)!==context.tokenVersion||Number(row.factor_version)!==context.factorVersion)return false;
- return (yield* run('UPDATE verification_receipts SET consumed_at=? WHERE token_hash=? AND consumed_at IS NULL AND expires_at>?',now,hash(receipt),now)).changes===1;
+ return true;
+}
+
+/** Caller MUST consume in the action transaction; verification alone grants no authority. */
+export function* consumeOperationReceiptStep(receipt:unknown,context:OperationContext,operation:VerificationOperation,now=Date.now()):Step<boolean>{
+ if(!(yield* verifyOperationReceiptStep(receipt,context,operation,now)))return false;
+ return (yield* run('UPDATE verification_receipts SET consumed_at=? WHERE token_hash=? AND consumed_at IS NULL AND expires_at>?',now,hash(receipt as string),now)).changes===1;
 }

@@ -8,6 +8,7 @@ import {forUpdate} from '../db/pg/dialect.js';
 import {prepareSkillArtifactReview} from './skill-artifact.js';
 export class SkillReviewStageError extends Error{constructor(readonly code:'invalid'|'forbidden'|'changed'|'unavailable'|'limit'){super('Skill review '+code);}}
 type Review=ReturnType<typeof prepareSkillArtifactReview>;
+export type SkillReviewRead=Readonly<{id:string;expiresAt:number;reviewHash:string;policyVersion:number;review:Review}>;
 type StageRow={id:string;owner_id:string;session_hash:string;token_version:number;factor_version:number;policy_version:number;created_at:number;expires_at:number;target_id:string|null;review_json:string;review_hash:string};
 const digest=(text:string)=>createHash('sha256').update(text).digest('hex');
 function capture(context:OperationContext,actor:Actor,now:number){
@@ -41,9 +42,8 @@ export async function stageSkillReview(context:OperationContext,actor:Actor,inpu
   return Object.freeze({id,expiresAt,reviewHash,policyVersion,review});
  });
 }
-export async function readSkillReview(context:OperationContext,actor:Actor,id:string,now=Date.now()){
+export function* readSkillReviewStep(context:OperationContext,actor:Actor,id:string,now=Date.now()):Step<SkillReviewRead>{
  const owner=capture(context,actor,now);if(typeof id!=='string'||!/^[a-f0-9-]{36}$/.test(id))throw new SkillReviewStageError('invalid');
- return sql().tx(function*(){
   const policyVersion=yield* active(owner),row=yield* one<StageRow>('SELECT * FROM skill_install_reviews WHERE id=? AND owner_id=?',id,owner.userId);
   if(!row||row.session_hash!==owner.sessionHash||Number(row.token_version)!==owner.tokenVersion||Number(row.factor_version)!==owner.factorVersion)throw new SkillReviewStageError('unavailable');
   if(Number(row.policy_version)!==policyVersion||Number(row.created_at)>now||Number(row.expires_at)<=now||Number(row.expires_at)-Number(row.created_at)!==300000)throw new SkillReviewStageError('changed');
@@ -54,5 +54,11 @@ export async function readSkillReview(context:OperationContext,actor:Actor,id:st
   Object.freeze(review.operation.source);Object.freeze(review.operation.target);Object.freeze(review.operation.bundle);Object.freeze(review.operation);
   for(const file of review.bundle.files)Object.freeze(file);Object.freeze(review.bundle.files);Object.freeze(review.bundle);Object.freeze(review);
   return Object.freeze({id,expiresAt:Number(row.expires_at),reviewHash:row.review_hash,policyVersion,review});
- });
+}
+
+export async function readSkillReview(context:OperationContext,actor:Actor,id:string,now=Date.now()){
+ return sql().tx(()=>readSkillReviewStep(context,actor,id,now));
+}
+export function* skillReviewOwnerStep(context:OperationContext,actor:Actor,now:number):Step<number>{
+ return yield* active(capture(context,actor,now));
 }
