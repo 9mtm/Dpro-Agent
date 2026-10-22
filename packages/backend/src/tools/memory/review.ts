@@ -38,9 +38,9 @@ import { ScopeInputError, acceptRoutine, assignedReviews, previewAcceptRoutine, 
 const fail = (tool: string, msg: string): ToolResult => ({ content: [{ type: 'text', text: `${tool} refused: ${msg}` }], error: msg });
 const ok = (text: string, data: Record<string, unknown>): ToolResult => ({ content: [{ type: 'text', text }], data: { success: true, ...data } } as ToolResult);
 /** The run's review view: open drawers, and the drawer kinds it may write (MEM-GAPS-02). */
-const runLimit = (context?: ToolExecutionContext) => {
+const runLimit = (context?: ToolExecutionContext, writing=false) => {
   const write = toolMemoryWriteKinds(context);
-  return { drawers: toolMemoryDrawers(context).map(drawerId), ...(write ? { writeKinds: write } : {}) };
+  return { drawers: toolMemoryDrawers(context).filter(d=>!writing||!d.readOnly).map(drawerId), ...(write ? { writeKinds: write } : {}) };
 };
 const oneLine = (s: string, n = 300) => { const t = String(s ?? '').replace(/\s+/g, ' ').trim(); return t.length > n ? `${t.slice(0, n - 1)}…` : t; };
 
@@ -112,7 +112,7 @@ Only the memory drawers open for this conversation are read.`,
         return ok(text, { groups });
       }
       if (params?.op === 'preview_routine') {
-        const p = await previewAcceptRoutine(owner, { scope: params.scope, agent: params.agent }, runLimit(context));
+        const p = await previewAcceptRoutine(owner, { scope: params.scope, agent: params.agent }, runLimit(context,true));
         return ok(`${p.count} routine review(s) would be accepted. To accept them, call memory_review_routine with the same scope/agent and previewHash ${p.previewHash} (the owner approves the call).`, p as unknown as Record<string, unknown>);
       }
     } catch (err) {
@@ -150,6 +150,7 @@ if the proposal changed since, nothing happens.`,
     if (typeof params.proposal_id !== 'string' || !params.proposal_id) return fail('memory_review_decide', 'proposal_id is required');
     const c = (await openConflicts(owner, context)).find((x) => x.id === params.proposal_id);
     if (!c) return fail('memory_review_decide', 'no pending conflict with that id in the open drawers');
+    if(toolMemoryDrawers(context).some(d=>d.readOnly&&drawerId(d)===c.drawer))return fail('memory_review_decide','shared project memory is read-only');
     const write = toolMemoryWriteKinds(context);
     const kind = c.drawer.split(':')[0];
     if (params.decision !== 'keep_old' && write && !write.includes(kind as never)) return fail('memory_review_decide', `this agent may not write the ${kind} drawer`);
@@ -187,7 +188,7 @@ important facts, imports and file edits are never accepted this way.`,
     if (typeof owner !== 'string') return fail('memory_review_routine', owner.refused);
     try {
       // The owner's approval of this call is the explicit confirm; the previewHash binds it to the list shown.
-      const out = await acceptRoutine(owner, { scope: params.scope, agent: params.agent, expectedPreviewHash: params.preview_hash }, `agent:${context?.agentId ?? 'unknown'}`, runLimit(context));
+      const out = await acceptRoutine(owner, { scope: params.scope, agent: params.agent, expectedPreviewHash: params.preview_hash }, `agent:${context?.agentId ?? 'unknown'}`, runLimit(context,true));
       audit(context, 'memory_proposal.accept_routine', 'memory_proposal', owner, { approved: out.approved.length, skipped: out.skipped.length });
       return ok(`Accepted ${out.approved.length} routine review(s)${out.skipped.length ? `; ${out.skipped.length} changed meanwhile and were left` : ''}.`, out as unknown as Record<string, unknown>);
     } catch (err) {
@@ -215,7 +216,7 @@ after the owner approves this call. approve: recall may use the link; reject: it
     if (params.decision !== 'approve' && params.decision !== 'reject') return fail('memory_graph_review', 'decision must be approve or reject');
     if (typeof params.link_id !== 'string' || !params.link_id) return fail('memory_graph_review', 'link_id is required');
     // Only a pending link that comes from a memory of the open drawers.
-    const pending = await listLinks({ userId: owner, drawers: toolMemoryDrawers(context) }, { status: 'pending', limit: 1000 });
+    const pending = await listLinks({ userId: owner, drawers: toolMemoryDrawers(context).filter(d=>!d.readOnly) }, { status: 'pending', limit: 1000 });
     const link = pending.find((l) => l.id === params.link_id);
     if (!link) return fail('memory_graph_review', 'no pending link with that id in the open drawers');
     const res = await decideLink(owner, link.id, params.decision, `agent:${context?.agentId ?? 'unknown'}`);

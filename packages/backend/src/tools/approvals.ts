@@ -45,6 +45,7 @@ export const APPROVAL_REQUIRED_TOOLS: Readonly<Record<string, ApprovalCategory>>
   memory_scope_forget: 'delete', // MEM-SCALE-01: forget a whole project (CORE-07); the approval is the confirm
   memory_trash_empty: 'delete', // MEM-TRASH-01: forgets what is in the Trash (CORE-07); the approval is the confirm
   memory_project_trash: 'delete', // MEM-TRASH-01: deletes every memory of a project (restorable); the approval is the confirm
+  specialty_apply: 'settings',
   memory_group_apply: 'settings', // MEM-UX-02: share-within changes which projects an agent reads; the approval is the confirm
   project_design_apply: 'settings', // DESIGN-FIND-01: changes the design agents follow and DESIGN.md; the approval is the confirm
   project_databases_apply: 'settings', // PROJECT-TECH-01: changes what an agent sees of a project's databases; the approval is the confirm
@@ -216,7 +217,7 @@ export interface ApprovalRunScope {
 }
 
 export function runScopeOf(context: ToolExecutionContext): ApprovalRunScope {
-  const scope: ApprovalRunScope = { memoryDrawers: toolMemoryDrawers(context).map((d) => (d.key ? { kind: d.kind, key: d.key } : { kind: d.kind })) };
+  const scope: ApprovalRunScope = { memoryDrawers: toolMemoryDrawers(context).map((d) => ({kind:d.kind,...(d.key?{key:d.key}:{}),...(d.readOnly===true?{readOnly:true}:{} )})) };
   if (typeof context.taskId === 'string' && context.taskId) scope.taskId = context.taskId;
   if (context.taskRun && typeof context.taskRun.runId === 'string' && Number.isInteger(context.taskRun.stepIndex)) {
     scope.runId = context.taskRun.runId;

@@ -199,3 +199,12 @@ test('MEM-GAPS-02 shapes: explorer filters, access columns, graph-orphan, handof
   assert.deepEqual(t.notLoaded, { drawers: [{ drawer: 'project:tel-agent', why: 'not_open' }, { drawer: 'project:old', why: 'archived' }], more: 3 });
   assert.equal(memoryRecallResponse('/api/memory/recall/runs/run-12345678', 200, { trace: { ...trace, notLoaded: undefined } }).trace.notLoaded, null, 'older traces');
 });
+
+
+test('query allowlists reject inherited Object properties without invoking them', () => {
+  for (const key of ['__proto__', 'constructor', 'toString', 'valueOf', 'hasOwnProperty', 'toLocaleString']) {
+    assert.equal(memoryPagesPath(`/api/memory/scopes/tree?${key}=anything`), null);
+    assert.equal(memoryPagesPath(`/api/memory/scopes/memories?${key}=anything`), null);
+  }
+  assert.ok(memoryPagesPath('/api/memory/scopes/tree?fresh=1'));
+});

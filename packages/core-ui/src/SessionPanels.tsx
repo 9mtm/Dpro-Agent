@@ -16,10 +16,11 @@ const roleHelp: Record<string, string> = {
   guest: 'Read-only access.',
 };
 /** Profile, this session, and sign-out on all devices behind an explicit confirmation. */
-export function AccountPanel({ client }: { client: SessionClient }) {
+export function AccountPanel({ client, compact=false }: { client: SessionClient; compact?: boolean }) {
   const state = client.getSnapshot();
   const user = state.user!;
   const [confirm, setConfirm] = useState(false);
+  const DangerContainer=compact?'details':'section';
   return <section className="panel account-page" aria-label="Account"><h2>Account</h2>
     <div className="account-card">
       <span className="team-avatar account-avatar" aria-hidden="true">{displayName(user).trim().slice(0, 1).toUpperCase() || '?'}</span>
@@ -39,12 +40,12 @@ export function AccountPanel({ client }: { client: SessionClient }) {
       </dl>
     </section>
 
-    <section className="account-section account-danger" aria-label="Sign out everywhere">
-      <h3>Sign out everywhere</h3>
+    <DangerContainer className="account-section account-danger" aria-label="Sign out everywhere">{compact&&<summary>Sign out on all devices</summary>}
+      {!compact&&<h3>Sign out everywhere</h3>}
       <p>Ends every session of this account, on all devices. You will need to sign in again here too.</p>
       <label className="check"><input type="checkbox" checked={confirm} onChange={e => setConfirm(e.target.checked)}/>I understand: this revokes every session for this account.</label>
       <div className="hire-actions"><button className="danger" disabled={!confirm} onClick={() => void client.logoutAllDevices()}>Sign out on all devices</button></div>
-    </section>
+    </DangerContainer>
   </section>;
 }
 /** Readable status for each memory review phase. */

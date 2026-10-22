@@ -26,6 +26,8 @@ export interface DrawerRef {
   kind: DrawerKind;
   /** Project slug, task/run id or person id; absent for owner and experience. */
   key?: string;
+  /** Trusted run restriction: shared project memory can be read but never written. */
+  readOnly?: boolean;
 }
 
 const KEYED: ReadonlySet<DrawerKind> = new Set(['project', 'task', 'people']);

@@ -12,7 +12,7 @@ export type ProjectGroup = { id: string; name: string; label: string | null; sha
 export type DesignColour = { name: string; value: string; source: string; main: boolean };
 export type DesignLogo = { id: string; path: string; kind: string; main: boolean; bytes: number };
 export type DesignConflict = { kind: 'main-colour'; question: string; options: DesignColour[] };
-export type ProjectDesign = { project: string; colours: DesignColour[]; fonts: Array<{ name: string; source: string }>; logos: DesignLogo[]; rules: Array<{ text: string; source: string }>; sources: Array<{ path: string; kind: string }>;
+export type ProjectDesign = { project: string; colours: DesignColour[]; fonts: Array<{ name: string; source: string }>; logos: DesignLogo[]; rules: Array<{ text: string; source: string; id: string | null; confirmed: boolean; reviewable: boolean }>; sources: Array<{ path: string; kind: string }>;
   conflicts: DesignConflict[]; hiddenLogos: number; writeFile: boolean; file: { path: string | null; writtenAt: string | null; problem: string | null }; canUndo: boolean };
 export type ProjectDatabase = { id: string; kind: string; engine: string; name: string; path: string; host: string | null; port: string | null; database: string | null; service: string | null; image: string | null; tables: string[]; tableCount: number; tablesNote: string | null; bytes: number };
 export type ProjectDatabases = { project: string; databases: ProjectDatabase[]; access: Array<{ agentId: string; level: DatabaseLevel }>; defaultLevel: DatabaseLevel };

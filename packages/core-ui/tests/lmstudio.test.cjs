@@ -66,14 +66,16 @@ test('the chat picker chooses who answers: no local model list; the coding apps 
   await c.load();
   const end = Date.now() + 3000; while (!c.getSnapshot().models.length && Date.now() < end) await new Promise(r => setTimeout(r, 20));
   assert.ok(c.getSnapshot().models.some(m => m.id === 'lmstudio:fiction/mistral-7b'), 'the list itself still has the local models (Settings uses it)');
-  // Who answers lives at the top of the Details panel; the composer keeps only the agent list.
+  // The reply-source popover preserves agent and app selection without adding a local model list.
   const panel = (html) => /<section class="panel-card who-answers">(.*?)<\/section>/.exec(html)?.[1] ?? '';
   let html = renderToStaticMarkup(React.createElement(ChatView, { controller: c, mode: 'mock', client }));
-  assert.equal((html.match(/<select/g) || []).length, 1, 'the composer has only the agent list');
+  assert.equal((html.match(/<select/g) || []).length, 0, 'the composer uses a searchable agent popover and no local model list');
+  assert.match(html,/role="listbox" aria-label="Reply agents"/);
+  assert.match(html,/aria-label="Find chat agent"/);
   assert.match(panel(html), /<h3>Who answers<\/h3>/);
   assert.match(panel(html), /role="radio" aria-checked="true"><span class="who-icon">.*?Main agent<small>Own model · set in Settings<\/small>/);
-  assert.match(panel(html), /disabled="".*?Claude Code<small>Desktop app only<\/small>/);
-  assert.match(panel(html), /disabled="".*?Codex<small>Desktop app only<\/small>/);
+  assert.match(panel(html), /disabled="".*?Claude Code<small>Unavailable in this workspace<\/small>/);
+  assert.match(panel(html), /disabled="".*?Codex<small>Unavailable in this workspace<\/small>/);
   assert.doesNotMatch(html, /qwen-fiction:7b|fiction\/mistral-7b|On this computer/);
   // Desktop backend: the apps are listed with their own models; picking one shows its model list and the composer chip.
   withApps = true; await new Promise(r => setTimeout(r, 5100)); await c.loadModels(true);
@@ -83,7 +85,7 @@ test('the chat picker chooses who answers: no local model list; the coding apps 
   c.selectModel('subscription:claude/opus');
   html = renderToStaticMarkup(React.createElement(ChatView, { controller: c, mode: 'mock', client }));
   assert.match(panel(html), /<label class="who-model"><span>Model<\/span><select><option value="">Default<\/option><option value="opus" selected="">Opus<\/option><option value="sonnet">Sonnet<\/option><\/select>/);
-  assert.match(html, /<button type="button" class="composer-who"[^>]*>.*?<span>Claude Code · Opus<\/span><\/button>/);
+  assert.match(html, /class="composer-source-toggle"[^>]*>.*?<span>Claude Code · Opus<\/span>/);
 });
 
 test('the reply says LM Studio is not running and what to do', () => {

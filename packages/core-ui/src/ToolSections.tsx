@@ -8,6 +8,7 @@ import { createPortal } from 'react-dom';
 import type { SessionClient } from './session';
 import { DiscoveryController, STATE_LABEL } from './discovery-controller';
 import type { DiscoveryKind } from './discovery-contract.js';
+import {PublisherSources} from './PublisherSources';
 import { SkillLibrary } from './SkillLibrary';
 import { McpLibrary } from './McpLibrary';
 import { UiIcon } from './ui-icons';
@@ -20,7 +21,7 @@ type Place = { key: string; icon: UiIconName; label: string; badge?: number };
 function SectionSidebar({ title, places, current, onPick }: { title: string; places: Place[]; current: string; onPick: (key: string) => void }) {
   return <nav className="dk-sidebar" aria-label={`${title} places`}>
     <p className="section-label dk-label"><span>{title}</span></p>
-    {places.map(p => <button key={p.key} type="button" className="nav-item dk-place" aria-current={current === p.key ? 'page' : undefined} onClick={() => onPick(p.key)}>
+    {places.map(p => <button key={p.key} type="button" className="nav-item dk-place" title={p.label} aria-current={current === p.key ? 'page' : undefined} onClick={() => onPick(p.key)}>
       <UiIcon name={p.icon} size={15}/><span className="dk-place-name">{p.label}</span>{p.badge ? <span className="dk-badge-pill">{p.badge}</span> : null}
     </button>)}
   </nav>;
@@ -79,33 +80,28 @@ function Toolbar({ title, sub }: { title: string; sub?: string }) {
   return <header className="dk-toolbar"><div className="dk-title"><h2>{title}</h2>{sub && <span className="dk-sub">{sub}</span>}</div></header>;
 }
 
-export function SkillsSection({ client, active, slot }: { client: SessionClient; active: boolean; slot?: HTMLElement | null }) {
-  const [place, setPlace] = useState('library');
-  const c = useDiscovery(client, active);
-  useSyncExternalStore(c?.subscribe ?? (() => () => {}), c?.getSnapshot ?? (() => null), c?.getSnapshot ?? (() => null));
-  const places: Place[] = [{ key: 'library', icon: 'file', label: 'All skills' }, { key: 'found', icon: 'search', label: 'Found on this computer', badge: fresh(c, 'skill') }];
-  return <Section slot={slot} active={active} label="Skills" sidebar={<SectionSidebar title="Skills" places={places} current={place} onPick={setPlace}/>}>
-    <Toolbar title={place === 'found' ? 'Found on this computer' : 'Skills'} sub={place === 'found' ? 'skills from the computer scan' : 'abilities your agents can use'}/>
-    <div className="dk-body">{place === 'found' ? (c ? <FoundOnComputer c={c} kind="skill"/> : null) : <div className="dk-files"><SkillLibrary client={client}/></div>}</div>
-  </Section>;
+export function SkillsSection({client,active,slot,onOpenAgents}:{client:SessionClient;active:boolean;slot?:HTMLElement|null;onOpenAgents?:()=>void}){
+ const [place,setPlace]=useState('library');const c=useDiscovery(client,active&&place==='found');
+ const places:Place[]=[{key:'library',icon:'file',label:'Installed skills'},{key:'import',icon:'search',label:'Import from apps'},{key:'sources',icon:'globe',label:'Publisher sources'},{key:'found',icon:'folder',label:'Found in folders',badge:fresh(c,'skill')}];
+ return <Section slot={slot} active={active} label="Skills" sidebar={<SectionSidebar title="Skills" places={places} current={place} onPick={setPlace}/>}>
+ {place==='sources'?<PublisherSources kind="skill"/>:place==='found'?<><Toolbar title="Found in folders" sub="Skills from allowed folders"/><div className="dk-body">{c?<FoundOnComputer c={c} kind="skill"/>:null}</div></>:<SkillLibrary client={client} active={active} view={place==='import'?'discover':'installed'} onDiscover={()=>setPlace('import')} onOpenAgents={onOpenAgents}/>}
+ </Section>;
 }
-export function McpSection({ client, active, slot }: { client: SessionClient; active: boolean; slot?: HTMLElement | null }) {
-  const [place, setPlace] = useState('library');
-  const c = useDiscovery(client, active);
-  useSyncExternalStore(c?.subscribe ?? (() => () => {}), c?.getSnapshot ?? (() => null), c?.getSnapshot ?? (() => null));
-  const places: Place[] = [{ key: 'library', icon: 'tool', label: 'Connected and library' }, { key: 'found', icon: 'search', label: 'Found on this computer', badge: fresh(c, 'mcp') }];
+export function McpSection({ client, active, slot, onOpenAgents }: { client: SessionClient; active: boolean; slot?: HTMLElement | null; onOpenAgents?:()=>void }) {
+  const [place,setPlace]=useState('all');
+  const c=useDiscovery(client,active&&place==='found');
+  const places:Place[]=[{key:'all',icon:'tool',label:'All connections'},{key:'on',icon:'check',label:'Enabled'},{key:'off',icon:'stop',label:'Disabled'},{key:'problem',icon:'pulse',label:'Needs attention'},{key:'import',icon:'search',label:'Import from apps'},{key:'sources',icon:'globe',label:'Publisher sources'},{key:'found',icon:'folder',label:'Found in folders'}];
   return <Section slot={slot} active={active} label="MCP connections" sidebar={<SectionSidebar title="MCP connections" places={places} current={place} onPick={setPlace}/>}>
-    <Toolbar title={place === 'found' ? 'Found on this computer' : 'MCP connections'} sub={place === 'found' ? 'MCP servers from the computer scan' : 'tools your agents can reach'}/>
-    <div className="dk-body">{place === 'found' ? (c ? <FoundOnComputer c={c} kind="mcp"/> : null) : <div className="dk-files"><McpLibrary client={client}/></div>}</div>
+    {place==='sources'?<PublisherSources kind="mcp"/>:place==='found'?<><Toolbar title="Found in folders" sub="MCP definitions from allowed folders"/><div className="dk-body">{c?<FoundOnComputer c={c} kind="mcp"/>:null}</div></>:<McpLibrary client={client} active={active} filter={(['on','off','problem'].includes(place)?place:'all') as 'all'|'on'|'off'|'problem'} view={place==='import'?'discover':'connections'} onDiscover={()=>setPlace('import')} onOpenAgents={onOpenAgents}/>}
   </Section>;
 }
 export function TerminalSection({ client, active, slot, onOpenTerminal }: { client: SessionClient; active: boolean; slot?: HTMLElement | null; onOpenTerminal: () => void }) {
   const [place, setPlace] = useState('sessions');
   const c = useDiscovery(client, active);
   useSyncExternalStore(c?.subscribe ?? (() => () => {}), c?.getSnapshot ?? (() => null), c?.getSnapshot ?? (() => null));
-  const places: Place[] = [{ key: 'sessions', icon: 'terminal', label: 'Sessions' }, { key: 'found', icon: 'search', label: 'Found on this computer', badge: fresh(c, 'ssh') }];
+  const places: Place[] = [{ key: 'sessions', icon: 'terminal', label: 'Sessions' }, { key: 'found', icon: 'search', label: 'Saved SSH hosts', badge: fresh(c, 'ssh') }];
   return <Section slot={slot} active={active} label="Terminal" sidebar={<SectionSidebar title="Terminal" places={places} current={place} onPick={setPlace}/>}>
-    <Toolbar title={place === 'found' ? 'Found on this computer' : 'Terminal'} sub={place === 'found' ? 'SSH hosts from ~/.ssh/config (names only)' : 'a terminal beside your chat'}/>
+    <Toolbar title={place === 'found' ? 'Saved SSH hosts' : 'Terminal sessions'} sub={place === 'found' ? 'SSH hosts from ~/.ssh/config (names only)' : 'Runs alongside the current conversation'}/>
     <div className="dk-body">{place === 'found' ? (c ? <FoundOnComputer c={c} kind="ssh"/> : null)
       : <div className="dk-empty"><UiIcon name="terminal" size={22}/><p>The terminal opens beside the chat, in the project folder of the chat.</p><button type="button" className="primary" onClick={onOpenTerminal}>Open the terminal</button></div>}</div>
   </Section>;

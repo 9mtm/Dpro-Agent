@@ -1,3 +1,4 @@
+import {SPECIALTY_GROUPS,SPECIALTY_DEPARTMENT_GROUPS} from './specialty-catalogue.js';
 /**
  * Company plan for first-run setup (ONBOARD-TEAM-01, decision D-ONBOARD-TEAM).
  *
@@ -53,7 +54,7 @@ export interface DepartmentInfo {
   weight: number;
 }
 
-export const DEPARTMENTS: readonly DepartmentInfo[] = Object.freeze([
+const LEGACY_DEPARTMENTS: readonly DepartmentInfo[] = Object.freeze([
   { id: 'development', label: 'Development', summary: 'Builds and maintains your software.', titles: { manager: 'Engineering lead', specialist: 'Software developer', evaluator: 'Code reviewer' }, weight: 5 },
   { id: 'marketing', label: 'Marketing', summary: 'Campaigns, content and social media.', titles: { manager: 'Marketing lead', specialist: 'Marketing specialist', evaluator: 'Brand reviewer' }, weight: 3 },
   { id: 'sales', label: 'Sales', summary: 'Leads, offers and follow-ups.', titles: { manager: 'Sales lead', specialist: 'Sales representative', evaluator: 'Deal reviewer' }, weight: 3 },
@@ -73,11 +74,14 @@ export const DEPARTMENTS: readonly DepartmentInfo[] = Object.freeze([
 
 ].map((d) => Object.freeze(d)));
 
+/** Every approved organisational group is selectable; pending specialist packages are not made executable. */
+export const DEPARTMENTS:readonly DepartmentInfo[]=Object.freeze([...LEGACY_DEPARTMENTS,...SPECIALTY_GROUPS.filter(g=>!Object.values(SPECIALTY_DEPARTMENT_GROUPS).includes(g.name)).map(g=>({id:g.name.toLowerCase(),label:g.name,summary:'Organisational group. Specialist packages are being prepared; review the generic team before hiring.',titles:{manager:(g.name+' lead').slice(0,80),specialist:'Specialist',evaluator:'Reviewer'},weight:2}))]);
+
 const GENERIC_TITLE: Readonly<Record<AgentRole, string>> = Object.freeze({
   main: 'Company lead', manager: 'Team lead', specialist: 'Specialist', evaluator: 'Reviewer',
 });
 
-export const MAX_DEPARTMENTS = 12;
+export const MAX_DEPARTMENTS = 72;
 export const MAX_CUSTOM_DEPARTMENTS = 4;
 export const MAX_PLANNED_HIRES = 60;
 /** Share of a custom department when a total is split (ONBOARD-TEAM-02). */

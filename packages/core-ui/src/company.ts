@@ -24,12 +24,13 @@ export type CompanyStep = 'size' | 'departments' | 'review' | 'hiring' | 'done';
 export type CompanyState = Readonly<{
   step: CompanyStep; owner: boolean;
   phase: 'idle' | 'loading' | 'ready' | 'planning' | 'hiring' | 'done' | 'error' | 'stopped' | 'denied';
+  boardSetup?:'idle'|'syncing'|'ready'|'error';
   catalogue?: Catalogue; size?: CompanySize; departments: readonly string[]; hires: readonly PlannedHire[]; notice?: string;
   /** Total headcount mode (instead of a size): the split the owner reviews, the running batch, unfinished batches found on Start. */
   total?: number; shares: readonly Share[]; batch?: BatchProgress; open: readonly BatchProgress[];
 }>;
 
-export const MAX_DEPARTMENTS = 12;
+export const MAX_DEPARTMENTS = 72;
 export const MAX_CUSTOM = 4;
 const record = (x: unknown): x is Record<string, unknown> => !!x && typeof x === 'object' && !Array.isArray(x);
 export const normalizeDepartment = (x: string) => x.normalize('NFKC').replace(/\s+/g, ' ').trim().toLowerCase();
@@ -70,7 +71,7 @@ export class CompanyController {
     this.#identity = identity; this.#invalidate();
     const owner = s.phase === 'authenticated' && s.user?.role === 'owner';
     this.#batchBody = undefined; this.#batchStored = false;
-    this.#publish({ step: 'size', owner, phase: owner ? 'idle' : 'denied', catalogue: undefined, size: undefined, departments: [], hires: [], total: undefined, shares: [], batch: undefined, open: [], notice: s.phase === 'authenticated' && !owner ? 'Only the owner can build the company.' : undefined });
+    this.#publish({ step: 'size', owner, phase: owner ? 'idle' : 'denied', boardSetup:'idle',catalogue: undefined, size: undefined, departments: [], hires: [], total: undefined, shares: [], batch: undefined, open: [], notice: s.phase === 'authenticated' && !owner ? 'Only the owner can build the company.' : undefined });
   };
   #invalidate() { this.#ticket++; this.#abort?.abort(); }
   #begin(phase: CompanyState['phase']) { this.#invalidate(); this.#abort = new AbortController(); this.#publish({ phase, notice: undefined }); return this.#ticket; }
@@ -86,7 +87,7 @@ export class CompanyController {
     if (!this.#state.owner || this.#busy()) return;
     this.#invalidate();
     this.#batchBody = undefined; this.#batchStored = false;
-    this.#publish({ step: 'size', phase: this.#state.catalogue ? 'ready' : 'idle', size: undefined, departments: [], hires: [], total: undefined, shares: [], batch: undefined, notice: undefined });
+    this.#publish({ boardSetup:'idle',step: 'size', phase: this.#state.catalogue ? 'ready' : 'idle', size: undefined, departments: [], hires: [], total: undefined, shares: [], batch: undefined, notice: undefined });
   }
 
   /** Explicit read of sizes and departments (never on mount). */
@@ -133,6 +134,11 @@ export class CompanyController {
     if (s.departments.includes(dep)) return this.#publish({ departments: Object.freeze(s.departments.filter(d => d !== dep)) });
     if (s.departments.length >= MAX_DEPARTMENTS) return this.#publish({ notice: `At most ${MAX_DEPARTMENTS} departments.` });
     this.#publish({ departments: Object.freeze([...s.departments, dep]), notice: undefined });
+  }
+  chooseProfile(profile:string){
+    const plans:Record<string,string[]>={education:['education','languages and translation','equality accessibility and integration','career guidance and employment services','coaching mentoring and professional supervision','psychological and social support','hr','operations','finance','legal','support','marketing','development'],software:['development','data','infrastructure','security','support','sales','marketing','operations','hr','finance','legal'],creative:['design','production','marketing','sales','operations','finance']};
+    if(!this.#state.owner||this.#busy()||this.#state.step!=='departments'||!this.#state.catalogue||!plans[profile])return;
+    const known=new Set(this.#state.catalogue.departments.map(d=>d.id));this.#publish({departments:Object.freeze(plans[profile].filter(d=>known.has(d))),notice:'Suggested departments selected. Review or change them before planning.'});
   }
   addCustom(name: string) {
     const s = this.#state; if (!s.owner || this.#busy() || s.step !== 'departments') return false;
@@ -203,6 +209,7 @@ export class CompanyController {
     this.#publish(failed
       ? { phase: 'stopped', step: 'review', notice: `${failed} hire${failed === 1 ? '' : 's'} could not be created. Fix them and hire again; the others are already on your team.` }
       : { phase: 'done', step: 'done', notice: undefined });
+    if(this.#state.hires.some(h=>h.status==='created'))await this.setupBoards(ticket);
   }
 
   // ---- Total headcount (ONBOARD-TEAM-02) ----
@@ -328,8 +335,14 @@ export class CompanyController {
     this.#publish(done.failed
       ? { phase: 'stopped', notice: `${done.created} hired; ${done.failed} could not be created. Try them again.` }
       : { phase: 'done', step: 'done', notice: undefined });
+    if(done.created>0)await this.setupBoards(ticket);
   }
 
+  async setupBoards(ticket=this.#ticket){
+    if(!this.#state.owner||this.#disposed||this.#state.boardSetup==='syncing')return;
+    this.#publish({boardSetup:'syncing'});
+    try{const r=await this.client.request({method:'POST',path:'/api/boards/sync-departments',body:{}});if(ticket!==this.#ticket||this.#disposed)return;this.#publish({boardSetup:r.status===200?'ready':'error'});}catch{if(ticket===this.#ticket&&!this.#disposed)this.#publish({boardSetup:'error'});}
+  }
   #mark(key: string, patch: Partial<PlannedHire>) {
     this.#publish({ hires: Object.freeze(this.#state.hires.map(h => h.key === key ? Object.freeze({ ...h, ...patch }) : h)) });
   }

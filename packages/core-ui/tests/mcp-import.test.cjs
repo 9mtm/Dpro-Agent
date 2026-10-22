@@ -10,7 +10,7 @@ test('MCP preview projects secret names only and discards raw values',()=>{
  const body={name:'fictional',transport:'stdio',command:'node',args:['fixture.mjs'],url:null,allowRemote:false,hash,existingId:null,envNames:['TOKEN'],headerNames:[],env:{TOKEN:'private'},file:'/private'};const result=mcpImportResponse('/api/mcp-import/preview',200,body);assert.equal(JSON.stringify(result).includes('private'),false);assert.deepEqual(result.envNames,['TOKEN']);assert.equal(mcpImportResponse('/api/mcp-import/import',500,{error:'private'}),null);
 });
 test('MCP views show explicit scan/import and per-agent loading without auto grants',()=>{
- const React=require('../node_modules/react'),{renderToStaticMarkup}=require('../node_modules/react-dom/server'),{McpLibrary,AgentMcp}=require('../src/McpLibrary.tsx');const html=renderToStaticMarkup(React.createElement(McpLibrary,{client:{}}));assert.match(html,/Scan Claude/);assert.match(html,/never starts/);const agent=renderToStaticMarkup(React.createElement(AgentMcp,{client:{},agentId:'main-agent'}));assert.match(agent,/Loading connections/);assert.match(agent,/Future or changed tools need a new grant/);
+ const React=require('../node_modules/react'),{renderToStaticMarkup}=require('../node_modules/react-dom/server'),{McpLibrary,AgentMcp}=require('../src/McpLibrary.tsx');const html=renderToStaticMarkup(React.createElement(McpLibrary,{client:{},view:'discover'}));assert.match(html,/Scan Claude/);assert.match(html,/never starts/);const agent=renderToStaticMarkup(React.createElement(AgentMcp,{client:{},agentId:'main-agent'}));assert.match(agent,/Loading connections/);assert.match(agent,/Future or changed tools need a new grant/);
 });
 
 test('GenVR automatic setup accepts only its fixed empty bootstrap request',()=>{

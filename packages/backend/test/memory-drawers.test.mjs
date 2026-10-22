@@ -267,3 +267,16 @@ test('storage: getByDrawers reads only the named drawers', async () => {
   assert.deepEqual(rows[0].drawer, { kind: 'project', key: 'alpha' });
   assert.deepEqual(await storage.getByDrawers('dr-owner', []), []);
 });
+
+test('shared project drawers remain readable but refuse writes and preserve restrictions through approval replay',async()=>{
+ const {drawerWritable,drawerOpen}=await import(join(backendDir,'src/repositories/scope.ts'));
+ const {runScopeOf}=await import(join(backendDir,'src/tools/approvals.ts'));
+ const {approvalRunDrawers}=await import(join(backendDir,'src/tools/memory/scope.ts'));
+ const drawers=[{kind:'project',key:'alpha'},{kind:'project',key:'beta',readOnly:true}];
+ const actor={kind:'agent',role:'owner',userId:'dr-owner',drawers,writeKinds:['project']};
+ assert.equal(drawerOpen(actor,{kind:'project',key:'beta'}),true);assert.equal(drawerWritable(actor,{kind:'project',key:'beta'}),false);assert.equal(drawerWritable(actor,{kind:'project',key:'alpha'}),true);
+ const scope=runScopeOf({userId:'dr-owner',workspaceDir:dir,memoryDrawers:drawers});assert.equal(scope.memoryDrawers[1].readOnly,true);
+ const restored=approvalRunDrawers(JSON.parse(JSON.stringify(scope)).memoryDrawers,{});assert.equal(restored[1].readOnly,true);
+ const legacy=approvalRunDrawers([{kind:'project',key:'alpha'},{kind:'project',key:'beta'}],{});assert.equal(legacy[1].readOnly,true,'older multi-project approvals cannot regain writes');
+ const denied=await quietly(()=>memorySaveTool.execute({content:'Shared write must not persist',drawer:'project:beta'}, {userId:'dr-owner',workspaceDir:dir,memoryDrawers:drawers}));assert.ok(denied.error);
+});

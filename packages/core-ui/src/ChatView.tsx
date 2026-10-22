@@ -1,3 +1,6 @@
+import {ChatAgentPicker} from './ChatAgentPicker';
+import {ChatAddons} from './ChatAddons';
+import {DocumentEditor} from './DocumentEditor';
 import { RecoveryApprovals } from './RecoveryApprovals';
 import { ChatAvatar } from './ChatAvatar';
 import {CodingSessions} from './CodingSessions';
@@ -119,11 +122,15 @@ export function ChatView({ controller, mode, productName = 'Dpro Agent', client,
     setMic(m); void m.check();
     return () => m.dispose();
   }, [client, controller]);
+  const [longDraft,setLongDraft]=useState(false);
+  const [attachmentPreview,setAttachmentPreview]=useState<string|null>(null);
   const [attachError, setAttachError] = useState<string | null>(null);
   const onFiles = async (list: FileList | null) => {
     if (!list?.length) return;
     try {
-      const files = await Promise.all([...list].map(async f => ({ name: f.name, text: f.size > 2_000_000 ? '\u0000' : await f.text() })));
+      if([...list].some(f=>/^(image|audio|video)\//.test(f.type)||/\.(pdf|zip|gz|png|jpe?g|gif|webp|mp4|mov|mp3|wav)$/i.test(f.name))){setAttachError('This chat attaches text and code files. Images, PDFs and other binary files are not supported here yet.');return;}
+      if([...list].some(f=>f.size>2_000_000)){setAttachError('Choose smaller text files. Each attachment can contain up to 60,000 characters.');return;}
+      const files = await Promise.all([...list].map(async f => ({ name: f.name, text: await f.text() })));
       setAttachError(controller.attach(files));
     } catch { setAttachError('The file could not be read.'); }
     if (picker.current) picker.current.value = '';
@@ -157,10 +164,11 @@ export function ChatView({ controller, mode, productName = 'Dpro Agent', client,
   const empty = s.turns.length === 0 && s.threadPhase !== 'loading';
 
   const project = controller.activeProject();
-  const [pane, setPane] = useState<PaneName | null>(() => typeof window === 'undefined' || window.innerWidth >= 1100 ? 'details' : null);
+  const [pane, setPane] = useState<PaneName | null>(() => typeof window === 'undefined' ? 'details' : null);
   const [panes, setPanes] = useState<PanesController | null>(null);
   const [terminal, setTerminal] = useState<{ tabs: TerminalTabs; prefs: TerminalPrefsController } | null>(null);
   const [maximized, setMaximized] = useState(false);
+  useEffect(()=>{if(pane!=='details'||!active)return;const outside=(event:PointerEvent)=>{const target=event.target;if(target instanceof Element&&!target.closest('.session-popover')&&!target.closest('[aria-label="Details"]')&&!target.closest('dialog'))setPane(null);};document.addEventListener('pointerdown',outside);return()=>document.removeEventListener('pointerdown',outside);},[pane,active]);
   useEffect(() => { if (!client) return; const p = new PanesController(client); setPanes(p); const t = { tabs: new TerminalTabs(client), prefs: new TerminalPrefsController(client) }; setTerminal(t); return () => { p.dispose(); t.tabs.dispose(); t.prefs.dispose(); }; }, [client]);
   const owner = client?.getSnapshot().user?.role === 'owner';
   useEffect(()=>{if(terminalRequest>0&&owner)setPane('terminal');},[terminalRequest,owner]);
@@ -223,14 +231,15 @@ export function ChatView({ controller, mode, productName = 'Dpro Agent', client,
     ...(panes ? [{ name: 'changes' as const, icon: 'diff' as const, label: 'Changes' }, { name: 'files' as const, icon: 'folder' as const, label: 'Files' }] : []),
     ...(terminal && owner ? [{ name: 'terminal' as const, icon: 'terminal' as const, label: 'Terminal' }] : []),
   ];
+  const previewFile=s.attachments.find(f=>f.name===attachmentPreview);
   return <div className="chat-layout" data-panel={pane ?? undefined} data-max={(maximized && pane === 'terminal') || undefined}>
-  <div className="chat-screen">
+  <div className="chat-screen" onDragOver={e=>{if(e.dataTransfer.types.includes('Files'))e.preventDefault();}} onDrop={e=>{if(e.dataTransfer.files.length){e.preventDefault();void onFiles(e.dataTransfer.files);}}}>
     <div className="chat-topbar">
       {project ? <ProjectBar name={project.name} folder={project.folder} repoUrl={project.repoUrl} git={s.git}/> : <span className="project-bar-item" aria-label="Chat context">General chat · no project folder</span>}
       {client && s.activeId && s.threadPhase !== 'loading' && <ExportMenu key={s.activeId} client={client} conversationId={s.activeId} disabled={running}/>}
       {owner && cardsCtl && s.activeId && <button type="button" className="tool chat-to-board" onClick={() => cardForm ? setCardForm(null) : openCardForm()} aria-pressed={!!cardForm} title="Put this task on a board, with the agents it needs">
         <UiIcon name="board" size={14}/><span>Add to board</span></button>}
-      {mode === 'live' && <button type="button" className="tool chat-avatar-toggle" aria-pressed={avatarOn} onClick={toggleAvatar} title={avatarOn ? 'Hide the avatar' : 'Show the agent as an avatar that speaks its replies'}><UiIcon name="avatar" size={14}/><span>Avatar</span></button>}
+      {mode === 'live' && <button type="button" className="tool chat-avatar-toggle" aria-label="Avatar" aria-pressed={avatarOn} onClick={toggleAvatar} title={avatarOn ? 'Hide the avatar' : 'Show the agent as an avatar that speaks its replies'}><UiIcon name="avatar" size={14}/></button>}
       <span className="pane-bar" role="toolbar" aria-label="Side panes">{paneButtons.map(b =>
         <button key={b.name} type="button" className="tool" aria-pressed={pane === b.name} aria-label={b.label} title={pane === b.name ? `Hide ${b.label.toLowerCase()}` : b.label}
           onClick={() => setPane(p => p === b.name ? null : b.name)}><UiIcon name={b.icon} size={14}/></button>)}</span>
@@ -239,12 +248,12 @@ export function ChatView({ controller, mode, productName = 'Dpro Agent', client,
     <div className="chat-thread" ref={thread} onScroll={onScroll} aria-label="Conversation">
       {s.threadPhase === 'loading' && <p className="chat-loading" role="status"><span className="pulse" aria-hidden="true"/>Opening the conversation</p>}
       {empty ? <div className="chat-empty">
-        <p className="chat-wordmark">{productName}</p>
+        <span className="chat-empty-icon"><UiIcon name="message" size={28}/></span><h2 className="chat-wordmark">New conversation</h2>
         <p className="chat-tagline">{mode === 'mock'
           ? 'Offline practice: replies are fictional and nothing leaves this page.'
-          : 'Brief your team. Your agents work like real staff — each with its own role, memory and permissions.'}</p>
-        <div className="chat-suggestions">{SUGGESTIONS.map(t =>
-          <button key={t} type="button" className="chat-suggestion" onClick={() => void controller.send(t)}>{t}</button>)}</div>
+          : 'Choose who replies, add a project if needed, and write your message.'}</p>
+        <details className="chat-starting-ideas"><summary>Start with a task</summary><div className="chat-suggestions">{SUGGESTIONS.map(t =>
+          <button key={t} type="button" className="chat-suggestion" onClick={() => {controller.edit(t);input.current?.focus();}}><UiIcon name="compose" size={14}/>{t}</button>)}</div></details>
       </div> : <div className="chat-column" role="log" aria-live="polite" aria-relevant="additions">
         {s.turns.map((t, i) => t.role === 'user'
           ? <UserMessage key={t.key} turn={t} highlight={flash === t.key} onKey={client ? setKeysOpen : undefined} onRemember={canRemember && messageRef(t) ? () => openRemember(t, t.content) : undefined}/>
@@ -258,6 +267,8 @@ export function ChatView({ controller, mode, productName = 'Dpro Agent', client,
     </div>
     {client && keysOpen !== null && <SavedKeys client={client} owner={owner} highlight={keysOpen || undefined} onClose={() => setKeysOpen(null)}/>}
     {below && !empty && <button type="button" className="chat-jump" onClick={jump} aria-label="Jump to the latest message"><UiIcon name="arrow-down" size={15}/></button>}
+    {previewFile&&<DocumentEditor title="Attached file" files={[{id:previewFile.name,name:previewFile.name,content:previewFile.text,readOnly:true}]} maxLength={60000} onChange={()=>{}} onClose={()=>setAttachmentPreview(null)}/>}
+    {longDraft&&<DocumentEditor title="Message draft" files={[{id:'message',name:'message.md',content:s.draft}]} maxLength={100000} onChange={(_,text)=>controller.edit(text)} onClose={()=>setLongDraft(false)}/>}
     <div className="chat-dock">
       {s.notice && <p className="chat-notice" role="status">{s.notice}</p>}
       {mem?.notice && !remember && <p className="chat-notice" role="status">{mem.notice} <button type="button" className="link-button" onClick={() => memCtl?.clearNotice()}>OK</button></p>}
@@ -275,7 +286,7 @@ export function ChatView({ controller, mode, productName = 'Dpro Agent', client,
         </li>)}
       </ul>}
       {(s.attachments.length > 0 || attachError) && <div className="chat-attachments" aria-label="Attached files">
-        {s.attachments.map(f => <span key={f.name} className="attach-chip" dir="ltr"><UiIcon name="file" size={12}/>{f.name}<small>{Math.ceil(f.text.length / 1000)}k</small>
+        {s.attachments.map(f => <span key={f.name} className="attach-chip" dir="ltr"><button type="button" className="attachment-preview" title={`Read ${f.name}`} onClick={()=>setAttachmentPreview(f.name)}><UiIcon name="file" size={12}/>{f.name}</button><small>{Math.ceil(f.text.length / 1000)}k</small>
           <button type="button" className="row-tool" aria-label={`Remove ${f.name}`} onClick={() => controller.detach(f.name)}><UiIcon name="trash" size={11}/></button></span>)}
         {attachError && <span className="attach-error" role="alert">{attachError}</span>}
       </div>}
@@ -289,28 +300,15 @@ export function ChatView({ controller, mode, productName = 'Dpro Agent', client,
           <li key={a.id} role="option" aria-selected={i === Math.min(pick, suggestions.length - 1)}><button type="button" onMouseDown={e => { e.preventDefault(); choose(a.name); }}>
             <span className="avatar" aria-hidden="true">{a.name.slice(0, 1).toUpperCase()}</span>{a.name}</button></li>)}</ul>}
         <textarea id="chat-input" ref={input} rows={1} dir="auto" value={s.draft} maxLength={100000}
-          placeholder={running ? 'Type the next message; it is sent when this reply ends' : agentName ? `Message ${agentName}` : s.turns.length ? 'Send a follow-up' : "What's on your mind?"}
-          onChange={e => controller.edit(e.target.value)} onKeyDown={onKeyDown} disabled={s.access === 'denied'}/>
+          placeholder={running ? 'Type the next message; it is sent when this reply ends' : agentName ? `Message ${agentName}` : s.turns.length ? 'Send a follow-up' : 'Write a message…'}
+          onChange={e => controller.edit(e.target.value)} onPaste={e=>{if(e.clipboardData.files.length){e.preventDefault();void onFiles(e.clipboardData.files);}}} onKeyDown={onKeyDown} disabled={s.access === 'denied'}/>
         <div className="chat-composer-row">
           <input ref={picker} type="file" multiple hidden onChange={e => void onFiles(e.target.files)}
             accept=".txt,.md,.csv,.json,.yml,.yaml,.xml,.toml,.ini,.log,.ts,.tsx,.js,.jsx,.mjs,.cjs,.py,.rb,.go,.rs,.java,.php,.sh,.sql,.html,.css,text/*"/>
           <button type="button" className="tool composer-attach" aria-label="Attach text files" title="Attach text files (code, notes, CSV…)" onClick={() => picker.current?.click()}><UiIcon name="plus" size={14}/></button>
-          {s.agents.length > 0
-            ? <label className="composer-agent" title={s.activeId ? 'Who writes the next reply (or type @ and a name)' : 'Who you talk to (or type @ and a name)'}><span className="sr-only">{s.activeId ? 'Reply from' : 'Agent'}</span>
-              {s.activeId
-                ? <select value={s.replyAgent} onChange={e => controller.setReplyAgent(e.target.value)}>
-                  <option value="">{convAgentName}</option>
-                  {s.agents.filter(a => a.id !== convAgentId && !(a.primary && !convAgentId)).map(a => <option key={a.id} value={a.id}>{a.name}</option>)}
-                </select>
-                : <select value={s.agentId} onChange={e => controller.selectAgent(e.target.value)}>
-                  {/* "" is the primary agent: name it once instead of listing it twice. */}
-                  <option value="">{s.agents.find(a => a.primary)?.name ?? 'Main agent'}</option>
-                  {s.agents.filter(a => !a.primary).map(a => <option key={a.id} value={a.id}>{a.name}</option>)}
-                </select>}</label>
-            : <span className="composer-hint">{agentName ? agentName : ''}</span>}
-          {/* Who answers is chosen at the top of the Details panel (CORE-PICKER-02); the composer only shows a coding app when one answers. */}
-          {who.app && <button type="button" className="composer-who" onClick={() => setPane('details')} title="Change who answers (Details panel)">
-            <AppIcon id={who.app.id} size={12}/><span>{who.text}</span></button>}
+          <button type="button" className="tool" aria-label="Expand message editor" title="Write a longer message" onClick={()=>setLongDraft(true)}><UiIcon name="expand" size={14}/></button>
+          {s.agents.length>0&&<ChatAgentPicker agents={s.agents.filter(a=>s.activeId?(a.id!==convAgentId&&!(a.primary&&!convAgentId)):!a.primary)} value={s.activeId?s.replyAgent:s.agentId} currentName={s.activeId?convAgentName:s.agents.find(a=>a.primary)?.name??'Main agent'} label={s.activeId?'Reply from':'Agent'} onChange={id=>s.activeId?controller.setReplyAgent(id):controller.selectAgent(id)}/>}
+          <div className="composer-source"><button type="button" className="composer-source-toggle" popoverTarget="chat-reply-source" title="Choose who answers: agent, Claude Code or Codex" aria-label="Choose reply source"><span className="composer-source-icon">{who.app?<AppIcon id={who.app.id} size={14}/>:<UiIcon name="cpu" size={14}/>}</span><span>{who.app?who.text:'Agent model'}</span><UiIcon name="chevron" size={11}/></button><div id="chat-reply-source" popover="auto" className="composer-source-popover"><WhoAnswers controller={controller} agent={convAgentName}/><p className="composer-source-note"><UiIcon name="terminal" size={13}/>Coding apps reply through the local CLI connection. The terminal pane is a separate workspace.</p></div></div>
           {mic && <MicButton mic={mic}/>}
           <span className="composer-keys" aria-hidden="true">{running ? 'Esc stops' : 'Enter sends · Shift+Enter new line'}</span>
           {running && !s.draft.trim()
@@ -320,8 +318,8 @@ export function ChatView({ controller, mode, productName = 'Dpro Agent', client,
       </form>
     </div>
   </div>
-  {pane === 'details' && <ChatSidePanel controller={controller} client={client} onAddConnector={onAddConnector} memory={memCtl} onOpenMemory={onOpenMemory} recall={recallCtl}/>}
-  {panes && (pane === 'changes' || pane === 'files') && <aside className="chat-panel chat-pane" aria-label={pane === 'changes' ? 'Changes' : 'Files'}>
+  {pane === 'details' && <ChatSidePanel controller={controller} client={client} onAddConnector={onAddConnector} memory={memCtl} onOpenMemory={onOpenMemory} recall={recallCtl} onClose={()=>setPane(null)}/>}
+  {panes && (pane === 'changes' || pane === 'files') && <aside className="chat-panel chat-pane" aria-label={pane === 'changes' ? 'Changes' : 'Files'}><header className="chat-inspector-head"><h2>{pane==='changes'?'Changes':'Files'}</h2><button title="Close side pane" aria-label="Close side pane" onClick={()=>setPane(null)}><UiIcon name="close" size={15}/></button></header>
     {pane === 'changes' ? <ChangesPane panes={panes}/> : <FilesPane panes={panes}/>}
   </aside>}
   {terminal && pane === 'terminal' && <aside className="chat-panel chat-pane" aria-label="Terminal"><TerminalPane tabs={terminal.tabs} prefs={terminal.prefs} projectId={folderProject} maximized={maximized} onToggleMax={() => setMaximized(v => !v)} onClose={() => { setMaximized(false); setPane(null); }}/></aside>}
@@ -360,7 +358,7 @@ function WhoAnswers({ controller, agent }: { controller: ConversationsController
       {TERMINAL_APPS.map(a => {
         const ready = s.models.some(m => m.id === a.id && m.provider === 'subscription');
         // CORE-PICKER-03: without a project folder the app works in this chat's own private folder.
-        const why = !ready ? (listed ? 'Not on this computer' : 'Desktop app only') : project?.folder ? 'In the project folder' : 'In a private chat folder';
+        const why = !ready ? (listed ? 'Not on this computer' : 'Unavailable in this workspace') : project?.folder ? 'In the project folder' : 'In a private chat folder';
         return <button key={a.id} type="button" role="radio" aria-checked={who.app?.id === a.id} disabled={!ready} onClick={() => controller.selectModel(a.id)}>
           <span className="who-icon"><AppIcon id={a.id} size={14}/></span><span className="who-name">{a.label}<small>{why}</small></span></button>;
       })}
@@ -375,7 +373,7 @@ function WhoAnswers({ controller, agent }: { controller: ConversationsController
 }
 
 /** Details of the open conversation: where it works, how big it is, what it produced. */
-function ChatSidePanel({ controller, client, onAddConnector, memory, onOpenMemory, recall }: { controller: ConversationsController; client?: SessionClient; onChooseContext?:()=>void; onAddConnector?: () => void; memory?: ChatMemoryController | null; onOpenMemory?: (drawerId: string, memoryId: string) => void; recall?: ChatRecallController | null }) {
+function ChatSidePanel({ controller, client, onAddConnector, memory, onOpenMemory, recall, onClose }: { controller: ConversationsController; client?: SessionClient; onChooseContext?:()=>void; onAddConnector?: () => void; memory?: ChatMemoryController | null; onOpenMemory?: (drawerId: string, memoryId: string) => void; recall?: ChatRecallController | null;onClose?:()=>void }) {
   const s = useSyncExternalStore(controller.subscribe, controller.getSnapshot, controller.getSnapshot);
   const project = controller.activeProject();
   const conv = s.conversations.find(c => c.id === s.activeId);
@@ -387,14 +385,19 @@ function ChatSidePanel({ controller, client, onAddConnector, memory, onOpenMemor
   const replies = s.turns.filter(t => t.role === 'assistant');
   const worked = replies.reduce((n, t) => n + (t.durationMs ?? 0), 0);
   const tools = workSummary(s.turns.flatMap(t => withoutPlan(t.parts)));
+  const [view,setView]=useState<'session'|'permissions'|'addons'>('session');
+  const owner=client?.getSnapshot().user?.role==='owner';
   const home = project?.folder?.match(/^\/Users\/[^/]+/)?.[0];
-  return <aside className="chat-panel" aria-label="Conversation details">
-    <WhoAnswers controller={controller} agent={agent}/>
-    {recall && s.activeId && <HandoffCard c={recall} agentId={conv?.agentId || s.agentId || s.agents[0]?.id || ''} agentName={agent}/>}
-    {recall && <RecallContext c={recall} keys={replies.map(t => t.key)}/>}
-    {recall && <SpeedDetails c={recall}/>}
-    <section className="panel-card">
-      <h3>Environment</h3>
+  return <aside className="chat-panel session-popover" aria-label="Conversation details" onKeyDown={e=>{if(e.key==='Escape')onClose?.();}}>
+    <header className="chat-inspector-head"><h2>Session details</h2><button type="button" title="Close session details" aria-label="Close session details" onClick={onClose}><UiIcon name="close" size={15}/></button></header>
+    <div className="session-panel-tabs" role="tablist" aria-label="Session sections">{(['session','permissions','addons'] as const).map(key=><button role="tab" type="button" key={key} aria-selected={view===key} onClick={()=>setView(key)}><UiIcon name={key==='session'?'message':key==='permissions'?'shield':'layers'} size={14}/>{key==='session'?'Session':key==='permissions'?'Permissions':'Add-ons'}</button>)}</div>
+    <div className="session-panel-body">
+    {view==='session'&&<><div className="chat-reply-summary"><span>{who.app?<AppIcon id={who.app.id} size={16}/>:<UiIcon name="cpu" size={16}/>}</span><div><strong>{who.app?who.text:agent}</strong><small>{who.app?'Replies through the local CLI connection':"Replies with the agent’s configured model"}</small></div></div>
+    {recall && s.activeId && <SessionDisclosure title="Where we left off" icon="history"><HandoffCard c={recall} agentId={conv?.agentId || s.agentId || s.agents[0]?.id || ''} agentName={agent}/></SessionDisclosure>}
+    {recall && <SessionDisclosure title="Context" icon="layers" summary={<ContextUsage c={recall} keys={replies.map(t=>t.key)}/>}><RecallContext c={recall} keys={replies.map(t => t.key)}/></SessionDisclosure>}
+    {recall && <SessionDisclosure title="Performance" icon="pulse"><SpeedDetails c={recall}/></SessionDisclosure>}
+    <SessionDisclosure title="Environment" icon="folder" summary={project?.name??'General chat'}><section className="panel-card">
+      <h3 className="sr-only">Environment</h3>
       <dl className="panel-list">
         <div><dt><UiIcon name="board" size={12}/></dt><dd>{project ? project.name : <span className="muted">No project</span>}</dd></div>
         {project?.folder && <div><dt><UiIcon name="file" size={12}/></dt><dd dir="ltr" title={project.folder}>{home ? `~${project.folder.slice(home.length)}` : project.folder}</dd></div>}
@@ -402,33 +405,40 @@ function ChatSidePanel({ controller, client, onAddConnector, memory, onOpenMemor
         {(project?.repoUrl ?? s.git?.remote) && <div><dt><UiIcon name="globe" size={12}/></dt><dd dir="ltr">{(project?.repoUrl ?? s.git?.remote ?? '').replace(/^https:\/\//, '')}</dd></div>}
         <div><dt><UiIcon name="brain" size={12}/></dt><dd>{agent} · {model}</dd></div>
       </dl>
-    </section>
-    {client&&project?.folder&&<section className="panel-card"><h3>Local coding sessions</h3><p className="fine-print">Saved Dpro chats stay in the sidebar. Memory imports are managed in Memory.</p><CodingSessions key={project.id+':'+project.folder} client={client} controller={controller} folder={project.folder}/></section>}
-    <section className="panel-card">
-      <h3>Conversation</h3>
+    </section></SessionDisclosure>
+    {client&&project?.folder&&<SessionDisclosure title="Coding sessions" icon="terminal"><section className="panel-card"><h3>Local coding sessions</h3><p className="fine-print">Saved Dpro chats stay in the sidebar. Memory imports are managed in Memory.</p><CodingSessions key={project.id+':'+project.folder} client={client} controller={controller} folder={project.folder}/></section></SessionDisclosure>}
+    <SessionDisclosure title="Conversation" icon="message" summary={`${replies.length} replies`}><section className="panel-card">
+      <h3 className="sr-only">Conversation</h3>
       <dl className="panel-list">
         <div><dt>Size</dt><dd>≈ {tokens.toLocaleString('en')} tokens</dd></div>
         <div><dt>Replies</dt><dd>{replies.length}{worked ? ` · worked ${duration(worked)}` : ''}</dd></div>
         {tools && <div><dt>Tools</dt><dd>{tools}</dd></div>}
       </dl>
-    </section>
-    <section className="panel-card">
-      <h3>Outputs</h3>
+    </section></SessionDisclosure>
+    <SessionDisclosure title="Outputs" icon="file" summary={outputs.length?`${outputs.length} files`:'No files yet'}><section className="panel-card">
+      <h3 className="sr-only">Outputs</h3>
       {outputs.length ? <ul className="panel-files">{outputs.slice(-8).reverse().map(o => <li key={o.path} dir="ltr"><UiIcon name={o.kind === 'edit' ? 'pencil' : 'file'} size={12}/><span title={o.path}>{o.path.split('/').at(-1)}</span></li>)}</ul>
         : <p className="muted">Files the agent writes appear here.</p>}
-    </section>
-    {project?.folder && <section className="panel-card">
-      <h3>Changes</h3>
+    </section></SessionDisclosure>
+    {project?.folder && <SessionDisclosure title="Changes" icon="diff" summary={s.git?.files?`${s.git.files} files`:'Working folder'}><section className="panel-card">
+      <h3 className="sr-only">Changes</h3>
       {s.git && s.git.added !== null && s.git.added !== undefined
         ? (s.git.files ? <p className="panel-changes"><span className="plus">+{s.git.added}</span> <span className="minus">−{s.git.removed ?? 0}</span> <span className="muted">in {s.git.files} {s.git.files === 1 ? 'file' : 'files'} not committed</span></p>
           : <p className="muted">No uncommitted changes.</p>)
         : <p className="muted">Not a git folder.</p>}
-    </section>}
-    {memory && s.activeId && <ChatMemoryCard controller={memory} onOpen={onOpenMemory}/>}
-    {project?.folder && s.git?.branch && <GitHubCard git={s.git} onRefresh={() => void controller.refreshGit()}/>}
-    {client && <AgentPanel client={client} onAddConnector={onAddConnector} agentId={conv?.agentId || s.agentId || s.agents[0]?.id || ''}/>}
+    </section></SessionDisclosure>}
+    {memory && s.activeId && <SessionDisclosure title="Saved memories" icon="brain"><ChatMemoryCard controller={memory} onOpen={onOpenMemory}/></SessionDisclosure>}
+    {project?.folder && s.git?.branch && <SessionDisclosure title="Repository" icon="diff" summary={s.git.branch}><GitHubCard git={s.git} onRefresh={() => void controller.refreshGit()}/></SessionDisclosure>}
+    </>}
+    {view==='permissions'&&(client&&owner?<div className="session-permissions"><AgentPanel client={client} onAddConnector={onAddConnector} agentId={conv?.agentId || s.agentId || s.agents[0]?.id || ''}/></div>:<p className="pane-empty">Only the owner can review agent permissions.</p>)}
+    {view==='addons'&&(client&&owner?<ChatAddons client={client} onManage={onAddConnector}/>:<p className="pane-empty">Only the owner can inspect local add-ons.</p>)}
+    </div>
   </aside>;
 }
+
+function SessionDisclosure({title,icon,summary,children}:{title:string;icon:UiIconName;summary?:ReactNode;children:ReactNode}){return <details className="session-disclosure"><summary><UiIcon name={icon} size={15}/><span>{title}</span>{summary&&<small>{summary}</small>}<UiIcon name="chevron" size={12}/></summary><div className="session-disclosure-body">{children}</div></details>;}
+
+function ContextUsage({c,keys}:{c:ChatRecallController;keys:readonly string[]}){useSyncExternalStore(c.subscribe,c.getSnapshot,c.getSnapshot);const trace=c.latest(keys);if(!trace||!trace.context.numCtx||!trace.context.promptTokens)return <span>No measurement</span>;const value=Math.min(100,Math.round(trace.context.promptTokens/trace.context.numCtx*100));return <span className="session-context-usage"><span>{value}%</span><meter min={0} max={100} value={value} aria-label="Measured context window usage" title={`${trace.context.promptTokens.toLocaleString()} of ${trace.context.numCtx.toLocaleString()} tokens`}/></span>;}
 
 /** Details › Context of the newest reply that has a trace. */
 function RecallContext({ c, keys }: { c: ChatRecallController; keys: readonly string[] }) {

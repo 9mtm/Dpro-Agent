@@ -59,6 +59,8 @@ export function createBoardMock() {
       if (!c) return { status: 404, body: { code: 'not_found' } };
       return { status: 200, body: { conversation: c.conversationId ? { id: c.conversationId, title: 'Fictional chat' } : null, progress: progress(c.agents) } };
     }
+    if(p==='/api/boards/sync-departments')return {status:200,body:{created:0,departments:0}};
+    if(/^\/api\/boards\/[^/?]+\/overview$/.test(p))return {status:200,body:{tasks:[],total:0,limited:false}};
     if (p === '/api/boards' || p === '/api/boards?archived=1') {
       if (request.method === 'POST') return { status: 201, body: view(create(body.name, body.template ?? 'kanban', body.color ?? 'blue', body.departments ?? [], body.description)) };
       if (!boards.length) create('Company board', 'kanban', 'blue', []);

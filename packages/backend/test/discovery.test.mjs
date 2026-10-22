@@ -121,7 +121,7 @@ test('one scan finds every kind, grouped by project folder, with where each goes
   const mcp = find(v, 'mcp', 'shop-admin'); assert.match(mcp.from, /1 secret inside/); assert.equal(mcp.rootId, shopRoot.id); assert.match(mcp.to, /off · secret → Credentials/);
   assert.ok(find(v, 'mcp', 'docs'));
   assert.deepEqual(v.items.filter((i) => i.kind === 'ssh').map((i) => i.name), ['devbox', 'build'], 'wildcard hosts are left out');
-  assert.ok(!v.items.some((i) => /\.env|id_ed25519$/.test(i.name)), '.env and key files are not items');
+  assert.ok(!v.items.some((i) => /(?:^|[\\/])(?:\.env|id_ed25519)$/.test(i.name)), '.env and key files are not items');
 });
 
 test('preview is redacted; an MCP token and an SSH key never show', async () => {

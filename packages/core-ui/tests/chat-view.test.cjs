@@ -288,3 +288,4 @@ test('team chat: "@Name" or the reply picker chooses who writes; replies show th
   c.edit('hey @off');
   assert.match(renderToStaticMarkup(React.createElement(ChatView, { controller: c, mode: 'mock' })), /role="listbox" aria-label="Agents"/);
 });
+test('duplicate attachment names do not create ambiguous removal and failed batches stay atomic',async t=>{const {c}=await fixture(t);await c.load();assert.equal(c.attach([{name:'notes.md',text:'first'}]),null);assert.match(c.attach([{name:'notes.md',text:'second'}]),/already attached/);assert.equal(c.getSnapshot().attachments.length,1);assert.equal(c.getSnapshot().attachments[0].text,'first');assert.match(c.attach([{name:'new.md',text:'new'},{name:'notes.md',text:'second'}]),/already attached/);assert.equal(c.getSnapshot().attachments.length,1);});

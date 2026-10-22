@@ -13,12 +13,12 @@
  * agents commenting and moving cards through a tool come in a later step.
  */
 
-import { randomUUID } from 'node:crypto';
+import { randomUUID, createHash } from 'node:crypto';
 import { orderedId } from '../repositories/ordered-id.js';
 import { all, dialect, one, run, sql, type Step } from '../repositories/sql-steps.js';
 import { nowText } from '../db/pg/dialect.js';
 import { normalizeDepartment } from './personality.js';
-import { BOARD_COLORS, BOARD_TEMPLATES, DEFAULT_TEMPLATE, boardTemplate } from './board-templates.js';
+import { BOARD_COLORS, BOARD_TEMPLATES, DEFAULT_TEMPLATE, boardTemplate, templateForDepartment } from './board-templates.js';
 
 export const PRIORITIES = ['low', 'normal', 'high', 'urgent'] as const;
 export const CARD_TYPES = ['task', 'idea', 'bug', 'milestone', 'request'] as const;
@@ -60,7 +60,7 @@ export interface ChecklistItem { id: string; text: string; done: boolean; positi
 export interface BoardMeta {
   id: string; name: string; description: string; template: string; color: string; departments: string[];
   /** company: no departments; department: one; shared: several. */
-  kind: 'company' | 'department' | 'shared'; archived: boolean; version: number;
+  kind: 'company' | 'department' | 'shared'; managedDepartment?:boolean; departmentActive?:boolean; archived: boolean; version: number;
 }
 export interface Board extends BoardMeta { columns: BoardColumn[]; cards: BoardCard[]; labels: BoardLabel[] }
 export interface BoardComment { id: string; authorKind: 'user' | 'agent'; authorId: string; body: string; createdAt: string }
@@ -139,11 +139,12 @@ function* boardRow(ownerId: string, boardId: string): Step<{ id: string; name: s
 function* boardMeta(boardId: string): Step<BoardMeta> {
   const b = yield* one<{ id: string; name: string; description: string; template: string; color: string; archived: number; version: number }>(
     'SELECT id, name, description, template, color, archived, version FROM boards WHERE id = ?', boardId);
+  const linked=yield* one<{active:number}>('SELECT active FROM board_department_sources WHERE board_id = ?',boardId);
   const departments = (yield* all<{ department: string }>('SELECT department FROM board_departments WHERE board_id = ? ORDER BY department', boardId)).map((d) => d.department);
   return {
     id: b!.id, name: b!.name, description: b!.description, template: b!.template, color: b!.color, departments,
     kind: departments.length === 0 ? 'company' : departments.length === 1 ? 'department' : 'shared',
-    archived: Number(b!.archived) === 1, version: Number(b!.version),
+    managedDepartment:!!linked,departmentActive:linked?Number(linked.active)===1:true,archived: Number(b!.archived) === 1, version: Number(b!.version),
   };
 }
 
@@ -287,6 +288,7 @@ export function updateBoard(ownerId: string, boardId: string, body: Record<strin
     if (input.description !== undefined) { sets.push('description = ?'); args.push(input.description); }
     if (input.color !== undefined) { sets.push('color = ?'); args.push(input.color); }
     if (body.archived !== undefined) { sets.push('archived = ?'); args.push(body.archived ? 1 : 0); }
+    if(input.departments&&meta.managedDepartment&&[...input.departments].sort().join()!==[...meta.departments].sort().join())throw bad('This board follows its company department. Change the department at its source.');
     if (input.departments) {
       yield* run('DELETE FROM board_departments WHERE board_id = ?', boardId);
       for (const dep of input.departments) yield* run('INSERT INTO board_departments (board_id, department) VALUES (?, ?)', boardId, dep);
@@ -426,7 +428,7 @@ export function createCard(ownerId: string, boardId: string, body: Record<string
     const id = randomUUID();
     yield* run(`INSERT INTO board_cards (id, board_id, column_id, title, description, priority, position, due_date, created_by, card_type, start_date, cover, created_at, updated_at)
       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ${nowText(d)}, ${nowText(d)})`, id, boardId, col.id, title, description, prio, yield* nextPosition(col.id), due, ownerId, type, start, cov);
-    yield* setLinks(id, agents, deps);
+    yield* setLinks(id, agents, body.departments===undefined?(yield* boardMeta(boardId)).departments:deps);
     yield* setLabels(boardId, id, labels);
     if (opts.conversationId) yield* run('UPDATE board_cards SET conversation_id = ? WHERE id = ?', opts.conversationId, id);
     yield* logActivity(id, 'created', { kind: 'user', id: ownerId }, (yield* moveKind(boardId, col.id)).name);
@@ -700,4 +702,66 @@ export function agentCheck(ownerId: string, agentId: string, cardId: unknown, it
     if (r.changes !== 1) throw notFound('Checklist item');
     return yield* checklistOf(card.id);
   }, { immediate: true });
+}
+
+
+function boardDepartmentName(raw:string,key:string){
+ try{const name=normalizeDepartment(raw);if(name&&/^[\p{L}\p{N}][\p{L}\p{N} _-]*$/u.test(name))return name;}catch{/* Registered display names may contain punctuation absent from legacy agent department keys. */}
+ const base=raw.normalize('NFKC').replace(/&/g,' and ').replace(/[^\p{L}\p{N} _-]/gu,' ').replace(/\s+/g,' ').trim().toLowerCase();
+ return base&&base.length<=64?base:(base.slice(0,48)||'department')+'-'+createHash('sha256').update(key).digest('hex').slice(0,8);
+}
+/** Idempotent owner-authorised provisioning from actual departments, never the specialty catalogue. */
+export function syncDepartmentBoards(ownerId:string){
+ return sql().tx(function*(){
+  const sources=new Map<string,{key:string;name:string;display:string}>();
+  const registered=yield* all<{id:string;name:string}>('SELECT id,name FROM memory_departments WHERE owner_id = ? ORDER BY id',ownerId);
+  for(const d of registered){const key='registry:'+d.id;let name=boardDepartmentName(d.name,key);if(sources.has(name))name=name.slice(0,48)+'-'+createHash('sha256').update(key).digest('hex').slice(0,8);sources.set(name,{key,name,display:d.name});}
+  // Agent configuration is the installation's company-wide team catalogue.
+  const assigned=yield* all<{department:string}>('SELECT DISTINCT department FROM agents_config WHERE department IS NOT NULL AND department <> ? ORDER BY department','');
+  for(const d of assigned){const name=boardDepartmentName(d.department,'agents:'+d.department);if(!sources.has(name))sources.set(name,{key:'agents:'+name,name,display:d.department});}
+  let count=Number((yield* one<{n:number}>('SELECT COUNT(*) AS n FROM boards WHERE owner_id = ?',ownerId))?.n??0),created=0;
+  const company=yield* one('SELECT b.id FROM boards b WHERE b.owner_id = ? AND b.archived = 0 AND NOT EXISTS (SELECT 1 FROM board_departments d WHERE d.board_id = b.id) LIMIT 1',ownerId);
+  if(!company){if(count>=MAX_BOARDS)throw bad('Board limit reached');yield* insertBoard(ownerId,{name:'Company board',description:'Company tasks and department oversight.',template:DEFAULT_TEMPLATE,color:'blue',departments:[]});count++;created++;}
+  yield* run('UPDATE board_department_sources SET active = 0 WHERE owner_id = ?',ownerId);
+  for(const source of sources.values()){
+   let link=yield* one<{board_id:string;department:string;auto_name:string}>('SELECT board_id,department,auto_name FROM board_department_sources WHERE owner_id = ? AND source_key = ?',ownerId,source.key);
+   if(!link)link=yield* one<{board_id:string;department:string;auto_name:string}>('SELECT board_id,department,auto_name FROM board_department_sources WHERE owner_id = ? AND department = ? ORDER BY board_id LIMIT 1',ownerId,source.name);
+   const autoName=(source.display+' board').slice(0,80);
+   if(link){
+    const b=yield* one<{name:string}>('SELECT name FROM boards WHERE id = ? AND owner_id = ?',link.board_id,ownerId);
+    if(b&&link.department!==source.name){
+      yield* run('UPDATE boards SET version = version + 1 WHERE owner_id = ? AND id IN (SELECT board_id FROM board_departments WHERE department = ?)',ownerId,link.department);
+      yield* run('INSERT INTO board_departments(board_id,department) SELECT d.board_id,? FROM board_departments d JOIN boards b ON b.id = d.board_id WHERE b.owner_id = ? AND d.department = ? ON CONFLICT DO NOTHING',source.name,ownerId,link.department);
+      yield* run('DELETE FROM board_departments WHERE department = ? AND board_id IN (SELECT id FROM boards WHERE owner_id = ?)',link.department,ownerId);
+      yield* run('UPDATE board_cards SET version = version + 1 WHERE id IN (SELECT cd.card_id FROM board_card_departments cd JOIN board_cards c ON c.id = cd.card_id JOIN boards b ON b.id = c.board_id WHERE b.owner_id = ? AND cd.department = ?)',ownerId,link.department);
+      yield* run('INSERT INTO board_card_departments(card_id,department) SELECT cd.card_id,? FROM board_card_departments cd JOIN board_cards c ON c.id = cd.card_id JOIN boards b ON b.id = c.board_id WHERE b.owner_id = ? AND cd.department = ? ON CONFLICT DO NOTHING',source.name,ownerId,link.department);
+      yield* run('DELETE FROM board_card_departments WHERE department = ? AND card_id IN (SELECT c.id FROM board_cards c JOIN boards b ON b.id = c.board_id WHERE b.owner_id = ?)',link.department,ownerId);
+    }
+    if(b&&b.name===link.auto_name&&b.name!==autoName)yield* run('UPDATE boards SET name = ?, version = version + 1 WHERE id = ?',autoName,link.board_id);
+    yield* run('UPDATE board_department_sources SET source_key = ?, department = ?, auto_name = ?, active = 1 WHERE board_id = ?',source.key,source.name,autoName,link.board_id);
+    continue;
+   }
+   // Adopt an existing single-department board, including an archived one; never resurrect archived work.
+   const existing=yield* one<{id:string;name:string}>(`SELECT b.id,b.name FROM boards b JOIN board_departments d ON d.board_id = b.id WHERE b.owner_id = ? AND d.department = ? AND (SELECT COUNT(*) FROM board_departments x WHERE x.board_id = b.id) = 1 AND NOT EXISTS (SELECT 1 FROM board_department_sources l WHERE l.board_id = b.id) ORDER BY b.archived,b.created_at,b.id LIMIT 1`,ownerId,source.name);
+   let boardId=existing?.id;
+   if(!boardId){if(count>=MAX_BOARDS)throw bad('Board limit reached');boardId=yield* insertBoard(ownerId,{name:autoName,description:'Work for '+source.display+'.',template:templateForDepartment(source.display),color:'blue',departments:[source.name]});count++;created++;}
+   yield* run('INSERT INTO board_department_sources(board_id,owner_id,source_key,department,auto_name,active) VALUES(?,?,?,?,?,1)',boardId,ownerId,source.key,source.name,autoName);
+  }
+  return {created,departments:sources.size};
+ },{immediate:true});
+}
+
+/** Cross-board references retain the original task ID, state and discussion. */
+export function relatedBoardTasks(ownerId:string,boardId:string){
+ return sql().read((function*(){
+  yield* boardRow(ownerId,boardId);const meta=yield* boardMeta(boardId);
+  const deps=meta.departments;
+  const marks=deps.map(()=>'?').join(',');
+  const relevant=deps.length?` AND (EXISTS (SELECT 1 FROM board_departments bd WHERE bd.board_id = c.board_id AND bd.department IN (${marks})) OR EXISTS (SELECT 1 FROM board_card_departments cd WHERE cd.card_id = c.id AND cd.department IN (${marks})) OR EXISTS (SELECT 1 FROM board_card_agents ca JOIN agents_config a ON a.id = ca.agent_id WHERE ca.card_id = c.id AND a.department IN (${marks})))`:'';
+  const args=[ownerId,boardId,...deps,...deps,...deps];
+  const where=' FROM board_cards c JOIN boards b ON b.id = c.board_id JOIN board_columns col ON col.id = c.column_id WHERE b.owner_id = ? AND b.id <> ? AND b.archived = 0 AND c.archived = 0'+relevant;
+  const total=Number((yield* one<{n:number}>('SELECT COUNT(*) AS n'+where,...args))?.n??0);
+  const tasks=yield* all<{cardId:string;boardId:string;boardName:string;title:string;status:string;priority:string;dueDate:string|null}>('SELECT c.id AS "cardId",b.id AS "boardId",b.name AS "boardName",c.title,col.name AS status,c.priority,c.due_date AS "dueDate"'+where+' ORDER BY c.updated_at DESC,c.id LIMIT 500',...args);
+  return {tasks,total,limited:total>tasks.length};
+ })());
 }

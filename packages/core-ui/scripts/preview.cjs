@@ -47,7 +47,7 @@ function createPreviewServer(packageRoot = root) {
       const body = current.files.get(name);
       if (!body) return send(404, 'Not found');
       const type = name.endsWith('.html') ? 'text/html; charset=utf-8' : name.endsWith('.js') ? 'text/javascript; charset=utf-8'
-        : name.endsWith('.css') ? 'text/css; charset=utf-8' : 'text/plain; charset=utf-8';
+        : name.endsWith('.css') ? 'text/css; charset=utf-8' : name.endsWith('.gif') ? 'image/gif' : 'text/plain; charset=utf-8';
       return send(200, body, type);
     } catch { return send(503, 'Current build unavailable'); }
   });

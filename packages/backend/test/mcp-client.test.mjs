@@ -192,6 +192,17 @@ test('discovery: tools/list over stdio, validated, size limited, namespaced', as
   assert.ok((await mcp.getMcpTools()).every((t) => t.execClass === true), 'stdio tools are exec-class');
 });
 
+test('reconnect is owner-only, requires an enabled approved launch, and reports actual session state',async()=>{
+ const path=`/api/mcp/servers/${stdio.id}/reconnect`;
+ assert.equal((await call('POST',path,{},'m-admin')).statusCode,403);
+ assert.equal((await app.inject({method:'POST',url:path,payload:{}})).statusCode,401);
+ assert.equal((await call('GET',`/api/mcp/servers/${stdio.id}`)).json().connectionState,'connected');
+ process.env.AGENT_EXEC_TOOLS='false';assert.equal((await call('POST',path,{})).statusCode,403);assert.equal(mcp.connectionState(stdio.id),'connected');process.env.AGENT_EXEC_TOOLS='true';
+ await mcp.closeConnection(stdio.id);assert.equal((await call('GET',`/api/mcp/servers/${stdio.id}`)).json().connectionState,'disconnected');
+ const grants=db.prepare('SELECT * FROM agent_tool_grants ORDER BY agent_id,tool_name').all();const result=await call('POST',path,{});assert.equal(result.statusCode,200,result.body);assert.equal(result.json().server.connectionState,'connected');assert.equal(result.json().server.enabled,true);assert.deepEqual(db.prepare('SELECT * FROM agent_tool_grants ORDER BY agent_id,tool_name').all(),grants);assert.ok(audits('mcp_server.reconnect').some(row=>row.success===1));
+ const off=await call('POST','/api/mcp/servers',{name:'reconnect-off',transport:'http',url:'http://127.0.0.1:65535/mcp'});assert.equal(off.statusCode,201);assert.equal((await call('POST',`/api/mcp/servers/${off.json().id}/reconnect`,{})).statusCode,409);
+});
+
 test('MCP tools are never granted by default (new, default and legacy agents)', async () => {
   for (const agentId of ['m-agent', 'm-legacy', undefined]) {
     const reg = registry({ agentId });

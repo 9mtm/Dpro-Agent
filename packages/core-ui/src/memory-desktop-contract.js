@@ -21,6 +21,31 @@ export const DATABASE_KINDS = ['sqlite', 'mysql', 'postgres', 'other'];
 export const MAX_GROUP_PROJECTS = 200;
 export const MAX_TRASH_IDS = 500;
 
+/** Explicit rule approval is a separate exact owner decision, never mixed with appearance edits. */
+function ruleReviewBody(body) {
+ if(!record(body)||![Object.prototype,null].includes(Object.getPrototypeOf(body))||Object.keys(body).sort().join(',')!=='approvedRules,confirmRules')return false;
+ const fields=Object.getOwnPropertyDescriptors(body);
+ if(!Object.hasOwn(fields.approvedRules,'value')||!Object.hasOwn(fields.confirmRules,'value')||fields.confirmRules.value!==true)return false;
+ const ids=fields.approvedRules.value;
+ if(!Array.isArray(ids)||ids.length>40||Object.keys(ids).length!==ids.length)return false;
+ const seen=new Set();for(let i=0;i<ids.length;i++){const d=Object.getOwnPropertyDescriptor(ids,String(i));if(!d||!Object.hasOwn(d,'value')||typeof d.value!=='string'||!/^[a-f0-9]{64}$/.test(d.value)||seen.has(d.value))return false;seen.add(d.value);}
+ return true;
+}
+/** Never truncate a rule that the owner may be asked to approve. */
+function designRules(value) {
+ if(value===undefined)return [];
+ if(!Array.isArray(value)||value.length>40)throw Error('protocol');
+ const seen=new Set(),out=value.map(r=>{
+  if(!record(r)||typeof r.text!=='string'||!r.text||r.text.length>32768||typeof r.source!=='string'||!r.source||r.source.length>1024||/[\x00-\x08\x0b\x0c\x0e-\x1f\x7f\u202a-\u202e\u2066-\u2069]/.test(r.text)||/[\x00-\x1f\x7f\u202a-\u202e\u2066-\u2069]/.test(r.source))throw Error('protocol');
+  const legacy=r.id===undefined||r.id===null;
+  if(!legacy&&(typeof r.id!=='string'||!/^[a-f0-9]{64}$/.test(r.id)||typeof r.confirmed!=='boolean'||seen.has(r.id)))throw Error('protocol');
+  if(legacy&&r.confirmed!==undefined&&r.confirmed!==false)throw Error('protocol');
+  if(!legacy)seen.add(r.id);
+  return {text:r.text,source:r.source,id:legacy?null:r.id,confirmed:legacy?false:r.confirmed,reviewable:!legacy};
+ });
+ if(new TextEncoder().encode(JSON.stringify(out)).length>65536)throw Error('protocol');return out;
+}
+
 /** Which route a path is, with its id, or null. */
 export function memoryDesktopPath(path) {
   if (typeof path !== 'string' || path.length > 512 || path.includes('?') || path.includes('#')) return null;
@@ -63,6 +88,7 @@ export function allowedMemoryDesktop(method, path, body) {
     case 'group-projects':
       return method === 'PUT' && record(body) && onlyKeys(body, ['projects']) && Array.isArray(body.projects) && body.projects.length <= MAX_GROUP_PROJECTS && body.projects.every(slug) && new Set(body.projects).size === body.projects.length;
     case 'design':
+      if(method==='PATCH'&&record(body)&&(Object.hasOwn(body,'approvedRules')||Object.hasOwn(body,'confirmRules')))return ruleReviewBody(body);
       // A logo is named by its id or its shown path; mainLogo null = Dpro picks; mainColour = one of the found colours.
       return get || (method === 'PATCH' && record(body) && Object.keys(body).length > 0 && onlyKeys(body, ['mainLogo', 'notLogo', 'mainColour', 'writeFile'])
         && (body.mainLogo === undefined || body.mainLogo === null || filePath(body.mainLogo)) && (body.notLogo === undefined || filePath(body.notLogo))
@@ -74,7 +100,7 @@ export function allowedMemoryDesktop(method, path, body) {
   return false;
 }
 
-const CODES = { 400: ['invalid_input', 'confirm_required'], 403: ['forbidden'], 404: ['not_found'], 409: ['name_taken', 'not_in_trash', 'nothing_to_restore', 'no_change', 'too_many', 'in_other_group'] };
+const CODES = { 400: ['invalid_input', 'confirm_required'], 403: ['forbidden'], 404: ['not_found'], 409: ['name_taken', 'not_in_trash', 'nothing_to_restore', 'no_change', 'too_many', 'in_other_group', 'stale_review'] };
 const when = x => str(x, 40);
 function trashItem(x) {
   if (!record(x) || !memoryId(x.id) || x.withProject === true) return null; // memories trashed with their project show as the project's row
@@ -97,7 +123,7 @@ function design(b) {
     colours: (Array.isArray(b.colours) ? b.colours : []).slice(0, 60).map(colour).filter(Boolean),
     fonts: (Array.isArray(b.fonts) ? b.fonts : []).slice(0, 20).filter(record).map(f => ({ name: str(f.name, 80) ?? '', source: str(f.source, 300) ?? '' })),
     logos: (Array.isArray(b.logos) ? b.logos : []).slice(0, 40).map(logo).filter(Boolean),
-    rules: (Array.isArray(b.rules) ? b.rules : []).slice(0, 40).filter(record).map(r => ({ text: str(r.text, 300) ?? '', source: str(r.source, 300) ?? '' })),
+    rules: designRules(b.rules),
     sources: (Array.isArray(b.sources) ? b.sources : []).slice(0, 40).filter(x => record(x) && filePath(x.path)).map(x => ({ path: x.path, kind: str(x.kind, 40) ?? '' })),
     conflicts: (Array.isArray(b.conflicts) ? b.conflicts : []).slice(0, 10).map(conflict).filter(Boolean),
     hiddenLogos: n(b.hiddenLogos), writeFile: b.writeFile !== false,

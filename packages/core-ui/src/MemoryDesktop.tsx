@@ -226,7 +226,7 @@ export function MemoryWindow({ client, active = false, focus, sidebarSlot, onOpe
     : place.startsWith('group:') ? <GroupView d={d} sc={sc} groupId={place.slice(6)}/>
     : place === 'agents' ? <AgentsPlace names={ss.agents} onOpen={id => d.open(`agent:${id}`)}/>
     : place === 'archived' ? <ArchivedPlace projects={(ss.tree?.projects ?? []).filter(p => p.archived)} onOpen={slug => d.open(`project:${slug}`)} onBack={slug => projectAction(slug, 'unarchive')}/>
-    : project && ds.projectView === 'design' ? <DesignView d={d} slug={project.slug}/>
+    : project && ds.projectView === 'design' ? <DesignView d={d} slug={project.slug} client={client}/>
     : project && ds.projectView === 'databases' ? <DatabasesView d={d} slug={project.slug} agents={ss.agents}/>
     : project && ds.projectView === 'files' ? <FilesView client={client} agents={ss.agents} drawers={[{ id: `project:${project.slug}`, name: project.name }]}/>
     : <MemoryList k={k} pinned={ds.pinned} showPinned={place === 'all' || !!project} onMenu={(e, i) => menu.at(e, memoryMenu(i))} onPinnedMenu={(e, f) => menu.at(e, [{ label: 'Edit…', icon: 'pencil', run: () => setSheet({ kind: 'edit-pinned', fact: f }) }, { label: 'Unpin', icon: 'pin', run: () => void d.unpin(f) }])}

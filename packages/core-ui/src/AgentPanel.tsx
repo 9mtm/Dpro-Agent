@@ -10,18 +10,18 @@ import { UiIcon } from './ui-icons';
  * what it may do on its own, and the memory it can read. Every switch saves
  * to the agent right away; risky "allow" asks for a second click.
  */
-export function AgentPanel({ client, agentId, onAddConnector }: { client: SessionClient; agentId: string; onAddConnector?: () => void }) {
+export function AgentPanel({ client, agentId, onAddConnector, expandedAccess = false, part }: { client: SessionClient; agentId: string; onAddConnector?: () => void; expandedAccess?: boolean; part?: 'actions'|'tools'|'memory' }) {
   const [card, setCard] = useState<AgentCardController | null>(null);
   useEffect(() => {
     if (!agentId) { setCard(null); return; }
-    const c = new AgentCardController(client, agentId, 'memory'); setCard(c); void c.load();
+    const c = new AgentCardController(client, agentId, expandedAccess?'permissions':'memory'); setCard(c); void c.load();
     return () => c.dispose();
-  }, [client, agentId]);
+  }, [client, agentId, expandedAccess]);
   if (!card) return null;
-  return <AgentPanelBody card={card} onAddConnector={onAddConnector}/>;
+  return <AgentPanelBody card={card} onAddConnector={onAddConnector} expandedAccess={expandedAccess} part={part}/>;
 }
 
-export function AgentPanelBody({ card, onAddConnector }: { card: AgentCardController; onAddConnector?: () => void }) {
+export function AgentPanelBody({ card, onAddConnector, expandedAccess = false, part }: { card: AgentCardController; onAddConnector?: () => void; expandedAccess?: boolean; part?: 'actions'|'tools'|'memory' }) {
   const s = useSyncExternalStore(card.subscribe, card.getSnapshot, card.getSnapshot);
   const [open, setOpen] = useState<string | null>(null);
   const [risky, setRisky] = useState(false);
@@ -32,8 +32,9 @@ export function AgentPanelBody({ card, onAddConnector }: { card: AgentCardContro
   const on = (g?.available ?? []).filter(t => granted.has(t.name)).length;
   const memories = s.memories?.filter(m => readable(m, perms)).length;
   const busy = s.phase === 'saving' || s.phase === 'loading';
+  if(expandedAccess&&s.phase==='ready'&&(!g||!perms))return <section className="panel-card"><p role="status">Permissions could not be read. No changes were made.</p><button onClick={()=>void card.load()}>Try again</button></section>;
   return <>
-    <section className="panel-card" aria-label="Skills and tools">
+    {(!part||part==='tools')&&<section className="panel-card" aria-label="Skills and tools">
       <h3>Skills and tools <span className="panel-count">{g ? `${on} of ${g.available.length} on` : ''}</span></h3>
       {!g ? <p className="muted">Loading…</p> : <ul className="panel-groups">{groups.map(({ name, tools }) => {
         const n = tools.filter(t => granted.has(t.name)).length;
@@ -49,9 +50,9 @@ export function AgentPanelBody({ card, onAddConnector }: { card: AgentCardContro
               onChange={() => { card.toggleTool(t.name); void save(); }}/><span dir="ltr">{t.name.replace(/^mcp:/, '')}</span>{t.requiresApproval && <small className="muted">asks first</small>}</label></li>)}</ul>}
         </li>;
       })}</ul>}
-    </section>
-    <section className="panel-card" aria-label="What the agent may do">
-      <h3>Permissions</h3>
+    </section>}
+    {(!part||part==='actions')&&<details open={expandedAccess||undefined} className="panel-card panel-advanced" aria-label="What the agent may do"><summary><UiIcon name="shield" size={14}/>Permissions</summary>
+      <h3>Permissions</h3>{expandedAccess&&<button className="security-ask-all" disabled={busy||!perms} onClick={()=>{for(const category of permissionCategories)card.setMode(category,'ask');setRisky(false);void card.savePermissions();}}><UiIcon name="shield" size={14}/>Ask me for all categories</button>}
       {!perms ? <p className="muted">Loading…</p> : <ul className="panel-modes">{permissionCategories.map(c => <li key={c}>
         <span>{CATEGORY[c] ?? c}</span>
         <select aria-label={CATEGORY[c] ?? c} value={perms.modes[c] ?? 'ask'} disabled={busy} data-mode={perms.modes[c] ?? 'ask'}
@@ -61,14 +62,14 @@ export function AgentPanelBody({ card, onAddConnector }: { card: AgentCardContro
       {risky && <p className="panel-confirm" role="alert">Allow {riskyCategories.filter(c => perms?.modes[c] === 'allow').map(c => (CATEGORY[c] ?? c).toLowerCase()).join(', ')} without asking?
         <button type="button" className="link-button danger" onClick={() => { setRisky(false); void card.savePermissions(true); }}>Yes, allow</button>
         <button type="button" className="link-button" onClick={() => { setRisky(false); void card.load(); }}>Cancel</button></p>}
-    </section>
-    <section className="panel-card" aria-label="Agent memory">
+    </details>}
+    {(!part||part==='memory')&&<details open={part==='memory'||undefined} className="panel-card panel-advanced" aria-label="Agent memory"><summary><UiIcon name="brain" size={14}/>Memory access</summary>
       <h3>Memory</h3>
       {!perms ? <p className="muted">Loading…</p> : <>
-        <p className="panel-memory">{memories === undefined ? '…' : memories} {memories === 1 ? 'memory' : 'memories'} it can read</p>
+        {memories!==undefined&&<p className="panel-memory">{memories} {memories===1?'memory':'memories'} it can read</p>}
         <p className="muted">Reads {perms.memoryRead.join(', ') || 'nothing'} · writes {perms.memoryWrite.join(', ') || 'nothing'}{perms.sharedMemory ? ' · shares with the team' : ''}</p>
       </>}
-    </section>
+    </details>}
     {(s.saved || (s.notice && s.phase !== 'loading')) && <p className={s.notice ? 'panel-notice error' : 'panel-notice'} role="status">{s.notice ?? s.saved}</p>}
   </>;
 }

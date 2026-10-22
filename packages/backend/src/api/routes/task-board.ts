@@ -1,3 +1,4 @@
+import {syncDepartmentBoards,relatedBoardTasks} from '../../services/task-board.js';
 /**
  * Task board API (BOARD-01). Owner only (auth gate owner tier, route access
  * 'owner', handler role check).
@@ -61,6 +62,14 @@ export async function taskBoardRoutes(fastify: FastifyInstance) {
   type P = { id: string; columnId?: string; cardId?: string; labelId?: string; itemId?: string };
   const ids = (p: P) => [p.id, p.columnId, p.cardId, p.labelId, p.itemId].every((x) => x === undefined || ID.test(x));
 
+  fastify.post('/api/boards/sync-departments',{config},async(request,reply)=>{
+    const owner=ownerOf(request,reply);if(owner===null)return reply;
+    try{if(request.body!==undefined&&Object.keys(objectBody(request.body)).length)throw new BoardError(400,'invalid_board','No fields accepted');return await syncDepartmentBoards(owner);}catch(err){return fail(err,reply);}
+  });
+  fastify.get<{Params:P}>('/api/boards/:id/overview',{config},async(request,reply)=>{
+    const owner=ownerOf(request,reply);if(owner===null)return reply;if(!ids(request.params))return reply.code(404).send({code:'not_found'});
+    try{return await relatedBoardTasks(owner,request.params.id);}catch(err){return fail(err,reply);}
+  });
   fastify.get<{ Querystring: { archived?: string } }>('/api/boards', { config }, async (request, reply) => {
     const owner = ownerOf(request, reply); if (owner === null) return reply;
     return {

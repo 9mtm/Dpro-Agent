@@ -3,7 +3,7 @@ const path = require('node:path');
 const { randomUUID, createHash } = require('node:crypto');
 const root = path.resolve(__dirname, '..');
 const idPattern = /^build-[a-f0-9-]{36}$/;
-const assetPattern = /^assets\/[A-Za-z0-9_-]+\.(?:js|css)$/;
+const assetPattern = /^assets\/[A-Za-z0-9_-]+\.(?:js|css|gif)$/;
 const allowed = name => name === 'index.html' || name === 'THIRD_PARTY_NOTICES.txt' || assetPattern.test(name);
 const hash = data => createHash('sha256').update(data).digest('hex');
 function directory(folder) {

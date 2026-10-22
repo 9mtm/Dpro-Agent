@@ -80,6 +80,7 @@ export function approvalRunDrawers(stored: unknown, context: Pick<ToolExecutionC
     try { d = normalizeDrawer(raw); } catch { continue; }
     if (out.some((x) => sameDrawer(x, d))) continue;
     if (d.kind === 'people' && ++people > MAX_PEOPLE_DRAWERS) continue;
+    if ((raw as DrawerRef).readOnly === true || d.kind === 'project' && out.some(x=>x.kind==='project')) d={...d,readOnly:true};
     out.push(d);
     if (out.length >= MAX_APPROVAL_DRAWERS) break;
   }

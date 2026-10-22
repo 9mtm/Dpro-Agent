@@ -1,10 +1,10 @@
 export type ConnectorTool = { name: string; title: string | null; description: string | null; requiresApproval: boolean; requiresApprovalOverride: boolean | null };
 export type Connector = { id: string; name: string; description: string | null; transport: 'stdio' | 'http' | 'sse'; command: string | null; args: string[]; url: string | null; allowRemote: boolean;
-  envNames: string[]; headerNames: string[]; enabled: boolean; active: boolean; launchApproved: boolean; status: string; lastError: string | null; lastDiscoveredAt: string | null; tools: ConnectorTool[] };
+  connectionState?:'connected'|'connecting'|'disconnected'|'unknown'; envNames: string[]; headerNames: string[]; enabled: boolean; active: boolean; launchApproved: boolean; status: string; lastError: string | null; lastDiscoveredAt: string | null; tools: ConnectorTool[] };
 export type LaunchApproval = { command: string; args: string[]; envNames: string[] };
 export const CONNECTOR_TRANSPORTS: readonly ['stdio', 'http', 'sse'];
 export const CONNECTORS_PATH: '/api/mcp/servers';
-export function connectorPath(path: string): { kind: 'list' } | { kind: 'one' | 'enable' | 'disable' | 'refresh'; id: string } | { kind: 'tool'; id: string; tool: string } | null;
+export function connectorPath(path: string): { kind: 'list' } | { kind: 'one' | 'enable' | 'disable' | 'refresh' | 'reconnect'; id: string } | { kind: 'tool'; id: string; tool: string } | null;
 export function connectorRoute(path: string): boolean;
 export function allowedConnector(method: string, path: string, body?: unknown): boolean;
 export function connectorResponse(path: string, status: number, body: unknown): unknown;

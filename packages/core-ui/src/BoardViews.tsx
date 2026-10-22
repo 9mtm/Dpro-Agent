@@ -1,4 +1,5 @@
 import { useState } from 'react';
+import {UiIcon} from './ui-icons';
 import { cardTypeLabel, matches, priorityLabel } from './board';
 import type { BoardController, Card } from './board';
 import { OVERLOAD, cardsByDue, monthGrid, sortCards, workloadMatrix } from './board-views';
@@ -13,7 +14,7 @@ const WEEKDAYS = ['Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat', 'Sun'];
 /** Board / Table / Calendar / Workload switcher. */
 export function ViewSwitch({ view, onChange }: { view: BoardView; onChange: (v: BoardView) => void }) {
   return <div className="board-views" role="tablist" aria-label="Board views">{(Object.keys(viewLabel) as BoardView[]).map(v =>
-    <button key={v} type="button" role="tab" aria-selected={view === v} className="board-view-tab" onClick={() => onChange(v)}>{viewLabel[v]}</button>)}
+    <button key={v} type="button" role="tab" id={`board-view-${v}`} aria-controls="board-view-content" aria-selected={view === v} className="board-view-tab" tabIndex={view===v?0:-1} onKeyDown={e=>{const views=Object.keys(viewLabel) as BoardView[];if(['ArrowLeft','ArrowRight','Home','End'].includes(e.key)){e.preventDefault();const at=views.indexOf(v),next=e.key==='Home'?0:e.key==='End'?3:(at+(e.key==='ArrowRight'?1:-1)+4)%4;onChange(views[next]);(e.currentTarget.parentElement?.children[next] as HTMLButtonElement)?.focus();}}} onClick={() => onChange(v)}>{viewLabel[v]}</button>)}
   </div>;
 }
 
@@ -32,7 +33,7 @@ export function TableView({ controller, busy }: { controller: BoardController; b
   return <div className="board-table-wrap">
     <table className="board-table">
       <thead><tr>{COLUMNS.map(c => <th key={c.key} scope="col" aria-sort={sort.key === c.key ? (sort.dir === 'asc' ? 'ascending' : 'descending') : undefined}>
-        <button type="button" onClick={() => by(c.key)}>{c.label}{sort.key === c.key ? (sort.dir === 'asc' ? ' ▲' : ' ▼') : ''}</button>
+        <button type="button" onClick={() => by(c.key)}>{c.label}{sort.key === c.key ? <span className={sort.dir==='desc'?'board-sort-desc':''}><UiIcon name="arrow-up" size={12}/></span> : ''}</button>
       </th>)}<th scope="col">Labels</th></tr></thead>
       <tbody>{rows.map(c => <tr key={c.id} data-priority={c.priority}>
         <td><button type="button" className="board-link" onClick={() => void controller.openCard(c.id)}>{c.title}</button>
@@ -41,7 +42,7 @@ export function TableView({ controller, busy }: { controller: BoardController; b
         <td><select aria-label={`Status of ${c.title}`} value={c.columnId} disabled={busy} onChange={e => void controller.move(c.id, e.target.value, null)}>
           {s.columns.map(col => <option key={col.id} value={col.id}>{col.name}</option>)}</select></td>
         <td><span className={`board-priority p-${c.priority}`}>{priorityLabel[c.priority]}</span></td>
-        <td>{c.agents.map(a => controller.agentName(a)).join(', ') || '—'}</td>
+        <td>{c.agents.length?<span className="board-table-assignees">{c.agents.map(a=><span key={a} title={controller.agentName(a)}><span className="board-avatar" aria-hidden="true">{controller.agentName(a).slice(0,1).toUpperCase()}</span>{controller.agentName(a)}</span>)}</span>:'Not assigned'}</td>
         <td>{c.startDate ?? '—'}</td>
         <td className={c.dueDate && c.dueDate < now ? 'board-due overdue' : undefined}>{c.dueDate ?? '—'}</td>
         <td>{c.checklist.total ? `${c.checklist.done}/${c.checklist.total}` : '—'}</td>
@@ -64,9 +65,9 @@ export function CalendarView({ controller }: { controller: BoardController }) {
   const tile = (c: Card) => <li key={c.id}><button type="button" className="board-cal-card" data-priority={c.priority} data-color={c.cover ?? undefined} onClick={() => void controller.openCard(c.id)} title={c.title}>{c.title}</button></li>;
   return <div className="board-calendar">
     <div className="board-cal-head">
-      <button type="button" aria-label="Previous month" onClick={() => shift(-1)}>‹</button>
+      <button type="button" aria-label="Previous month" onClick={() => shift(-1)}><UiIcon name="arrow-left" size={16}/></button>
       <h3>{MONTHS[month.m]} {month.y}</h3>
-      <button type="button" aria-label="Next month" onClick={() => shift(1)}>›</button>
+      <button type="button" aria-label="Next month" onClick={() => shift(1)}><UiIcon name="chevron" size={16}/></button>
       <button type="button" onClick={() => setMonth({ y: now.getFullYear(), m: now.getMonth() })}>Today</button>
     </div>
     <div className="board-cal-grid" role="grid" aria-label={`${MONTHS[month.m]} ${month.y}`}>

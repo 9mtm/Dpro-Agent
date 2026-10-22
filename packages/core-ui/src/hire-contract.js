@@ -1,3 +1,4 @@
+import {TEAM_RESOURCES_PATH,allowedTeamResources,teamResourcesResponse} from './team-resources-contract.js';
 // UI-AGENT-CREATE-01 wire contract: create an agent (role + persona) and set
 // its tool permissions. Shared by the browser boundary and the local bridge.
 import { validAgentId } from './agent-id.js';
@@ -86,18 +87,18 @@ export function validGrantsBody(b) {
   return Array.isArray(b.grants) && b.grants.length <= MAX_GRANTS && b.grants.every(toolName) && new Set(b.grants).size === b.grants.length;
 }
 
-/** POST /api/onboarding/team-plan body: size, 1-12 departments, optional name language. */
+/** POST /api/onboarding/team-plan body: size, 1-72 departments, optional name language. */
 export function validPlanBody(b) {
   if (!record(b) || !onlyKeys(b, ['size', 'departments', 'language']) || !companySizes.includes(b.size)) return false;
   if (b.language !== undefined && !nameLanguages.includes(b.language)) return false;
-  return Array.isArray(b.departments) && b.departments.length >= 1 && b.departments.length <= 12
+  return Array.isArray(b.departments) && b.departments.length >= 1 && b.departments.length <= 72
     && b.departments.every(department) && new Set(b.departments).size === b.departments.length;
 }
 
 const headcount = x => Number.isSafeInteger(x) && x >= 1 && x <= MAX_TOTAL;
 const batchIdOk = x => typeof x === 'string' && /^[A-Za-z0-9_-]{8,64}$/.test(x);
 export const validBatchId = batchIdOk;
-const departmentList = d => Array.isArray(d) && d.length >= 1 && d.length <= 12 && d.every(department) && new Set(d).size === d.length;
+const departmentList = d => Array.isArray(d) && d.length >= 1 && d.length <= 72 && d.every(department) && new Set(d).size === d.length;
 
 /** A batch path: /api/onboarding/team-batches/:id or …/:id/run. */
 export function batchPath(path) {
@@ -125,7 +126,7 @@ export function validSpecialties(rows,count){
 export function validBatchBody(b) {
   if (!record(b) || !onlyKeys(b, ['id', 'language', 'departments']) || !batchIdOk(b.id) || (b.language !== undefined && !nameLanguages.includes(b.language))) return false;
   const d = b.departments;
-  if (!Array.isArray(d) || d.length < 1 || d.length > 12) return false;
+  if (!Array.isArray(d) || d.length < 1 || d.length > 72) return false;
   const ok = d.every(x => record(x) && onlyKeys(x, ['department', 'count', 'presets', 'specialties']) && department(x.department) && headcount(x.count)
     && validSpecialties(x.specialties,x.count)
     && (x.presets === undefined || (record(x.presets) && Object.entries(x.presets).every(([r, p]) => teamRoles.includes(r) && presets.includes(p)))));
@@ -139,6 +140,7 @@ export function validRunBody(b) {
 }
 
 export function allowedHire(method, path, body) {
+  if(path===TEAM_RESOURCES_PATH)return allowedTeamResources(method,body);
   if (path === CATALOGUE_PATH) return method === 'GET' && body === undefined;
   if (path === PLAN_PATH) return method === 'POST' && validPlanBody(body);
   if (path === DISTRIBUTION_PATH) return method === 'POST' && validDistributionBody(body);
@@ -154,7 +156,7 @@ export function allowedHire(method, path, body) {
 
 /** True when this response belongs to the hire contract (create result or a grants path). */
 export function hireRoute(path, status) {
-  return path === CATALOGUE_PATH || path === PLAN_PATH || path === DISTRIBUTION_PATH || path === BATCHES_PATH || batchPath(path) !== null
+  return path === TEAM_RESOURCES_PATH || path === CATALOGUE_PATH || path === PLAN_PATH || path === DISTRIBUTION_PATH || path === BATCHES_PATH || batchPath(path) !== null
     || grantsAgentId(path) !== null || permissionsAgentId(path) !== null || (path === '/api/agents' && (status === 201 || status === 400 || status === 403));
 }
 
@@ -239,7 +241,7 @@ const known = (status, body, codes) => {
 
 function distributionResult(status, body) {
   if (status !== 200) return status === 400 ? known(status, body, ['invalid_plan']) : known(status, body, []);
-  if (!record(body) || !headcount(body.total) || !Array.isArray(body.departments) || body.departments.length < 1 || body.departments.length > 12) fail();
+  if (!record(body) || !headcount(body.total) || !Array.isArray(body.departments) || body.departments.length < 1 || body.departments.length > 72) fail();
   const departments = body.departments.map(d => {
     if (!record(d) || !department(d.department) || !headcount(d.count) || !record(d.roles) || !record(d.presets) || !record(d.titles)) fail();
     const roles = {}; const ps = {}; const titles = {};
@@ -256,7 +258,7 @@ function distributionResult(status, body) {
 
 function progress(p) {
   if (!record(p) || !batchIdOk(p.id) || !headcount(p.total) || ![p.created, p.failed, p.pending].every(count0) || typeof p.done !== 'boolean') fail();
-  if (p.created + p.failed + p.pending !== p.total || !Array.isArray(p.departments) || p.departments.length > 12) fail();
+  if (p.created + p.failed + p.pending !== p.total || !Array.isArray(p.departments) || p.departments.length > 72) fail();
   return {
     id: p.id, total: p.total, created: p.created, failed: p.failed, pending: p.pending, done: p.done,
     departments: p.departments.map(d => {
@@ -315,6 +317,7 @@ function permissionsResult(agentId, status, body) {
 }
 
 export function hireResponse(path, status, body) {
+  if(path===TEAM_RESOURCES_PATH)return teamResourcesResponse(status,body);
   if (path === CATALOGUE_PATH) return catalogueResult(status, body);
   if (path === PLAN_PATH) return planResult(status, body);
   if (path === DISTRIBUTION_PATH) return distributionResult(status, body);

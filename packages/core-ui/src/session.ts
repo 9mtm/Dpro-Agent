@@ -3,6 +3,10 @@ import {scheduleDefinitionRoute,allowedScheduleDefinition,scheduleDefinitionResp
 import {scheduleAuthorizationRoute,allowedScheduleAuthorization,scheduleAuthorizationResponse} from './scheduler-authorization-contract.js';
 import {allowedVerification,verificationRoute,verificationResponse} from './verification-contract.js';
 import {allowedReviewer,reviewerRoute,reviewerOwnerRoute,reviewerResponse} from './reviewers-contract.js';
+import {coverageRoute,allowedCoverage,coverageResponse} from './security-coverage-contract.js';
+import {schedulerRoute,allowedScheduler,schedulerResponse} from './scheduler-contract.js';
+import {sourceCatalogueRoute,allowedSourceCatalogue,sourceCatalogueResponse,appsCatalogueRoute,allowedAppsCatalogue,appsCatalogueResponse} from './apps-contract.js';
+import {chatAddonsRoute,allowedChatAddons,chatAddonsResponse} from './chat-addons-contract.js';
 import {approvalRoute,allowedApproval,approvalResponse} from './approvals-contract.js';
 import { allowedConnections, connectionsRoute, connectionsResponse } from './connections-contract.js';
 import {allowedTemplates,templatePath,templatesResponse} from './specialty-contract.js';
@@ -79,6 +83,11 @@ export function allowedRequest(method: string, path: string, body?: unknown): bo
   if(scheduleAuthorizationRoute(path))return allowedScheduleAuthorization(method,path,body);
   if(reviewerRoute(path))return allowedReviewer(method,path,body);
   if(verificationRoute(path))return allowedVerification(method,path,body);
+  if(coverageRoute(path))return allowedCoverage(method,path,body);
+  if(schedulerRoute(path))return allowedScheduler(method,path,body);
+  if(sourceCatalogueRoute(path))return allowedSourceCatalogue(method,path,body);
+  if(appsCatalogueRoute(path))return allowedAppsCatalogue(method,path,body);
+  if(chatAddonsRoute(path))return allowedChatAddons(method,path,body);
   if (approvalRoute(path)) return allowedApproval(method,path,body);
   if (connectionsRoute(path)) return allowedConnections(method,path,body);
   if (mcpImportPath(path)) return allowedMcpImport(method,path,body);
@@ -138,6 +147,11 @@ function projectResponse(path: string, response: WireResponse): WireResponse {
   if(scheduleAuthorizationRoute(path))return {status:response.status,body:scheduleAuthorizationResponse(path,response.status,response.body)};
   if(reviewerRoute(path))return {status:response.status,body:reviewerResponse(path,response.status,response.body)};
   if(verificationRoute(path))return {status:response.status,body:verificationResponse(path,response.status,response.body)};
+  if(coverageRoute(path))return {status:response.status,body:coverageResponse(response.status,response.body)};
+  if(schedulerRoute(path))return {status:response.status,body:schedulerResponse(path,response.status,response.body)};
+  if(sourceCatalogueRoute(path))return {status:response.status,body:sourceCatalogueResponse(response.status,response.body)};
+  if(appsCatalogueRoute(path))return {status:response.status,body:appsCatalogueResponse(response.status,response.body)};
+  if(chatAddonsRoute(path))return {status:response.status,body:chatAddonsResponse(response.status,response.body)};
   if (path === '/api/setup/status') return { status: response.status, body: setupStatus(response.status, response.body) };
   if (path === OWNER_SETUP_PATH) return { status: response.status, body: ownerSetupResponse(response.status, response.body) };
   if (path === '/api/chat') return { status: response.status, body: chatError(response.status, response.body) };
@@ -450,7 +464,7 @@ export class SessionClient {
     if (conversationPath(request.path)?.kind === 'approval' && this.#state.user?.role !== 'owner') throw new SessionFailure('blocked');
     if ((conversationRoute(request.path) || chatSearchRoute(request.path) || chatExportRoute(request.path) || chatSecretsRoute(request.path)) && this.#state.user?.role === 'guest') throw new SessionFailure('blocked');
     if (request.path === CLEANUP_PATH && this.#state.user?.role !== 'owner') throw new SessionFailure('blocked');
-    if ((request.path === '/api/chat/project-folders' || approvalRoute(request.path) || connectionsRoute(request.path) || templatePath(request.path) || mcpImportPath(request.path) || channelRoute(request.path) || connectorRoute(request.path) || localImportRoute(request.path) || chatBoardRoute(request.path) || chatMemoryRoute(request.path)) && this.#state.user?.role !== 'owner') throw new SessionFailure('blocked');
+    if ((sourceCatalogueRoute(request.path) || appsCatalogueRoute(request.path) || chatAddonsRoute(request.path) || request.path === '/api/chat/project-folders' || approvalRoute(request.path) || connectionsRoute(request.path) || templatePath(request.path) || mcpImportPath(request.path) || channelRoute(request.path) || connectorRoute(request.path) || localImportRoute(request.path) || chatBoardRoute(request.path) || chatMemoryRoute(request.path)) && this.#state.user?.role !== 'owner') throw new SessionFailure('blocked');
     if ((memoryDesktopRoute(request.path) || memoryPagesRoute(request.path) || memoryRecallRoute(request.path) || memoryBridgeRoute(request.path) || discoveryRoute(request.path)) && this.#state.user?.role !== 'owner') throw new SessionFailure('blocked');
     if (terminalRoute(request.path) && (this.#state.user?.role !== 'owner' || terminalPath(request.path)?.kind === 'stream')) throw new SessionFailure('blocked');
     if (request.method === 'PUT' && !conversationRoute(request.path) && this.#state.user?.role !== 'owner') throw new SessionFailure('blocked');

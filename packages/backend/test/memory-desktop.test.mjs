@@ -228,8 +228,10 @@ test('groups of projects: create, rename, one group per project, share within op
   const p = await call('PATCH', `/api/memory/groups/${g.id}`, OWNER, { shareWithin: true, name: 'Client A GmbH' });
   assert.equal(p.statusCode, 200, p.body);
   assert.equal(p.json().group.name, 'Client A GmbH');
-  const w = await G.withGroupDrawers(OWNER, [{ kind: 'owner' }, { kind: 'project', key: 'a-web' }]);
-  assert.deepEqual(w.added, [{ kind: 'project', key: 'a-app' }]);
+  const w = await G.withGroupDrawers(OWNER, [{ kind: 'owner' }, { kind: 'project', key: 'a-web' }],async()=>true);
+  assert.deepEqual(w.added, [{ kind: 'project', key: 'a-app', readOnly:true }]);
+  assert.deepEqual((await G.withGroupDrawers(OWNER,[{kind:'project',key:'a-web'}])).added,[],'missing access check fails closed');
+  assert.deepEqual((await G.withGroupDrawers(OWNER,[{kind:'project',key:'a-web'}],async()=>false)).added,[],'denied siblings stay closed');
   assert.equal(w.groupId, g.id);
 
   // A second group takes a-app: it leaves Client A.

@@ -1,0 +1,60 @@
+import test from 'node:test';import assert from 'node:assert/strict';import fs from 'node:fs/promises';import os from 'node:os';import path from 'node:path';import {randomBytes} from 'node:crypto';
+const root=await fs.mkdtemp(path.join(os.tmpdir(),'department-board-'));process.env.AGENT_PLAYER_DATA_DIR=root;process.env.DATABASE_PATH=path.join(root,'test.db');process.env.JWT_SECRET=randomBytes(64).toString('hex');process.env.ENCRYPTION_KEY=randomBytes(32).toString('hex');
+const {getDatabase,closeDatabase}=await import('../src/db/database.ts');const db=getDatabase();await db.initialize();
+for(const [id,role] of [['dept-owner','owner'],['other-owner','owner'],['dept-member','user']])db.prepare("INSERT INTO users(id,email,username,password_hash,role,status) VALUES(?,?,?,'fixture',?,'active')").run(id,id+'@example.invalid',id,role);
+for(const [id,department] of [['education-agent','education'],['hr-agent','human resources']])db.prepare('INSERT INTO agents_config(id,name,department) VALUES(?,?,?)').run(id,id,department);
+db.prepare('INSERT INTO memory_departments(id,owner_id,name,norm_name) VALUES(?,?,?,?)').run('education-dept','dept-owner','Education','education');
+db.prepare('INSERT INTO memory_departments(id,owner_id,name,norm_name) VALUES(?,?,?,?)').run('private-dept','other-owner','Private legal','private legal');
+const {default:Fastify}=await import('fastify'),{registerAuthGate}=await import('../src/auth/auth-gate.ts'),{generateToken}=await import('../src/auth/jwt.ts'),{taskBoardRoutes}=await import('../src/api/routes/task-board.ts');
+const app=Fastify();registerAuthGate(app);await app.register(taskBoardRoutes);await app.ready();
+const call=(method,url,payload,who='dept-owner')=>app.inject({method,url,headers:{authorization:'Bearer '+generateToken(who,1)},...(payload===undefined?{}:{payload})});
+const list=async()=> (await call('GET','/api/boards')).json().boards;
+let education,hr,company,task,shared;
+test.after(async()=>{await app.close();closeDatabase();await fs.rm(root,{recursive:true,force:true});});
+test('owner-only idempotent sync provisions actual departments and adopts existing work',async()=>{
+ assert.equal((await app.inject({method:'POST',url:'/api/boards/sync-departments',payload:{}})).statusCode,401);
+ assert.equal((await call('POST','/api/boards/sync-departments',{},'dept-member')).statusCode,403);
+ assert.equal((await call('POST','/api/boards/sync-departments',{department:'fake'})).statusCode,400);
+ const manual=(await call('POST','/api/boards',{name:'Custom HR',departments:['human resources'],template:'simple'})).json();
+ const before=db.prepare('SELECT COUNT(*) AS n FROM agents_config').get().n;
+ const results=await Promise.all([call('POST','/api/boards/sync-departments',{}),call('POST','/api/boards/sync-departments',{})]);
+ assert.ok(results.every(r=>r.statusCode===200));assert.equal(results[0].json().departments,2);
+ const boards=await list();assert.equal(boards.length,3);assert.ok(!boards.some(b=>b.departments.includes('private legal')));
+ education=boards.find(b=>b.departments.includes('education'));hr=boards.find(b=>b.departments.includes('human resources'));company=boards.find(b=>b.kind==='company');
+ assert.equal(hr.id,manual.id);assert.equal(hr.template,'simple');assert.equal(hr.name,'Custom HR');assert.equal(hr.managedDepartment,true);assert.equal(education.template,'education');
+ assert.equal(db.prepare('SELECT COUNT(*) AS n FROM agents_config').get().n,before);
+ assert.equal((await call('POST','/api/boards/sync-departments',{})).json().created,0);
+ assert.equal((await call('PUT','/api/boards/'+hr.id,{expectedVersion:hr.version,departments:['fake']})).statusCode,400);
+});
+test('company and department overviews reference a single canonical task and discussion',async()=>{
+ const board=(await call('GET','/api/boards/'+education.id)).json();
+ task=(await call('POST',`/api/boards/${education.id}/cards`,{title:'Teach the course',columnId:board.columns[0].id})).json();
+ assert.deepEqual(task.departments,['education']);
+ const general=(await call('GET','/api/boards/'+company.id)).json();
+ shared=(await call('POST',`/api/boards/${company.id}/cards`,{title:'Shared onboarding',columnId:general.columns[0].id,departments:['education','human resources']})).json();
+ await call('POST',`/api/boards/${company.id}/cards/${shared.id}/comments`,{body:'One discussion for both departments.'});
+ const overall=(await call('GET',`/api/boards/${company.id}/overview`)).json();assert.equal(overall.tasks.filter(t=>t.cardId===task.id).length,1);assert.equal(overall.tasks[0].boardId,education.id);
+ for(const b of [education,hr]){const related=(await call('GET',`/api/boards/${b.id}/overview`)).json();assert.equal(related.tasks.filter(t=>t.cardId===shared.id).length,1);}
+ assert.equal(db.prepare('SELECT COUNT(*) AS n FROM board_cards WHERE id = ?').get(shared.id).n,1);
+ assert.equal((await call('GET',`/api/boards/${company.id}/cards/${shared.id}/comments`)).json().comments.length,1);
+ assert.equal((await call('GET',`/api/boards/${education.id}/overview`,undefined,'other-owner')).statusCode,404);
+ assert.equal((await call('GET',`/api/boards/${education.id}/overview`,undefined,'dept-member')).statusCode,403);
+});
+test('department rename retains board, customised stages, task IDs and archive choice',async()=>{
+ const b=(await call('GET','/api/boards/'+education.id)).json();
+ await call('PUT',`/api/boards/${education.id}/columns/${b.columns[0].id}`,{name:'Custom intake'});
+ db.prepare('UPDATE memory_departments SET name=?,norm_name=? WHERE id=?').run('Language education','language education','education-dept');
+ db.prepare('UPDATE agents_config SET department=? WHERE id=?').run('language education','education-agent');
+ assert.equal((await call('POST','/api/boards/sync-departments',{})).statusCode,200);
+ const next=(await call('GET','/api/boards/'+education.id)).json();assert.deepEqual(next.departments,['language education']);assert.equal(next.columns[0].name,'Custom intake');assert.equal(next.cards[0].id,task.id);assert.deepEqual(next.cards[0].departments,['language education']);assert.equal(next.departmentActive,true);
+ assert.equal((await list()).length,3);
+ const currentHr=(await call('GET','/api/boards/'+hr.id)).json();await call('PUT','/api/boards/'+hr.id,{expectedVersion:currentHr.version,archived:true});
+ assert.equal((await call('POST','/api/boards/sync-departments',{})).json().created,0);assert.ok(!(await list()).some(b=>b.id===hr.id));
+ db.prepare('DELETE FROM memory_departments WHERE id=?').run('education-dept');db.prepare('UPDATE agents_config SET department=NULL WHERE id=?').run('education-agent');
+ await call('POST','/api/boards/sync-departments',{});const old=(await list()).find(b=>b.id===education.id);assert.equal(old.departmentActive,false);assert.equal(old.managedDepartment,true);
+});
+test('registered department display names with punctuation are provisioned safely',async()=>{
+ db.prepare('INSERT INTO memory_departments(id,owner_id,name,norm_name) VALUES(?,?,?,?)').run('research-dept','dept-owner','R&D','r&d');
+ const sync=await call('POST','/api/boards/sync-departments',{});assert.equal(sync.statusCode,200);
+ const found=(await list()).find(b=>b.name==='R&D board');assert.ok(found);assert.deepEqual(found.departments,['r and d']);assert.equal(found.managedDepartment,true);
+});

@@ -31,6 +31,8 @@ const coverOk = x => x === null || boardColors.includes(x);
 
 /** The board path this request names, or null. */
 export function boardPath(path) {
+  if(path===BOARDS_PATH+'/sync-departments')return {kind:'sync',board:''};
+  const overview=/^\/api\/boards\/([^/?#]+)\/overview$/.exec(path);if(overview)return id(overview[1])?{kind:'overview',board:overview[1]}:null;
   let m = /^\/api\/boards\/([^/?#]+)$/.exec(path);
   if (m) return id(m[1]) ? { kind: 'board', board: m[1] } : null;
   m = /^\/api\/boards\/([^/?#]+)\?archived=1$/.exec(path);
@@ -112,6 +114,8 @@ export function allowedBoard(method, path, body) {
   if (path === `${BOARDS_PATH}?archived=1`) return method === 'GET' && body === undefined;
   const p = boardPath(path);
   if (!p) return false;
+  if(p.kind==='sync')return method==='POST'&&record(body)&&Object.keys(body).length===0;
+  if(p.kind==='overview')return method==='GET'&&body===undefined;
   if (p.kind === 'board') return (method === 'GET' && body === undefined) || (method === 'PUT' && validBoardEdit(body));
   if (p.kind === 'board-archived') return method === 'GET' && body === undefined;
   if (p.kind === 'columns') return method === 'POST' && nameBody(body);
@@ -133,7 +137,7 @@ export function boardRoute(path) {
 
 const fail = () => { throw Error('Invalid board response'); };
 const clip = (x, max) => (typeof x === 'string' ? (x.length > max ? x.slice(0, max) : x) : '');
-const when = x => (typeof x === 'string' && /^\d{4}-\d{2}-\d{2}[ T]\d{2}:\d{2}(:\d{2})?/.test(x) ? x.slice(0, 19) : '');
+const when = x => {if(typeof x!=='string'||!/^\d{4}-\d{2}-\d{2}[ T]\d{2}:\d{2}(:\d{2})?(\.\d+)?(Z|[+-]\d{2}:\d{2})?$/.test(x))return '';const iso=x.replace(' ','T')+(/(Z|[+-]\d{2}:\d{2})$/.test(x)?'':'Z');const value=new Date(iso);return Number.isNaN(value.getTime())?'':value.toISOString();};
 
 function card(c) {
   if (!record(c) || !id(c.id) || !id(c.columnId) || typeof c.title !== 'string' || !priorities.includes(c.priority) || !version(c.version)
@@ -156,7 +160,7 @@ function meta(b) {
   return {
     id: b.id, name: clip(b.name, 80), description: clip(b.description, 500), template: templateId(b.template) ? b.template : 'custom',
     color: boardColors.includes(b.color) ? b.color : 'blue', departments: Array.isArray(b.departments) ? b.departments.filter(department).slice(0, 12) : [],
-    kind: kinds.includes(b.kind) ? b.kind : 'company', archived: b.archived === true, version: version(b.version) ? b.version : 1,
+    kind: kinds.includes(b.kind) ? b.kind : 'company', managedDepartment:b.managedDepartment===true,departmentActive:b.departmentActive!==false, archived: b.archived === true, version: version(b.version) ? b.version : 1,
   };
 }
 
@@ -199,6 +203,12 @@ export function boardResponse(path, status, body) {
   }
   const p = boardPath(path);
   if (!p) fail();
+  if(p.kind==='sync'){if(!record(body)||!Number.isSafeInteger(body.created)||body.created<0||body.created>200||!Number.isSafeInteger(body.departments)||body.departments<0||body.departments>200)fail();return {created:body.created,departments:body.departments};}
+  if(p.kind==='overview'){
+    if(!record(body)||!Array.isArray(body.tasks)||body.tasks.length>500||!Number.isSafeInteger(body.total)||body.total<body.tasks.length||body.limited!==(body.total>body.tasks.length))fail();
+    const tasks=body.tasks.map(t=>{if(!record(t)||!id(t.cardId)||!id(t.boardId)||typeof t.title!=='string'||!priorities.includes(t.priority)||!date(t.dueDate))fail();return {cardId:t.cardId,boardId:t.boardId,boardName:clip(t.boardName,80),title:clip(t.title,200),status:clip(t.status,60),priority:t.priority,dueDate:t.dueDate};});
+    if(new Set(tasks.map(t=>t.cardId)).size!==tasks.length)fail();return {tasks,total:body.total,limited:body.limited};
+  }
   if (p.kind === 'card' || p.kind === 'cards') return card(body);
   if (p.kind === 'checklist' || p.kind === 'check') {
     if (!record(body) || !Array.isArray(body.items) || body.items.length > 50) fail();

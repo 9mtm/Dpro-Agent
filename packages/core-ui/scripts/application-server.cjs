@@ -3,6 +3,10 @@ const {scheduleDefinitionRoute,allowedScheduleDefinition,scheduleDefinitionRespo
 const {scheduleAuthorizationRoute,allowedScheduleAuthorization,scheduleAuthorizationResponse}=require('../src/scheduler-authorization-contract.js');
 const {allowedVerification,verificationRoute,verificationResponse}=require('../src/verification-contract.js');
 const {allowedReviewer,reviewerRoute,reviewerResponse}=require('../src/reviewers-contract.js');
+const {coverageRoute,allowedCoverage,coverageResponse}=require('../src/security-coverage-contract.js');
+const {schedulerRoute,allowedScheduler,schedulerResponse}=require('../src/scheduler-contract.js');
+const {sourceCatalogueRoute,allowedSourceCatalogue,sourceCatalogueResponse,appsCatalogueRoute,allowedAppsCatalogue,appsCatalogueResponse}=require('../src/apps-contract.js');
+const {chatAddonsRoute,allowedChatAddons,chatAddonsResponse}=require('../src/chat-addons-contract.js');
 const {approvalRoute,allowedApproval,approvalResponse}=require('../src/approvals-contract.js');
 const { allowedConnections, connectionsRoute, connectionsResponse } = require('../src/connections-contract.js');
 const {allowedTemplates,templatePath,templatesResponse}=require('../src/specialty-contract.js');
@@ -74,6 +78,11 @@ function allowed(method, target, body) {
   if(scheduleAuthorizationRoute(target))return allowedScheduleAuthorization(method,target,body);
   if(reviewerRoute(target))return allowedReviewer(method,target,body);
   if(verificationRoute(target))return allowedVerification(method,target,body);
+  if(sourceCatalogueRoute(target))return allowedSourceCatalogue(method,target,body);
+  if(schedulerRoute(target))return allowedScheduler(method,target,body);
+  if(coverageRoute(target))return allowedCoverage(method,target,body);
+  if(appsCatalogueRoute(target))return allowedAppsCatalogue(method,target,body);
+  if(chatAddonsRoute(target))return allowedChatAddons(method,target,body);
   if (approvalRoute(target)) return allowedApproval(method,target,body);
   if (connectionsRoute(target)) return allowedConnections(method,target,body);
   if (mcpImportPath(target)) return allowedMcpImport(method,target,body);
@@ -128,6 +137,11 @@ function project(target, status, body) {
   if(scheduleAuthorizationRoute(target))return scheduleAuthorizationResponse(target,status,body);
   if(reviewerRoute(target))return reviewerResponse(target,status,body);
   if(verificationRoute(target)){const projected=verificationResponse(target,status,body);if(!projected)throw Error();return projected;}
+  if(sourceCatalogueRoute(target))return sourceCatalogueResponse(status,body);
+  if(schedulerRoute(target))return schedulerResponse(target,status,body);
+  if(coverageRoute(target))return coverageResponse(status,body);
+  if(appsCatalogueRoute(target))return appsCatalogueResponse(status,body);
+  if(chatAddonsRoute(target))return chatAddonsResponse(status,body);
   if (target === '/api/setup/status') return setupStatus(status, body);
   // INSTALLER-07: fixed codes only; a reply outside the contract fails closed.
   if (target === OWNER_SETUP_PATH) { const r = ownerSetupResponse(status, body); if (!r) throw Error(); return r; }
@@ -261,7 +275,7 @@ function createApplicationServer({ packageRoot = root, channel, stage1ReadOnly =
       const name = ['/', '/chat', '/agents', '/memory', '/tasks', '/settings', '/channels'].includes(raw) ? 'index.html' : raw.slice(1);
       const data = assets.files.get(name);
       if (!data) return send(404);
-      return send(200, data, name.endsWith('.html') ? 'text/html; charset=utf-8' : name.endsWith('.js') ? 'text/javascript; charset=utf-8' : name.endsWith('.css') ? 'text/css; charset=utf-8' : 'text/plain; charset=utf-8');
+      return send(200, data, name.endsWith('.html') ? 'text/html; charset=utf-8' : name.endsWith('.js') ? 'text/javascript; charset=utf-8' : name.endsWith('.css') ? 'text/css; charset=utf-8' : name.endsWith('.gif') ? 'image/gif' : 'text/plain; charset=utf-8');
     }
     if (!['GET', 'POST', 'PUT', 'PATCH', 'DELETE'].includes(req.method)) return send(405);
     const chat = raw === '/api/chat' && req.method === 'POST';

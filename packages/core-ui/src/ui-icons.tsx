@@ -1,6 +1,14 @@
 // Simple line icons drawn for this app (24-unit grid, 2-unit round strokes).
 const shapes = {
+  play: <path d="M8 5l11 7-11 7z"/>,
+  pause: <><path d="M8 5v14M16 5v14"/></>,
+  info: <><circle cx="12" cy="12" r="9"/><path d="M12 10v7M12 7v.1"/></>,
+  cpu: <><rect x="6" y="6" width="12" height="12" rx="2"/><rect x="10" y="10" width="4" height="4" rx=".5"/><path d="M9 3v3M15 3v3M9 18v3M15 18v3M3 9h3M3 15h3M18 9h3M18 15h3"/></>,
+  contact: <><rect x="4" y="3" width="16" height="18" rx="2"/><circle cx="12" cy="9" r="3"/><path d="M7 18a5 5 0 0 1 10 0M2 7h3M2 12h3M2 17h3"/></>,
   'arrow-up': <><path d="M12 19V5"/><path d="M6 11l6-6 6 6"/></>,
+  power: <><path d="M12 2v10"/><path d="M6.2 5.2a8 8 0 1 0 11.6 0"/></>,
+  reconnect: <><path d="M20 7v5h-5M4 17v-5h5"/><path d="M5.2 8A7 7 0 0 1 17 5l3 3M4 16l3 3a7 7 0 0 0 11.8-3"/></>,
+  'tool-refresh': <><path d="M4 13a8 8 0 0 1 13-7l3 2M20 3v5h-5"/><path d="M8 16h12M8 21h8"/><circle cx="4" cy="16" r="1"/><circle cx="4" cy="21" r="1"/></>,
   stop: <rect x="7" y="7" width="10" height="10" rx="1.5" fill="currentColor" stroke="none"/>,
   plus: <><path d="M12 5v14"/><path d="M5 12h14"/></>,
   board: <><rect x="3" y="4" width="5" height="16" rx="1.5"/><rect x="10" y="4" width="5" height="11" rx="1.5"/><rect x="17" y="4" width="4" height="7" rx="1.5"/></>,

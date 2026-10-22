@@ -535,3 +535,18 @@ test('scale: 100 projects in 10 departments, 3,000 agents: tree, scope switch an
   assert.ok(res.length > 0);
   assert.ok(res.every((r) => r.memory.drawer.key !== 'proj-7'));
 });
+
+test('shared project access is evaluated separately for each project on live and replay paths', async () => {
+  const { narrowProjectMemory, narrowProjectMemorySync } = await import('../src/tools/memory/project-access.ts');
+  const context = { agentId: 'agent-a', userId: OWNER, memoryDrawers: [
+    { kind: 'project', key: 'alpha' }, { kind: 'project', key: 'beta' },
+  ] };
+  await accessApply([{ op: 'set_rule', scope: 'project:beta', agentId: 'agent-a', drawerKind: 'project', read: 'deny', write: 'deny' }]);
+  const expected = [{ kind: 'project', key: 'alpha' }];
+  assert.deepEqual(await narrowProjectMemory(context), expected);
+  assert.deepEqual(narrowProjectMemorySync(context), expected);
+  await accessApply([{ op: 'set_rule', scope: 'project:beta', agentId: 'agent-a', drawerKind: 'project', read: 'allow', write: 'allow' }]);
+  const shared = [expected[0], { kind: 'project', key: 'beta', readOnly: true }];
+  assert.deepEqual(await narrowProjectMemory(context), shared);
+  assert.deepEqual(narrowProjectMemorySync(context), shared);
+});
