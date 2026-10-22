@@ -1,0 +1,36 @@
+import type {SessionClient} from './session';
+import {tradingPaperResponse,tradingPaperRoute} from './trading-paper-contract.js';
+type State=Readonly<{phase:'idle'|'loading'|'ready'|'unavailable'|'closed';accountId:string|null;availability:Readonly<Record<string,unknown>>|null;account:Readonly<Record<string,unknown>>|null}>;
+/** Read-only selection; discovery, provisioning and execution are separate capabilities. */
+export class TradingPaperController{
+ #state:State=Object.freeze({phase:'idle',accountId:null,availability:null,account:null});
+ #listeners=new Set<()=>void>();#generation=0;#pending:AbortController|undefined;#unsubscribe:(()=>void)|undefined;#closed=false;#epoch:number;#owner:string;
+ constructor(private readonly client:Pick<SessionClient,'request'|'getSnapshot'|'subscribe'>){const s=client.getSnapshot();this.#epoch=s.epoch;this.#owner=s.user?.id??'';}
+ getSnapshot=()=>this.#state;
+ subscribe=(fn:()=>void)=>{this.#listeners.add(fn);return()=>{this.#listeners.delete(fn);};};
+ #publish(patch:Partial<State>){this.#state=Object.freeze({...this.#state,...patch});this.#listeners.forEach(fn=>fn());}
+ #authorized(){const s=this.client.getSnapshot();return !this.#closed&&s.epoch===this.#epoch&&s.phase==='authenticated'&&s.user?.role==='owner'&&s.user.id===this.#owner&&!!this.#owner;}
+ close(){if(this.#closed)return;this.#closed=true;this.#generation++;this.#pending?.abort();this.#unsubscribe?.();this.#unsubscribe=undefined;this.#publish({phase:'closed',accountId:null,availability:null,account:null});}
+ async select(accountId:string){
+  if(!this.#authorized()){this.close();return;}
+  if(!this.#unsubscribe)this.#unsubscribe=this.client.subscribe(()=>{if(!this.#authorized())this.close();});
+  const generation=++this.#generation;this.#pending?.abort();const pending=this.#pending=new AbortController();
+  this.#publish({phase:'loading',accountId:null,availability:null,account:null});
+  if(typeof accountId!=='string'||!/^[A-Za-z0-9][A-Za-z0-9_.:-]{0,127}$/.test(accountId)){this.#publish({phase:'unavailable'});return;}
+  const path='/api/trading-paper/accounts/'+encodeURIComponent(accountId);
+  if(!tradingPaperRoute(path)){this.#publish({phase:'unavailable'});return;}
+  const current=()=>generation===this.#generation&&this.#authorized();
+  try{
+   const availabilityPath='/api/trading-paper/availability';
+   const r=await this.client.request({method:'GET',path:availabilityPath},pending.signal);if(!current())return;
+   if(r.status!==200){this.#publish({phase:'unavailable'});return;}
+   const availability=Object.freeze(tradingPaperResponse(availabilityPath,r.status,r.body));
+   if(!availability.readAccounts){this.#publish({phase:'unavailable',availability});return;}
+   const detail=await this.client.request({method:'GET',path},pending.signal);if(!current())return;
+   if(detail.status!==200){this.#publish({phase:'unavailable',availability});return;}
+   const account=tradingPaperResponse(path,detail.status,detail.body);
+   for(const key of ['policies','reservations'] as const){const rows=account[key] as Record<string,unknown>[];rows.forEach(Object.freeze);Object.freeze(rows);}
+   this.#publish({phase:'ready',accountId,availability,account:Object.freeze(account)});
+  }catch{if(current())this.#publish({phase:'unavailable',account:null,accountId:null,availability:null});}
+ }
+}
