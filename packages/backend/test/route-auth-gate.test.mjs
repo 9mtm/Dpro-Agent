@@ -400,8 +400,8 @@ test('registered application reviewer routes accept enrolled humans and keep own
 
 test('reviewed skill installation routes are owner-only in the registered application',async()=>{
  const base='/api/skills/reviewed-installs';
- const expected=[['POST',base+'/stage'],['GET',base+'/:id'],...['challenge','complete','apply'].map(p=>['POST',base+'/:id/'+p])];
- const installed=routes.filter(r=>r.url.startsWith(base));assert.equal(installed.length,5);
+ const expected=[['GET',base+'/catalogue'],['POST',base+'/stage'],['GET',base+'/:id'],...['challenge','complete','apply'].map(p=>['POST',base+'/:id/'+p])];
+ const installed=routes.filter(r=>r.url.startsWith(base));assert.equal(installed.length,6);
  for(const [method,url]of expected)assert.ok(installed.some(r=>r.method===method&&r.url===url&&r.access==='owner'),method+' '+url);
  const {beginEnrollment,activateEnrollment}=await import('../src/auth/verification/enrollment.ts');
  const {hotp,decodeSecret}=await import('../src/auth/verification/totp.ts');
@@ -419,6 +419,9 @@ test('reviewed skill installation routes are owner-only in the registered applic
   const limited=await app.inject({method:'POST',url:base+'/stage',headers:owner,payload:{}});assert.equal(limited.statusCode,429,limited.body);assert.ok(limited.headers['retry-after']);assert.equal(limited.json().code,'rate_limited');assert.equal(limited.body.includes('password'),false);
   const separate=await app.inject({method:'POST',url:base+'/stage',headers:other,payload:{}});assert.equal(separate.statusCode,400,separate.body);
   const read=await app.inject({method:'GET',url:base+'/00000000-0000-4000-8000-000000000000',headers:other});assert.equal(read.statusCode,404,read.body);assert.equal(read.headers['cache-control'],'no-store');
+  for(let i=0;i<5;i++){const r=await app.inject({method:'GET',url:base+'/catalogue?extra=1',headers:owner});assert.equal(r.statusCode,400,r.body);}
+  const catalogueLimit=await app.inject({method:'GET',url:base+'/catalogue?extra=1',headers:owner});assert.equal(catalogueLimit.statusCode,429,catalogueLimit.body);assert.ok(catalogueLimit.headers['retry-after']);
+  assert.equal((await app.inject({method:'GET',url:base+'/catalogue?extra=1',headers:other})).statusCode,400);
   assert.equal(contacted,0);
  }finally{globalThis.fetch=previousFetch;}
 });

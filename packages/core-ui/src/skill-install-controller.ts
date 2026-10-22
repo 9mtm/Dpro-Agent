@@ -10,13 +10,14 @@ const uuid=(v:unknown):v is string=>typeof v==='string'&&/^[a-f0-9]{8}-[a-f0-9]{
 const token=(v:unknown):v is string=>typeof v==='string'&&/^[A-Za-z0-9_-]{43}$/.test(v);
 const int=(v:unknown,min=0,max=2147483646):v is number=>typeof v==='number'&&Number.isSafeInteger(v)&&v>=min&&v<=max;
 const future=(v:unknown):v is number=>int(v,Date.now()+1,Date.now()+600000);
+const validPath=(v:unknown):v is string=>typeof v==='string'&&v.length<=300&&v.split('/').length>=2&&v.split('/').length<=6&&v.split('/')[0]==='skills'&&v.split('/').every(p=>/^[A-Za-z0-9][A-Za-z0-9._-]{0,99}$/.test(p)&&!p.includes('..'));
 const text=(v:unknown,max:number):v is string=>typeof v==='string'&&v.length<=max&&!/[\x00-\x08\x0b\x0c\x0e-\x1f\x7f\u202a-\u202e\u2066-\u2069]/.test(v);
 /** Manual selected-source review; proof completion never invokes installation. */
 export class SkillInstallController{
  #state:State=Object.freeze({phase:'closed',review:null});#listeners=new Set<()=>void>();#generation=0;#pending:AbortController|undefined;#id='';#challenge='';#receipt='';#challengeUntil=0;#receiptUntil=0;#revision=0;#hash='';
  readonly source:Source;
  constructor(private readonly client:Pick<SessionClient,'request'>,source:Source){
-  if(!exact(source,['commit','sourcePath','targetName'])||!hex(source.commit,40)||/^0+$/.test(source.commit)||typeof source.sourcePath!=='string'||source.sourcePath.length>400||!/^skills\/[a-zA-Z0-9_-]+(?:\/[a-zA-Z0-9_-]+)*$/.test(source.sourcePath)||typeof source.targetName!=='string'||!/^[a-z][a-z0-9_-]{0,63}$/.test(source.targetName)||/^(con|prn|aux|nul|com[1-9]|lpt[1-9])$/.test(source.targetName))throw Error('Invalid skill source');
+  if(!exact(source,['commit','sourcePath','targetName'])||!hex(source.commit,40)||/^0+$/.test(source.commit)||!validPath(source.sourcePath)||typeof source.targetName!=='string'||!/^[a-z][a-z0-9_-]{0,63}$/.test(source.targetName)||/^(con|prn|aux|nul|com[1-9]|lpt[1-9])$/.test(source.targetName))throw Error('Invalid skill source');
   this.source=Object.freeze({...source});
  }
  getSnapshot=()=>this.#state;

@@ -1,3 +1,4 @@
+import {PinnedSkillCatalogue,PinnedSkillCatalogueError} from '../../plugins/pinned-skill-catalogue.js';
 /** Explicit manual-owner workflow; agent install requests cannot supply this identity or proof. */
 import type {FastifyInstance,FastifyReply} from 'fastify';
 import {AuthTokenError} from '../../auth/jwt.js';
@@ -23,14 +24,23 @@ function refused(reply:FastifyReply,error:unknown){
  if(error instanceof AuthTokenError)return reply.code(401).send({error:'Sign in required',code:'unauthenticated'});
  if(error instanceof ReviewerIdentityError)return reply.code(403).send({error:'Verified owner required',code:'owner_verification_required'});
  if(error instanceof VerificationChallengeLimitError)return reply.code(429).send({error:'Too many attempts',code:'rate_limited'});
- if(error instanceof PinnedSkillSourceError)return reply.code(502).send({error:'Skill source unavailable',code:'skill_source_unavailable'});
+ if(error instanceof PinnedSkillSourceError||error instanceof PinnedSkillCatalogueError)return reply.code(502).send({error:'Skill source unavailable',code:'skill_source_unavailable'});
  if(error instanceof SkillArtifactError||error instanceof SkillLibraryError&&error.status===400)return reply.code(400).send(invalid);
  if(error instanceof SkillReviewStageError)return reply.code(error.code==='invalid'?400:error.code==='forbidden'?403:error.code==='limit'?429:error.code==='changed'?409:404).send(error.code==='invalid'?invalid:unavailable);
  return reply.code(503).send(unavailable);
 }
-export async function skillInstallRoutes(app:FastifyInstance,options:{source?:Pick<PinnedSkillSource,'fetch'>;installer?:ReviewedSkillInstaller}={}){
- const source=options.source??new PinnedSkillSource(),installer=options.installer??new ReviewedSkillInstaller(),base='/api/skills/reviewed-installs';
+export async function skillInstallRoutes(app:FastifyInstance,options:{source?:Pick<PinnedSkillSource,'fetch'>;installer?:ReviewedSkillInstaller;catalogue?:Pick<PinnedSkillCatalogue,'list'>}={}){
+ const catalogue=options.catalogue??new PinnedSkillCatalogue(),source=options.source??new PinnedSkillSource(),installer=options.installer??new ReviewedSkillInstaller(),base='/api/skills/reviewed-installs';
  app.addHook('onRequest',async(_r,reply)=>{reply.header('Cache-Control','no-store');});
+ app.get(base+'/catalogue',{config:{access:'owner',rateLimit:{...installRateLimit,keyGenerator:request=>installRateLimit.keyGenerator(request).replace('skill-install-user:','skill-catalogue-user:')}}},async(request,reply)=>{
+  try{
+   const {context,actor}=await reviewerRequestIdentity(request,true);if(request.body!==undefined||Object.keys(request.query as object).length)return reply.code(400).send(invalid);
+   await sql().tx(()=>skillReviewOwnerStep(context,actor,Date.now()));
+   const cancellation=new AbortController(),abort=()=>cancellation.abort();request.raw.once('aborted',abort);if(request.raw.aborted)abort();
+   let result;try{result=await catalogue.list(cancellation.signal);}finally{request.raw.removeListener('aborted',abort);}
+   await reviewerRequestIdentity(request,true);await sql().tx(()=>skillReviewOwnerStep(context,actor,Date.now()));return result;
+  }catch(error){return refused(reply,error);}
+ });
  app.post(base+'/stage',{config:{access:'owner',rateLimit:installRateLimit},bodyLimit:2048},async(request,reply)=>{
   try{
    const {context,actor}=await reviewerRequestIdentity(request,true),body=request.body;
