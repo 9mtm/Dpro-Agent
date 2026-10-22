@@ -2494,3 +2494,16 @@ button.danger-solid { background:var(--danger); color:#fff; }
 .schedule-editor-content input[type=checkbox]{width:auto;inline-size:auto;flex:none;}
 
 .schedule-editor-sheet>.actions{justify-content:flex-end;gap:10px;}
+
+.skill-install-sheet { inline-size:min(680px,calc(100vw - 24px)); max-block-size:calc(100dvh - 32px); box-sizing:border-box; overflow:hidden; }
+.skill-install-sheet[open] { display:flex; flex-direction:column; gap:12px; }
+.skill-install-sheet header { display:flex; align-items:center; gap:10px; flex:none; }
+.skill-install-sheet h3,.skill-install-sheet h4 { margin:0; }
+.skill-install-body { overflow:auto; min-block-size:0; min-inline-size:0; overflow-wrap:anywhere; }
+.skill-install-name { font-weight:600; margin-block:0 6px; }
+.skill-install-source { margin-block:12px; }
+.skill-install-source dl { display:grid; grid-template-columns:70px minmax(0,1fr); gap:8px; }
+.skill-install-source dd { margin:0; overflow-wrap:anywhere; }
+.skill-install-sheet pre { white-space:pre-wrap; overflow-wrap:anywhere; word-break:break-word; padding:12px; border:1px solid var(--border); background:var(--canvas); font:inherit; line-height:1.5; }
+.skill-install-sheet .actions { display:flex; justify-content:flex-end; gap:8px; flex:none; flex-wrap:wrap; }
+.skill-install-sheet .actions button { margin-block:0; }
