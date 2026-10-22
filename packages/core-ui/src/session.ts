@@ -1,3 +1,4 @@
+import {skillInstallRoute,allowedSkillInstall,skillInstallResponse} from './skill-install-contract.js';
 import {scheduleDefinitionRoute,allowedScheduleDefinition,scheduleDefinitionResponse} from './scheduler-definitions-contract.js';
 import {scheduleAuthorizationRoute,allowedScheduleAuthorization,scheduleAuthorizationResponse} from './scheduler-authorization-contract.js';
 import {allowedVerification,verificationRoute,verificationResponse} from './verification-contract.js';
@@ -74,6 +75,7 @@ function user(value: unknown): User {
 // Reject before URL normalization. No generic URL, header, key or mutation escape hatch.
 export function allowedRequest(method: string, path: string, body?: unknown): boolean {
   if(scheduleDefinitionRoute(path))return allowedScheduleDefinition(method,path,body);
+  if(skillInstallRoute(path))return allowedSkillInstall(method,path,body);
   if(scheduleAuthorizationRoute(path))return allowedScheduleAuthorization(method,path,body);
   if(reviewerRoute(path))return allowedReviewer(method,path,body);
   if(verificationRoute(path))return allowedVerification(method,path,body);
@@ -132,6 +134,7 @@ function safeResponse(path: string, response: WireResponse): WireResponse {
 }
 function projectResponse(path: string, response: WireResponse): WireResponse {
   if(scheduleDefinitionRoute(path))return {status:response.status,body:scheduleDefinitionResponse(path,response.status,response.body)};
+  if(skillInstallRoute(path))return {status:response.status,body:skillInstallResponse(path,response.status,response.body)};
   if(scheduleAuthorizationRoute(path))return {status:response.status,body:scheduleAuthorizationResponse(path,response.status,response.body)};
   if(reviewerRoute(path))return {status:response.status,body:reviewerResponse(path,response.status,response.body)};
   if(verificationRoute(path))return {status:response.status,body:verificationResponse(path,response.status,response.body)};
@@ -440,6 +443,7 @@ export class SessionClient {
     // The public adapter transport cannot call login/logout or add arbitrary request fields.
     if (request.path === '/api/setup/status' || request.path === OWNER_SETUP_PATH || request.path === '/api/chat' || request.path === '/api/auth/login' || request.path === '/api/auth/logout' || Object.keys(request).some(k => !['method', 'path', 'body'].includes(k))) throw new SessionFailure('blocked');
     if((verificationRoute(request.path)||reviewerRoute(request.path))&&this.#state.user?.role==='guest')throw new SessionFailure('blocked');
+    if(skillInstallRoute(request.path)&&this.#state.user?.role!=='owner')throw new SessionFailure('blocked');
     if(scheduleDefinitionRoute(request.path)&&this.#state.user?.role!=='owner')throw new SessionFailure('blocked');
     if(scheduleAuthorizationRoute(request.path)&&this.#state.user?.role!=='owner')throw new SessionFailure('blocked');
     if(reviewerOwnerRoute(request.path)&&this.#state.user?.role!=='owner')throw new SessionFailure('blocked');
@@ -455,7 +459,7 @@ export class SessionClient {
     if (((request.method === 'POST' && request.path === '/api/agents') || grantsAgentId(request.path) || request.path === CATALOGUE_PATH || request.path === PLAN_PATH || request.path === DISTRIBUTION_PATH || request.path === BATCHES_PATH || batchPath(request.path) || permissionsAgentId(request.path) || request.path === BOARDS_PATH || request.path.startsWith(`${BOARDS_PATH}/`)) && this.#state.user?.role !== 'owner') throw new SessionFailure('blocked');
     const epoch = this.#state.epoch;
     const result = await this.#send(request.method, request.path, 'body' in request ? request.body : undefined, this.#token, epoch, signal);
-    if (epoch !== this.#state.epoch){if(verificationRoute(request.path)||reviewerRoute(request.path)||scheduleAuthorizationRoute(request.path)||scheduleDefinitionRoute(request.path))throw new SessionFailure('cancelled');return safeResponse(request.path,result);}
+    if (epoch !== this.#state.epoch){if(skillInstallRoute(request.path)||verificationRoute(request.path)||reviewerRoute(request.path)||scheduleAuthorizationRoute(request.path)||scheduleDefinitionRoute(request.path))throw new SessionFailure('cancelled');return safeResponse(request.path,result);}
     if(verificationRoute(request.path)&&result.status===200&&request.method==='POST'&&(request.path.endsWith('/confirm')||request.path.endsWith('/disable'))){
       const projected=safeResponse(request.path,result);
       if(!record(projected.body)||projected.body.requiresSignIn!==true)throw new SessionFailure('unavailable');

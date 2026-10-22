@@ -1,3 +1,4 @@
+const {skillInstallRoute,allowedSkillInstall,skillInstallResponse}=require('../src/skill-install-contract.js');
 const {scheduleDefinitionRoute,allowedScheduleDefinition,scheduleDefinitionResponse}=require('../src/scheduler-definitions-contract.js');
 const {scheduleAuthorizationRoute,allowedScheduleAuthorization,scheduleAuthorizationResponse}=require('../src/scheduler-authorization-contract.js');
 const {allowedVerification,verificationRoute,verificationResponse}=require('../src/verification-contract.js');
@@ -69,6 +70,7 @@ const agent = x => {
 };
 function allowed(method, target, body) {
   if(scheduleDefinitionRoute(target))return allowedScheduleDefinition(method,target,body);
+  if(skillInstallRoute(target))return allowedSkillInstall(method,target,body);
   if(scheduleAuthorizationRoute(target))return allowedScheduleAuthorization(method,target,body);
   if(reviewerRoute(target))return allowedReviewer(method,target,body);
   if(verificationRoute(target))return allowedVerification(method,target,body);
@@ -122,6 +124,7 @@ function stage1Route(method, target) {
 }
 function project(target, status, body) {
   if(scheduleDefinitionRoute(target))return scheduleDefinitionResponse(target,status,body);
+  if(skillInstallRoute(target))return skillInstallResponse(target,status,body);
   if(scheduleAuthorizationRoute(target))return scheduleAuthorizationResponse(target,status,body);
   if(reviewerRoute(target))return reviewerResponse(target,status,body);
   if(verificationRoute(target)){const projected=verificationResponse(target,status,body);if(!projected)throw Error();return projected;}
