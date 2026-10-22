@@ -1,3 +1,5 @@
+import type PaperDatabase from 'better-sqlite3';
+import {tradingPaperReadRoutes} from './routes/trading-paper-read.js';
 import {skillInstallRoutes} from './routes/skill-installs.js';
 import {securityCoverageRoutes} from './routes/security-coverage.js';
 import {chatAddonsRoutes} from './routes/chat-addons.js';
@@ -132,6 +134,8 @@ import { registerGlobalErrorHandler } from './error-handler.js';
 import { registerLaunchToken } from './launch-token.js';
 
 export interface BuildServerOptions {
+  /** Explicit provisioned ledger dependency; never created from a read request. */
+  paperLedger?:()=>PaperDatabase.Database|null;
   logger?: FastifyServerOptions['logger'];
 }
 
@@ -330,6 +334,7 @@ export async function buildServer(options: BuildServerOptions = {}): Promise<Fas
   await fastify.register(skillLibraryRoutes);
   await fastify.register(specialtyTemplateRoutes); // 🛠️ Skills System
   await fastify.register(schedulerDefinitionRoutes);
+  await fastify.register(tradingPaperReadRoutes,{ledger:options.paperLedger??(()=>null)});
   await fastify.register(schedulerAuthorizationRoutes);
   await fastify.register(schedulerRoutes); // ⏰ Scheduler System
   await fastify.register(memoryRoutes); // 🧠 Memory System

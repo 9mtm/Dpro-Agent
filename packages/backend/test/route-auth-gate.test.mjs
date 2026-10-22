@@ -332,6 +332,15 @@ test('tiers enforced: the owner passes the gate (safe read-only routes)', async 
 
 // --- S0-A.9: Swagger only in development ------------------------------------
 
+test('registered paper reads default to demo availability without provisioning a ledger', async () => {
+  const res = await app.inject({method:'GET',url:'/api/trading-paper/availability',headers:bearer('g-owner')});
+  assert.equal(res.statusCode,200);
+  assert.equal(res.headers['cache-control'],'no-store');
+  assert.deepEqual(res.json(),{appId:'trading',version:'1.0.0',mode:'paper',state:'demo_only',readAccounts:false,executeOrders:false});
+  const detail = await app.inject({method:'GET',url:'/api/trading-paper/accounts/paper-one',headers:bearer('g-owner')});
+  assert.equal(detail.statusCode,503);
+});
+
 test('Swagger UI and spec are not registered outside development', async () => {
   for (const url of ['/docs', '/docs/json', '/docs/yaml', '/docs/static/index.html']) {
     const res = await app.inject({ method: 'GET', url });

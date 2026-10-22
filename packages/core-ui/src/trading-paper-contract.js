@@ -3,12 +3,13 @@ const id=x=>typeof x==='string'&&/^[A-Za-z0-9][A-Za-z0-9_.:-]{0,127}$/.test(x);
 const record=x=>x!==null&&typeof x==='object'&&!Array.isArray(x)&&[Object.prototype,null].includes(Object.getPrototypeOf(x))&&Reflect.ownKeys(x).every(k=>typeof k==='string'&&Object.hasOwn(Object.getOwnPropertyDescriptor(x,k),'value'));
 const uint=x=>Number.isSafeInteger(x)&&x>=0;
 const fail=()=>{throw Error('paper_account_protocol');};
-export function tradingPaperRoute(path){if(typeof path!=='string'||!path.startsWith(base))return null;const encoded=path.slice(base.length);let accountId;try{accountId=decodeURIComponent(encoded);}catch{return null;}return id(accountId)&&encodeURIComponent(accountId)===encoded?{accountId}:null;}
+export function tradingPaperRoute(path){if(path==='/api/trading-paper/availability')return {kind:'availability'};if(typeof path!=='string'||!path.startsWith(base))return null;const encoded=path.slice(base.length);let accountId;try{accountId=decodeURIComponent(encoded);}catch{return null;}return id(accountId)&&encodeURIComponent(accountId)===encoded?{accountId}:null;}
 export const allowedTradingPaper=(method,path,body)=>!!tradingPaperRoute(path)&&method==='GET'&&body===undefined;
 /** Bounded read projection shared by the desktop bridge and renderer. Never conveys order authority. */
 export function tradingPaperResponse(path,status,body){
  const route=tradingPaperRoute(path);if(!route)return fail();
  if(status!==200)return {code:'paper_account_unavailable'};
+ if(route.kind==='availability'){if(!record(body)||body.appId!=='trading'||body.mode!=='paper'||typeof body.version!=='string'||body.version.length>40||!/^\d+\.\d+\.\d+$/.test(body.version)||!['demo_only','not_provisioned','incompatible','disabled','ready'].includes(body.state)||body.readAccounts!==['ready','disabled'].includes(body.state)||body.executeOrders!==false)return fail();return {appId:'trading',version:body.version,mode:'paper',state:body.state,readAccounts:body.readAccounts,executeOrders:false};}
  if(!record(body)||body.ok!==true||body.accountId!==route.accountId||body.mode!=='paper'||typeof body.currency!=='string'||!/^[A-Z]{3}$/.test(body.currency))return fail();
  const numbers=['cash','availableCash','exposure','pendingExposure','totalExposure','pendingCount','appRevision','reservationCount'];
  if(numbers.some(k=>!uint(body[k]))||body.appRevision<1||typeof body.appEnabled!=='boolean'||typeof body.stopped!=='boolean'||body.availableCash>body.cash||body.cash-body.availableCash!==body.pendingExposure||!Number.isSafeInteger(body.exposure+body.pendingExposure)||body.totalExposure!==body.exposure+body.pendingExposure||body.pendingCount>body.reservationCount)return fail();
