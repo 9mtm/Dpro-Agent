@@ -397,3 +397,28 @@ test('registered application reviewer routes accept enrolled humans and keep own
  assert.equal((await app.inject({method:'POST',url:'/api/reviewer-votes/challenge',headers:{...human,origin:'http://untrusted.invalid'},payload:{userId:'g-review-owner'}})).statusCode,403);
  assert.equal((await app.inject({method:'POST',url:'/api/reviewer-votes/challenge',headers:{...human,origin:'http://localhost:41521'},payload:{userId:'g-review-owner'}})).statusCode,400);
 });
+
+test('reviewed skill installation routes are owner-only in the registered application',async()=>{
+ const base='/api/skills/reviewed-installs';
+ const expected=[['POST',base+'/stage'],['GET',base+'/:id'],...['challenge','complete','apply'].map(p=>['POST',base+'/:id/'+p])];
+ const installed=routes.filter(r=>r.url.startsWith(base));assert.equal(installed.length,5);
+ for(const [method,url]of expected)assert.ok(installed.some(r=>r.method===method&&r.url===url&&r.access==='owner'),method+' '+url);
+ const {beginEnrollment,activateEnrollment}=await import('../src/auth/verification/enrollment.ts');
+ const {hotp,decodeSecret}=await import('../src/auth/verification/totp.ts');
+ for(const id of ['g-install-owner','g-install-other']){
+  addUser(id,'owner');const when=Date.now()-60000,context={userId:id,tokenVersion:1,sessionHash:'e'.repeat(64)},pending=await beginEnrollment(context,when);
+  await activateEnrollment(context,hotp(decodeSecret(pending.secret),BigInt(Math.floor(when/30000))),when);
+ }
+ const owner={authorization:'Bearer '+generateToken('g-install-owner',2),origin:'http://localhost:41521'};
+ const other={authorization:'Bearer '+generateToken('g-install-other',2),origin:'http://localhost:41521'};
+ const previousFetch=globalThis.fetch;let contacted=0;globalThis.fetch=async()=>{contacted++;throw new Error('Unexpected source contact');};
+ try{
+  const badOrigin=await app.inject({method:'POST',url:base+'/stage',headers:{...owner,origin:'http://untrusted.invalid'},payload:{}});assert.equal(badOrigin.statusCode,403);
+  const noFactor=await app.inject({method:'POST',url:base+'/stage',headers:{...bearer('g-owner'),origin:owner.origin},payload:{}});assert.equal(noFactor.statusCode,403);
+  for(let i=0;i<5;i++){const r=await app.inject({method:'POST',url:base+'/stage',headers:owner,payload:{}});assert.equal(r.statusCode,400,r.body);assert.equal(r.headers['cache-control'],'no-store');}
+  const limited=await app.inject({method:'POST',url:base+'/stage',headers:owner,payload:{}});assert.equal(limited.statusCode,429,limited.body);assert.ok(limited.headers['retry-after']);
+  const separate=await app.inject({method:'POST',url:base+'/stage',headers:other,payload:{}});assert.equal(separate.statusCode,400,separate.body);
+  const read=await app.inject({method:'GET',url:base+'/00000000-0000-4000-8000-000000000000',headers:other});assert.equal(read.statusCode,404,read.body);assert.equal(read.headers['cache-control'],'no-store');
+  assert.equal(contacted,0);
+ }finally{globalThis.fetch=previousFetch;}
+});
