@@ -131,6 +131,7 @@ export async function authRoutes(fastify: FastifyInstance) {
   fastify.post('/api/auth/login', {
     config: { rateLimit: loginRateLimit }
   }, async (request, reply) => {
+    reply.header('Cache-Control','no-store');
     const body = (request.body ?? {}) as any;
     const { email, password } = body;
     // S0-Q.20: optional device token from an earlier sign-in (never logged).
@@ -168,7 +169,7 @@ export async function authRoutes(fastify: FastifyInstance) {
       const denied = { error: 'Forbidden', code: 'account_inactive', message: 'Account access denied' };
       const invalid = { error: 'Unauthorized', code: 'invalid_credentials', message: 'Invalid email or password' };
 
-      const result = await identity().signIn(email, password);
+      const result = await identity().signIn(email, password, body.verification,body.recovery===true?'recovery':'totp');
       switch (result.status) {
         // S0-Q.21: 'unknown' and 'bad_password' must look exactly alike (same
         // 401 body, a failure row, bcrypt ran). signIn only reports account
@@ -207,6 +208,12 @@ export async function authRoutes(fastify: FastifyInstance) {
             code: 'published_password',
             message: 'This account uses a default password and is disabled. Reset the password from the CLI.'
           });
+        case 'recovered':
+          return {requiresSignIn:true,recovered:true};
+        case 'verification_limited':
+          return reply.header('Retry-After','300').code(429).send({error:'Too many verification challenges',code:'verification_limited'});
+        case 'verification_required':
+          return {verificationRequired:true,challenge:result.challenge,nonce:result.nonce,expiresAt:result.expiresAt,verificationMethod:result.verificationMethod};
         case 'ok':
           // SECURITY: Track successful login and clear failed attempts (M-02); log it (L-02)
           const newDeviceToken = await loginThrottle.succeeded(email, ipAddress, userAgent, deviceToken);

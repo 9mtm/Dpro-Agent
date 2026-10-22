@@ -31,6 +31,8 @@ import { channelsRoutes } from './routes/channels.js';
 import { specialtyTemplateRoutes } from './routes/specialty-templates.js';
 import { skillLibraryRoutes } from './routes/skill-library.js';
 import { skillsRoutes } from './routes/skills.js';
+import { schedulerDefinitionRoutes } from './routes/scheduler-definitions.js';
+import { schedulerAuthorizationRoutes } from './routes/scheduler-authorization.js';
 import { schedulerRoutes } from './routes/scheduler.js';
 import { memoryRoutes } from './routes/memory.js';
 import { memoryFilesRoutes } from './routes/memory-files.js';
@@ -51,6 +53,10 @@ import { onboardingWebRoutes } from './routes/onboarding-web.js'; // F-05: web w
 import { teamPlanRoutes } from './routes/team-plan.js'; // ONBOARD-TEAM-01: company size -> departments -> proposed team
 import { gatewayRoutes } from './routes/gateway.js';
 import { authRoutes } from './routes/auth.js';
+import { verificationRoutes } from './routes/verification.js';
+import { reviewerPolicyRoutes } from './routes/reviewer-policies.js';
+import { reviewerRequestRoutes } from './routes/reviewer-requests.js';
+import { reviewerVoteRoutes } from './routes/reviewer-votes.js';
 import { databaseRoutes } from './routes/database.js';
 import { workflowRoutes } from './routes/workflows.js';
 import { sandboxRoutes } from './routes/sandbox.js';
@@ -296,6 +302,10 @@ export async function buildServer(options: BuildServerOptions = {}): Promise<Fas
   // Register routes
   await fastify.register(setupRoutes); // 🛠️ Setup Wizard (First-Time Installation)
   await fastify.register(authRoutes); // 🔐 Authentication
+  await fastify.register(verificationRoutes);
+  await fastify.register(reviewerPolicyRoutes);
+  await fastify.register(reviewerRequestRoutes);
+  await fastify.register(reviewerVoteRoutes);
   await fastify.register(databaseRoutes); // 🗄️ Database Management (Stats, Backups, Vacuum)
   await fastify.register(workflowRoutes); // ⚡ Workflow Builder
   await fastify.register(sessionsRoutes);
@@ -313,6 +323,8 @@ export async function buildServer(options: BuildServerOptions = {}): Promise<Fas
   await fastify.register(mcpImportRoutes);
   await fastify.register(skillLibraryRoutes);
   await fastify.register(specialtyTemplateRoutes); // 🛠️ Skills System
+  await fastify.register(schedulerDefinitionRoutes);
+  await fastify.register(schedulerAuthorizationRoutes);
   await fastify.register(schedulerRoutes); // ⏰ Scheduler System
   await fastify.register(memoryRoutes); // 🧠 Memory System
   await fastify.register(memoryFilesRoutes); // CORE-04: owner-only memory files + reviewed proposals

@@ -1,22 +1,22 @@
 // Small desktop building blocks: right-click menus, popovers, sheets, a quiet
 // notice with Undo, icon buttons with tooltips, project tiles and avatars.
 import { useEffect, useRef, useState } from 'react';
-import type { ReactNode, MouseEvent as ReactMouseEvent } from 'react';
+import type { ReactNode, MouseEvent as ReactMouseEvent, KeyboardEvent as ReactKeyboardEvent } from 'react';
 import { UiIcon } from './ui-icons';
 import type { UiIconName } from './ui-icons';
 import { initial, tileColour } from './memory-desktop';
 
 export type MenuItem = { label: string; run: () => void; icon?: UiIconName; shortcut?: string; danger?: boolean; disabled?: boolean } | 'sep';
-export type MenuAt = { x: number; y: number; items: MenuItem[] } | null;
+export type MenuAt = { x: number; y: number; items: MenuItem[]; invoker?: HTMLElement } | null;
 
 /** Opens a menu at the pointer (right-click) or under a button (⋯). */
 export function useMenu() {
   const [menu, setMenu] = useState<MenuAt>(null);
-  const at = (e: ReactMouseEvent, items: MenuItem[]) => {
+  const at = (e: ReactMouseEvent | ReactKeyboardEvent, items: MenuItem[]) => {
     e.preventDefault(); e.stopPropagation();
     const r = (e.currentTarget as HTMLElement).getBoundingClientRect();
-    const fromButton = e.type === 'click';
-    setMenu({ x: fromButton ? r.right : e.clientX, y: fromButton ? r.bottom + 4 : e.clientY, items });
+    const anchored = e.type === 'click' || e.type === 'keydown';
+    setMenu({ x: anchored ? r.right : (e as ReactMouseEvent).clientX, y: anchored ? r.bottom + 4 : (e as ReactMouseEvent).clientY, items, invoker: e.currentTarget as HTMLElement });
   };
   return { menu, at, close: () => setMenu(null) };
 }
@@ -26,7 +26,7 @@ export function ContextMenu({ menu, onClose }: { menu: MenuAt; onClose: () => vo
   useEffect(() => {
     if (!menu) return;
     const close = (e: Event) => { if (!ref.current?.contains(e.target as Node)) onClose(); };
-    const key = (e: KeyboardEvent) => { if (e.key === 'Escape') { e.preventDefault(); onClose(); } };
+    const key = (e: KeyboardEvent) => { if (e.key === 'Escape') { e.preventDefault(); e.stopPropagation(); onClose(); if (menu.invoker?.isConnected) menu.invoker.focus(); } };
     window.addEventListener('mousedown', close, true); window.addEventListener('keydown', key, true); window.addEventListener('blur', onClose);
     ref.current?.querySelector<HTMLButtonElement>('button:not(:disabled)')?.focus();
     return () => { window.removeEventListener('mousedown', close, true); window.removeEventListener('keydown', key, true); window.removeEventListener('blur', onClose); };

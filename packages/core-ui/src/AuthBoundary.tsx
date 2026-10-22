@@ -1,4 +1,5 @@
 import { generatePassword, passwordStrength } from './password-tools.js';
+import {UiIcon} from './ui-icons';
 import { PublicShell } from './PublicShell';
 import { SignedInShell } from './SignedInShell';
 import { useEffect, useMemo, useRef, useState, useSyncExternalStore } from 'react';
@@ -13,6 +14,7 @@ import { setupCodeFromFragment } from './owner-setup-contract.js';
 import type { OwnerSetupCode } from './owner-setup-contract.js';
 
 const notices = {
+  recovered:'Authenticator reset. Sign in again, then set up two-step verification in Settings.',
   published_password: 'Sign-in refused because the password is a published default. Reset it from the CLI.',
   account_inactive: 'This account is unavailable for sign-in. Ask the installation owner to review its status.',
   rate_limited: 'Request rate limit reached. Try again later; no retry was sent.',
@@ -53,7 +55,7 @@ export function AuthBoundary({ client: supplied, children, initialPage }: { clie
       {state.mode === 'fixture' ? <>
         {client.canUse('mock') && <button onClick={() => client.selectMode('mock')}>Open offline login mock</button>}
         {client.canUse('live') && <button onClick={() => client.selectMode('live')}>Use live sign-in</button>}
-      </> : <button disabled={state.phase === 'signing-out'} onClick={() => client.selectMode('fixture')}>Return to fixture (local session cleared)</button>}
+      </> : <button disabled={state.phase === 'signing-out'||state.phase==='recovery-codes'} onClick={() => client.selectMode('fixture')}>Return to fixture (local session cleared)</button>}
       <span>Authentication copy: English draft.</span>
     </section>}
     {state.mode === 'fixture' ? (liveOnly ? null : children) : <SessionWorkspace key={`${state.mode}:${state.epoch}`} client={client} setupCode={setupCode} initialPage={initialPage}/>}
@@ -64,10 +66,11 @@ function SessionWorkspace({ client, setupCode, initialPage }: { client: SessionC
   const [email, setEmail] = useState(''); const [password, setPassword] = useState('');
   // Signed in: the full workspace (sidebar, chat, agents, memory, account).
   if (state.phase === 'authenticated' && state.user) return <SignedInShell client={client} notice={state.notice ? <>{notices[state.notice]}{retryAfterNotice(state.retryAfterSeconds)}</> : null}/>;
-  return <PublicShell setup={state.setup} initialPage={initialPage}><section className="auth-workspace" aria-label="Account sign-in" lang="en" dir="ltr">
+  if(state.phase==='recovery-codes')return <PublicShell setup="login" initialPage="account" blocking><RecoveryCodes client={client}/></PublicShell>;
+  return <PublicShell setup={state.setup} initialPage={initialPage} accountStep={state.phase==='signing-in'||!!state.verification||!!state.notice}><section className="auth-workspace" aria-label="Account sign-in" lang="en" dir="ltr">
     <h1>Dpro Agent · {state.mode === 'mock' ? 'Offline login exercise' : 'Account'}</h1>
     {state.notice && <p role="status">{notices[state.notice]}{retryAfterNotice(state.retryAfterSeconds)}</p>}
-    {state.phase === 'authenticated' && state.user ? null : state.phase === 'signed-out' && state.setup === 'required' ? <OwnerSetup client={client} setupCode={setupCode} initialPage={initialPage}/> : state.phase === 'signing-out' ? <><p role="status">Signing out on all devices…</p><button onClick={() => client.cancel()}>Clear locally; server outcome remains unknown</button></> : state.phase === 'signed-out' && state.setup !== 'login' ? <section aria-label="Setup discovery">
+    {(state.phase === 'verifying'||state.phase==='signing-in') && state.verification ? <VerificationForm client={client} method={state.verification.method} busy={state.phase==='signing-in'}/> : state.phase === 'authenticated' && state.user ? null : state.phase === 'signed-out' && state.setup === 'required' ? <OwnerSetup client={client} setupCode={setupCode} initialPage={initialPage}/> : state.phase === 'signing-out' ? <><p role="status">Signing out on all devices…</p><button onClick={() => client.cancel()}>Clear locally; server outcome remains unknown</button></> : state.phase === 'signed-out' && state.setup !== 'login' ? <section aria-label="Setup discovery">
       <p role="status">{state.setup === 'checking' ? 'Checking installation setup…' : state.setup === 'unavailable' ? 'Setup status unavailable. Sign-in is withheld; no automatic retry was sent.'
         : 'Check installation setup before signing in. No request has been sent automatically.'}</p>
       <p>Discovery does not verify an account, installation identity, or system readiness.</p>
@@ -86,6 +89,32 @@ function SessionWorkspace({ client, setupCode, initialPage }: { client: SessionC
     </form>}
     <p>Settings credentials remain masked-only; no credential values are fetched.</p>
   </section></PublicShell>;
+}
+function RecoveryCodes({client}:{client:SessionClient}){
+ const [saved,setSaved]=useState(false),[discard,setDiscard]=useState(false);
+ const codes=client.recoveryCodes();
+ return <section className="auth-workspace recovery-codes" aria-label="Save recovery codes" lang="en" dir="ltr">
+  <h1>Save your recovery codes</h1><p>Two-step verification is on. Save these codes privately. Each code works once.</p>
+  <p>These codes disappear when you leave this screen. Your previous sessions have ended.</p>
+  <ul aria-label="Recovery codes">{codes.map(code=><li key={code}><code>{code}</code></li>)}</ul>
+  <label className="recovery-saved"><input type="checkbox" checked={saved} onChange={event=>setSaved(event.target.checked)}/>I have saved these codes</label>
+  {!discard?<><button className="primary" disabled={!saved} onClick={()=>client.finishRecoveryCodes()}>Continue to sign in</button><button onClick={()=>setDiscard(true)}>Discard codes</button></>:<div role="alert"><p>Discard these codes? They cannot be shown again.</p><button className="primary" onClick={()=>client.finishRecoveryCodes()}>Discard and sign in</button><button onClick={()=>setDiscard(false)}>Keep saving codes</button></div>}
+ </section>;
+}
+function VerificationForm({client,method,busy}:{client:SessionClient;method:'totp'|'recovery';busy:boolean}){
+ const [password,setPassword]=useState(''),[code,setCode]=useState('');
+ const recovery=method==='recovery';
+ return <form className="auth-verification" aria-label={recovery?'Recover account':'Verify sign-in'} onKeyDown={event=>{if(event.key==='Escape'){event.preventDefault();client.cancel();}}} onSubmit={event=>{
+  event.preventDefault();const submittedPassword=password,submittedCode=code;setPassword('');setCode('');void client.completeVerification(submittedPassword,submittedCode);
+ }}>
+  <fieldset disabled={busy}><h2>{recovery?'Recover your account':'Verify your sign-in'}</h2>
+  <p>{recovery?'This resets your authenticator and signs out every device. You will need to sign in again.':'Enter the code from your authenticator. Confirm your password to finish.'}</p>
+  <label htmlFor="verification-password">Password</label><input id="verification-password" type="password" autoComplete="current-password" value={password} required maxLength={4096} onChange={event=>setPassword(event.target.value)}/>
+  <label htmlFor="verification-code">{recovery?'Recovery code':'Verification code'}</label><input id="verification-code" type="text" inputMode={recovery?'text':'numeric'} autoComplete="one-time-code" autoCapitalize="none" spellCheck={false} value={code} pattern={recovery?'[a-f0-9]{32}':'[0-9]{6}'} maxLength={recovery?32:6} required onChange={event=>setCode(event.target.value.trim())}/>
+  <button className="primary" type="submit">{recovery?'Reset authenticator':'Verify'}</button>
+  {!recovery&&<button type="button" disabled={!password} title="Enter your password first" onClick={()=>{const submitted=password;setPassword('');setCode('');void client.startRecovery(submitted);}}>Use a recovery code</button>}
+  </fieldset>{busy&&<p role="status">Verifying…</p>}<button type="button" onClick={()=>client.cancel()}><UiIcon name="log-out"/>Back to sign in</button>
+ </form>;
 }
 // Read once per page load (a repeated initializer must not lose the code).
 let linkCode: string | null | undefined;

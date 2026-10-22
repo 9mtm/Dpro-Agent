@@ -24,3 +24,14 @@ test('per-agent assignment, CAS, fresh-instance durability and immediate prompt 
 test('source races and conflicting updates preserve original files and stable assignment IDs',async()=>{
  const file=path.join(store.getScan('skill-owner',scanId).sources.find(s=>s.id===sourceId).directory,'SKILL.md');await fs.writeFile(file,content.replace('green notebook','blue notebook'));assert.equal((await call('POST','/api/skill-library/import',{scanId,sourceId,hash:preview.hash})).statusCode,409);const next=(await call('POST','/api/skill-library/preview',{scanId,sourceId})).json();assert.equal((await call('POST','/api/skill-library/import',{scanId,sourceId,hash:next.hash})).statusCode,409);await call('PUT','/api/skill-library/agents/main-agent',{selected:[installed.id],revision:2});const changed=await call('POST','/api/skill-library/import',{scanId,sourceId,hash:next.hash,replaceHash:installed.content_hash});assert.equal(changed.statusCode,200);assert.equal(changed.json().skill.id,installed.id);assert.equal(changed.json().skill.revision,2);assert.match(await agentSkillsPrompt('main-agent'),/blue notebook/);assert.ok(await fs.stat(path.join(root,'skill-library/objects',installed.content_hash,'SKILL.md')));await fs.appendFile(path.join(root,'skill-library/objects',changed.json().skill.content_hash,'SKILL.md'),'\nUnindexed edit');assert.equal(await agentSkillsPrompt('main-agent'),'');
 });
+
+test('reviewed Markdown bundle matches actual durable object without assignment',async()=>{
+ const {prepareSkillArtifactReview}=await import('../src/plugins/skill-artifact.ts');
+ const {createHash}=await import('node:crypto');
+ const raw='---\r\nname: reviewed-example\r\ndescription: Fictional reviewed library test\r\n---\r\nA notebook.\r\npassword = "fictional-central-review-value"\r\n';
+ const reviewed=prepareSkillArtifactReview({provider:'anthropic-skills',commit:'a'.repeat(40),sourcePath:'skills/reviewed-example',targetName:'reviewed-example',expectedRevision:0,previousContentHash:null,expectedContentHash:createHash('sha256').update(raw).digest('hex'),content:raw});
+ const saved=await store.installMarkdown(raw,'reviewed-example','fictional-review-test');
+ assert.equal(saved.skill.content_hash,reviewed.bundle.hash);
+ assert.equal(await fs.readFile(path.join(root,'skill-library/objects',reviewed.bundle.hash,'SKILL.md'),'utf8'),reviewed.bundle.files[0].content);
+ assert.equal(db.prepare('SELECT COUNT(*) AS n FROM central_agent_skills WHERE skill_id=?').get(saved.skill.id).n,0);
+});

@@ -1,3 +1,6 @@
+import {requireReviewerQuorumStep,quorumRequestHash} from '../auth/verification/reviewer-quorum.js';
+import {claimApprovalWithReceiptStep,claimApprovalWithoutReceiptStep} from '../auth/verification/approval-proof.js';
+import type {OperationContext} from '../auth/verification/operation-proof.js';
 import { redactImportText } from '../memory/import/redact.js';
 /**
  * One-time approvals for risky agent tool calls (S1.3).
@@ -419,6 +422,32 @@ export async function getApprovalDetail(id: string): Promise<ApprovalDetail | nu
     params, maskedFields, paramsHash: row.params_hash ?? null, runScope: scope === 'invalid' ? null : scope };
 }
 
+/** Internal reader: caller must authorize the exact reviewer target before invoking this. No expiry writes. */
+export async function readBoundReviewerParams(id:string,expectedParamsHash:string,expectedRequestHash:string){
+  const row=await sql().read(one('SELECT * FROM tool_approvals WHERE id=?',id));
+  if(!row||row.status!=='pending'||row.params_hash!==expectedParamsHash||quorumRequestHash(row)!==expectedRequestHash)return null;
+  // Bound both work and output; an oversized request must never be silently truncated for review.
+  if(typeof row.params_encrypted!=='string'||row.params_encrypted.length>2097152||row.params_encrypted.length%2!==0||!/^[a-f0-9]+$/i.test(row.params_encrypted)||typeof row.params_iv!=='string'||!/^[a-f0-9]{32}$/i.test(row.params_iv)||typeof row.params_tag!=='string'||!/^[a-f0-9]{32}$/i.test(row.params_tag))return null;
+  try{
+    const plain=await getEncryptionService().decrypt(row.params_encrypted,row.params_iv,row.params_tag);
+    if(plain.length>1048576)return null;
+    const raw=JSON.parse(plain),scope=parseRunScope(row.run_scope);
+    if(scope==='invalid'||!row.params_salt||!sameHash(paramsHash(row.params_salt,hashedPayload(raw,scope)),row.params_hash))return null;
+    const maskedFields:string[]=[];
+    const hide=(value:unknown,path='',depth=0):unknown=>{
+      if(depth>40)throw Error('Review nesting limit');
+      if(typeof value==='string'){const redacted=redactImportText(value);if(redacted.total)maskedFields.push(path);return redacted.text;}
+      if(Array.isArray(value))return value.map((v,i)=>hide(v,`${path}[${i}]`,depth+1));
+      if(value&&typeof value==='object')return Object.fromEntries(Object.entries(value).map(([key,v])=>[key,hide(v,path?`${path}.${key}`:key,depth+1)]));
+      return value;
+    };
+    const params=hide(maskApprovalParams(row.tool_name,raw,maskedFields));
+    const runScope=hide(scope,'runScope');
+    const result={params,maskedFields,runScope};
+    return JSON.stringify(result).length<=1048576?result:null;
+  }catch{return null;}
+}
+
 export class ApprovalStateError extends Error {
   constructor(message: string, readonly status: number) { super(message); }
 }
@@ -437,12 +466,17 @@ export async function denyApproval(id: string, ownerId: string): Promise<Approva
   return record;
 }
 
+/** A known pre-claim refusal: no decision or execution has happened. */
+export class ApprovalVerificationRequiredError extends ApprovalStateError {
+ constructor(){super('Verification is required for this approval',403);}
+}
+
 /**
  * Approve once and run the stored call. The pending -> approved transition
  * is atomic, so concurrent approvals run it at most once. The agent's grants,
  * the exec gate and (for channel turns) the channel policy are checked again.
  */
-export async function approveAndRun(id: string, ownerId: string, expectedHash: unknown): Promise<{ record: ApprovalRecord; result: ToolResult }> {
+export async function approveAndRun(id: string, ownerId: string, expectedHash: unknown, proof?:{receipt:unknown;context:OperationContext}): Promise<{ record: ApprovalRecord; result: ToolResult }> {
   await expireOld();
   const current = await sql().read(one<{ status: string; params_hash: string | null }>('SELECT status, params_hash FROM tool_approvals WHERE id = ?', id));
   if (!current) throw new ApprovalStateError('Approval not found', 404);
@@ -452,14 +486,17 @@ export async function approveAndRun(id: string, ownerId: string, expectedHash: u
   }
   // One UPDATE claims the approval: on PostgreSQL a concurrent approve waits on
   // the row lock, then sees it no longer 'pending' (runs at most once).
-  const claimed = await sql().read((function* () {
-    const d = yield* dialect();
-    return yield* run(`UPDATE tool_approvals SET status = 'approved', decided_at = ${nowText(d)}, decided_by = ? WHERE id = ? AND status = 'pending' AND params_hash = ?`,
-      ownerId, id, typeof expectedHash === 'string' ? expectedHash : '');
-  })());
+  if(proof!==undefined&&(!proof||!proof.context||proof.context.userId!==ownerId))throw new ApprovalStateError('Approval verification refused',403);
+  const claimed = await sql().tx(function*(){
+    const hash=typeof expectedHash==='string'?expectedHash:'';
+    yield* requireReviewerQuorumStep(ownerId,id,hash);
+    return proof!==undefined?{kind:'claimed',changes:(yield* claimApprovalWithReceiptStep(proof.receipt,proof.context,id,hash))?1:0}:yield* claimApprovalWithoutReceiptStep(ownerId,id,hash);
+  });
+  if(claimed.kind==='required')throw new ApprovalVerificationRequiredError();
+  if(claimed.kind==='forbidden')throw new ApprovalStateError('Owner approval context changed',403);
   const row = await sql().read(one('SELECT * FROM tool_approvals WHERE id = ?', id));
   if (!row) throw new ApprovalStateError('Approval not found', 404);
-  if (claimed.changes !== 1) throw new ApprovalStateError(`Approval is ${row.status}, not pending`, 409);
+  if (claimed.changes !== 1){if(proof!==undefined)throw new ApprovalStateError('Approval verification refused',403);throw new ApprovalStateError(`Approval is ${row.status}, not pending`,409);}
 
   const finish = async (status: 'executed' | 'failed', resultPreview: string | null, error: string | null) => {
     await sql().read((function* () {

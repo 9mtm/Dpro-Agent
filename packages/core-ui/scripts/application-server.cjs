@@ -1,3 +1,7 @@
+const {scheduleDefinitionRoute,allowedScheduleDefinition,scheduleDefinitionResponse}=require('../src/scheduler-definitions-contract.js');
+const {scheduleAuthorizationRoute,allowedScheduleAuthorization,scheduleAuthorizationResponse}=require('../src/scheduler-authorization-contract.js');
+const {allowedVerification,verificationRoute,verificationResponse}=require('../src/verification-contract.js');
+const {allowedReviewer,reviewerRoute,reviewerResponse}=require('../src/reviewers-contract.js');
 const {approvalRoute,allowedApproval,approvalResponse}=require('../src/approvals-contract.js');
 const { allowedConnections, connectionsRoute, connectionsResponse } = require('../src/connections-contract.js');
 const {allowedTemplates,templatePath,templatesResponse}=require('../src/specialty-contract.js');
@@ -20,7 +24,7 @@ const { allowedChatExport, chatExportRoute, chatExportResponse } = require('../s
 const { allowedChatSecrets, chatSecretsRoute, chatSecretsResponse } = require('../src/chat-secrets-contract.js');
 const { allowedTerminal, terminalPath, terminalRoute, terminalResponse, TerminalEventParser, TERMINAL_STREAM_MS } = require('../src/terminal-contract.js');
 const { allowedConversation, conversationPath, conversationRoute, conversationResponse, RunEventParser, RUN_STREAM_MS, RUN_IDLE_MS } = require('../src/conversation-contract.js');
-const { validDeviceToken, validLoginBody } = require('../src/login-contract.js');
+const { validDeviceToken, validLoginBody, loginContinuation } = require('../src/login-contract.js');
 const { setupStatus } = require('../src/setup-status.js');
 const { OWNER_SETUP_PATH, validOwnerSetupBody, ownerSetupResponse } = require('../src/owner-setup-contract.js');
 const { memoryResponse } = require('./memory-response.cjs');
@@ -64,6 +68,10 @@ const agent = x => {
     : { id: x.id, version: x.version, nameUnavailable: true, ...profile(x) };
 };
 function allowed(method, target, body) {
+  if(scheduleDefinitionRoute(target))return allowedScheduleDefinition(method,target,body);
+  if(scheduleAuthorizationRoute(target))return allowedScheduleAuthorization(method,target,body);
+  if(reviewerRoute(target))return allowedReviewer(method,target,body);
+  if(verificationRoute(target))return allowedVerification(method,target,body);
   if (approvalRoute(target)) return allowedApproval(method,target,body);
   if (connectionsRoute(target)) return allowedConnections(method,target,body);
   if (mcpImportPath(target)) return allowedMcpImport(method,target,body);
@@ -113,6 +121,10 @@ function stage1Route(method, target) {
   return read && allowed('GET', target, undefined);
 }
 function project(target, status, body) {
+  if(scheduleDefinitionRoute(target))return scheduleDefinitionResponse(target,status,body);
+  if(scheduleAuthorizationRoute(target))return scheduleAuthorizationResponse(target,status,body);
+  if(reviewerRoute(target))return reviewerResponse(target,status,body);
+  if(verificationRoute(target)){const projected=verificationResponse(target,status,body);if(!projected)throw Error();return projected;}
   if (target === '/api/setup/status') return setupStatus(status, body);
   // INSTALLER-07: fixed codes only; a reply outside the contract fails closed.
   if (target === OWNER_SETUP_PATH) { const r = ownerSetupResponse(status, body); if (!r) throw Error(); return r; }
@@ -123,10 +135,10 @@ function project(target, status, body) {
   if (personalityRoute(target)) return personalityResponse(target, status, body);
   if (hireRoute(target, status)) return hireResponse(target, status, body);
   if (boardRoute(target)) return boardResponse(target, status, body);
+  if (approvalRoute(target)) return approvalResponse(target,status,body);
   if (conversationRoute(target)) return conversationResponse(target, status, body);
   if (cardRoute(target)) return agentCardResponse(target, status, body);
   if (terminalRoute(target)) return terminalResponse(target, status, body);
-  if (approvalRoute(target)) return approvalResponse(target,status,body);
   if (connectionsRoute(target)) return connectionsResponse(target,status,body);
   if (mcpImportPath(target)) return mcpImportResponse(target,status,body);
   if (templatePath(target)) return templatesResponse(target,status,body);
@@ -166,6 +178,7 @@ function project(target, status, body) {
     return decision && ((status === 409 && ['already_decided', 'stale', 'review_changed'].includes(code)) || (status === 400 && code === 'review_hash_required')) ? { code } : null;
   }
   if (target === '/api/auth/login' || target === '/api/auth/me') {
+    if(target==='/api/auth/login'){const continuation=loginContinuation(body);if(continuation)return continuation;}
     const u = body?.user;
     if (!record(u) || !['id', 'email', 'username', 'role'].every(k => typeof u[k] === 'string')) throw Error();
     const user = Object.fromEntries(['id', 'email', 'username', 'role'].map(k => [k, u[k]]));
@@ -381,6 +394,11 @@ function createApplicationServer({ packageRoot = root, channel, stage1ReadOnly =
         response.on('end', () => {
           try {
             const projected = project(raw, status, JSON.parse(new TextDecoder('utf-8', { fatal: true }).decode(Buffer.concat(parts))));
+            if(raw==='/api/auth/login'&&status===200){
+              if(body.recovery===true&&typeof projected?.token==='string')throw Error();
+              if(projected?.recovered===true&&!(body.recovery===true&&body.verification))throw Error();
+              if(projected?.verificationRequired===true&&projected.verificationMethod!==(body.recovery===true?'recovery':'totp'))throw Error();
+            }
             // Fetch may automatically retry 421 POSTs. Do not expose a retry-triggering
             // status for any non-GET; preserve the reviewed code with a bridge 502.
             const delayHeaders = response.rawHeaders.filter((value, i) => i % 2 === 0 && value.toLowerCase() === 'retry-after').length;
@@ -388,7 +406,7 @@ function createApplicationServer({ packageRoot = root, channel, stage1ReadOnly =
             if (delay !== undefined && !res.headersSent) res.setHeader('Retry-After', String(delay));
             if (raw === '/api/auth/login' && status === 200 && typeof projected?.token === 'string') {
               res.setHeader('Set-Cookie', `dpro_session=${projected.token}; HttpOnly; SameSite=Strict; Path=/api; Max-Age=604800`);
-            } else if ((raw === '/api/auth/logout' && status === 200) || (raw === '/api/auth/me' && status === 401 && req.headers.authorization === 'Bearer dpro-remembered-session')) {
+            } else if ((verificationRoute(raw)&&status===200&&projected?.requiresSignIn===true) || (raw === '/api/auth/login' && status === 200 && projected?.recovered === true) || (raw === '/api/auth/logout' && status === 200) || (raw === '/api/auth/me' && status === 401 && req.headers.authorization === 'Bearer dpro-remembered-session')) {
               res.setHeader('Set-Cookie', 'dpro_session=; HttpOnly; SameSite=Strict; Path=/api; Max-Age=0');
             }
             send(req.method !== 'GET' && status === 421 ? 502 : status, projected);

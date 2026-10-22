@@ -80,21 +80,26 @@ export function listEnabledJobs(): Promise<CronJob[]> {
 const INSERT_JOB = `INSERT INTO cron_jobs (id, name, description, cron_expression, action_type, action_data, enabled, created_at, updated_at)
   VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`;
 
+/** Caller holds this job's lock and changes the definition in the same transaction. */
+export function* advanceSecurityRevision(id:string):Step<void>{
+ const result=yield* run('INSERT INTO scheduled_job_security_versions(job_id,revision) VALUES(?,1) ON CONFLICT(job_id) DO UPDATE SET revision=scheduled_job_security_versions.revision+1 WHERE scheduled_job_security_versions.revision<2147483647',id);
+ if(result.changes!==1)throw Error('Scheduled job revision exhausted');
+}
 /** Store a new job (route POST /api/scheduler/jobs). */
 export async function insertJob(job: CronJob): Promise<void> {
-  await sql().read(run(INSERT_JOB,
+  await sql().tx(function*(){yield* lockName('scheduled-job:'+job.id);yield* run(INSERT_JOB,
     job.id, job.name, job.description || null, job.cronExpression, job.actionType,
-    JSON.stringify(job.actionData), job.enabled ? 1 : 0, job.createdAt.toISOString(), job.updatedAt.toISOString()));
+    JSON.stringify(job.actionData), job.enabled ? 1 : 0, job.createdAt.toISOString(), job.updatedAt.toISOString());yield* advanceSecurityRevision(job.id);});
 }
 
 /** Replace a job's definition (route PUT /api/scheduler/jobs/:id). */
 export async function updateJobDefinition(job: CronJob): Promise<void> {
-  await sql().read(run(`
+  await sql().tx(function*(){yield* lockName('scheduled-job:'+job.id);const changed=yield* run(`
     UPDATE cron_jobs
     SET name = ?, description = ?, cron_expression = ?, action_type = ?, action_data = ?, enabled = ?, updated_at = ?
     WHERE id = ?`,
   job.name, job.description || null, job.cronExpression, job.actionType, JSON.stringify(job.actionData),
-  job.enabled ? 1 : 0, job.updatedAt.toISOString(), job.id));
+  job.enabled ? 1 : 0, job.updatedAt.toISOString(), job.id);if(changed.changes===1)yield* advanceSecurityRevision(job.id);});
 }
 
 export async function setJobEnabled(id: string, enabled: boolean, updatedAt: Date): Promise<void> {
@@ -102,7 +107,7 @@ export async function setJobEnabled(id: string, enabled: boolean, updatedAt: Dat
 }
 
 export async function deleteJob(id: string): Promise<void> {
-  await sql().read(run('DELETE FROM cron_jobs WHERE id = ?', id));
+  await sql().tx(function*(){yield* lockName('scheduled-job:'+id);const changed=yield* run('DELETE FROM cron_jobs WHERE id = ?', id);if(changed.changes===1)yield* advanceSecurityRevision(id);});
 }
 
 /** The engine's after-run update of last_run / next_run. */

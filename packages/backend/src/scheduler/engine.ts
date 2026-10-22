@@ -4,6 +4,7 @@ import { safeConsole } from '../services/safe-error-log.js';
  * Manages scheduled jobs using node-cron
  */
 
+import { assertScheduledDispatch } from './authorization.js';
 import { backgroundEnabled } from '../config/background.js';
 import { isPaidProviderUrl } from '../llm/model-call.js';
 import cron from 'node-cron';
@@ -108,7 +109,7 @@ export class CronEngine extends EventEmitter implements ICronEngine {
         safeConsole.log(`[CronEngine] ⏰ Executing job: ${job.name}`);
 
         try {
-          const result = await this.executeJob(job.id);
+          const result = await this.executeJob(job.id, 'scheduled');
 
           if (result.success) {
             safeConsole.log(`[CronEngine] ✅ Job "${job.name}" completed`);
@@ -147,6 +148,13 @@ export class CronEngine extends EventEmitter implements ICronEngine {
     }
   }
 
+  /** Remember a persisted draft without starting a cron task. */
+  rememberPausedJob(job: CronJob): void {
+    if (job.enabled) throw new Error('Paused job required');
+    this.unscheduleJob(job.id);
+    this.jobs.set(job.id, job);
+  }
+
   /**
    * Get all scheduled jobs
    */
@@ -164,7 +172,7 @@ export class CronEngine extends EventEmitter implements ICronEngine {
   /**
    * Execute job immediately (manual trigger)
    */
-  async executeJob(jobId: string): Promise<JobExecutionResult> {
+  async executeJob(jobId: string, trigger: 'manual' | 'scheduled' = 'manual'): Promise<JobExecutionResult> {
     const job = this.jobs.get(jobId);
 
     if (!job) {
@@ -174,19 +182,20 @@ export class CronEngine extends EventEmitter implements ICronEngine {
     const startTime = Date.now();
 
     try {
+      const admitted = job.actionType === 'send-message' || job.actionType === 'api-call' ? await assertScheduledDispatch(job, trigger) : undefined;
       let output: any;
 
-      switch (job.actionType) {
+      switch (admitted?.actionType ?? job.actionType) {
         case 'execute-skill':
           output = await this.executeSkill(job.actionData as ExecuteSkillAction);
           break;
 
         case 'send-message':
-          output = await this.sendMessage(job.actionData as SendMessageAction);
+          output = await this.sendMessage(admitted!.actionData as unknown as SendMessageAction);
           break;
 
         case 'api-call':
-          output = await this.executeApiCall(job.actionData as ApiCallAction);
+          output = await this.executeApiCall(admitted!.actionData as unknown as ApiCallAction);
           break;
 
         case 'run-workflow':

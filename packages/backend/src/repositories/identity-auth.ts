@@ -19,6 +19,11 @@
  * this layer. Rate limits and lockout stay in front (routes/auth.ts).
  */
 
+import {createHash,randomBytes} from 'node:crypto';
+import {sql,one,dialect,lockName} from './sql-steps.js';
+import {forUpdate} from '../db/pg/dialect.js';
+import {issueChallenge,VerificationChallengeLimitError} from '../auth/verification/challenges.js';
+import {factorChallengeStep,revokeFactorStep,factorRevocationOperation} from '../auth/verification/enrollment.js';
 import type { Actor } from './actor.js';
 import { ScopeError, requireAccount, requireAdmin } from './scope.js';
 import { generateToken } from '../auth/jwt.js';
@@ -32,7 +37,12 @@ export class AccountError extends Error {
   constructor(readonly status: 400 | 403 | 409, readonly error: string, message: string) { super(message); }
 }
 
+export type LoginVerification={challenge:unknown;nonce:unknown;code:unknown};
+const loginHash=(value:string)=>createHash('sha256').update(value).digest('hex');
 export type SignInResult =
+  | { status: 'verification_required'; challenge:string; nonce:string; expiresAt:number; verificationMethod:'totp'|'recovery' }
+  | {status:'recovered'}
+  | {status:'verification_limited'}
   | { status: 'ok'; user: SafeUser; token: string }
   | { status: 'unknown' }
   | { status: 'system' | 'inactive' | 'unverified' | 'bad_password' | 'published_password'; userId: string; username: string };
@@ -49,7 +59,7 @@ export interface IdentityAuthRepository {
   /** Roles the actor may give a new account. */
   creatableRoles(actor: Actor | null | undefined): Promise<string[]>;
   createAccount(actor: Actor | null | undefined, input: AccountInput, validatePassword: (p: string) => { valid: boolean; error?: string }): Promise<SafeUser>;
-  signIn(email: string, password: string): Promise<SignInResult>;
+  signIn(email: string, password: string, verification?:LoginVerification, mode?:'totp'|'recovery'): Promise<SignInResult>;
   /** Ends every session of the account; returns its username. */
   endSessions(actor: Actor | null | undefined): Promise<{ username?: string }>;
   /** 'ok', or 'no_user' / 'wrong_password' (route answers 401). */
@@ -102,7 +112,7 @@ export function createIdentityAuth(users: UsersStore): IdentityAuthRepository {
       return users.safeUser((await users.findById(created.id)) ?? created);
     },
 
-    async signIn(email, password) {
+    async signIn(email, password, verification,mode='totp') {
       // S0-Q.21: the password is checked first, for every account. A caller
       // without the right password gets 'unknown' / 'bad_password' (the route
       // answers both with the same 401 and records a failure), so account state
@@ -122,10 +132,34 @@ export function createIdentityAuth(users: UsersStore): IdentityAuthRepository {
       if (user.status !== 'active') return { status: 'inactive', ...who };
       if (!user.email_verified) return { status: 'unverified', ...who };
       if (isPublishedDefaultPassword(given)) return { status: 'published_password', ...who };
+      if(!['totp','recovery'].includes(mode))return {status:'bad_password',...who};
+      const tokenVersion=(user as {token_version?:number}).token_version||1;
+      const outcome=await sql().tx(function*(){
+        yield* lockName('verification-enrollment:'+user.id);
+        const d=yield* dialect();
+        const current=yield* one<{token_version:number;status:string;email_verified:number}>(`SELECT token_version,status,email_verified FROM users WHERE id=?${forUpdate(d)}`,user.id);
+        if(!current||Number(current.token_version)!==tokenVersion||current.status!=='active'||!Number(current.email_verified))return {kind:'refused'} as const;
+        const factor=yield* one<{version:number;enabled:number}>('SELECT version,enabled FROM verification_factors WHERE user_id=?',user.id);
+        if(factor&&Number(factor.enabled)===1){
+          if(!verification)return {kind:'challenge',version:Number(factor.version)} as const;
+          if(typeof verification.nonce!=='string'||!/^[A-Za-z0-9_-]{43}$/.test(verification.nonce))return {kind:'refused'} as const;
+          const binding={userId:user.id,purpose:mode==='recovery'?'recovery' as const:'login' as const,sessionHash:loginHash(verification.nonce),operationHash:mode==='recovery'?factorRevocationOperation(user.id,Number(factor.version),'recovery'):loginHash(JSON.stringify(['login-v1',user.id])),tokenVersion,factorVersion:Number(factor.version)};
+          if(mode==='recovery')return (yield* revokeFactorStep(verification.challenge,binding,verification.code,'recovery',Date.now()))?{kind:'recovered'} as const:{kind:'refused'} as const;
+          if(!(yield* factorChallengeStep(verification.challenge,binding,verification.code,'totp',Date.now())))return {kind:'refused'} as const;
+        }else if(verification||mode==='recovery')return {kind:'refused'} as const;
+        return {kind:'ok',token:generateToken(user.id,tokenVersion)} as const;
+      });
+      if(outcome.kind==='recovered')return {status:'recovered'};
+      if(outcome.kind==='refused')return {status:'bad_password',...who};
+      if(outcome.kind==='challenge'){
+        const nonce=randomBytes(32).toString('base64url');
+        try{
+          const issued=await issueChallenge({userId:user.id,purpose:mode==='recovery'?'recovery':'login',sessionHash:loginHash(nonce),operationHash:mode==='recovery'?factorRevocationOperation(user.id,outcome.version,'recovery'):loginHash(JSON.stringify(['login-v1',user.id])),tokenVersion,factorVersion:outcome.version});
+          return {status:'verification_required',challenge:issued.token,nonce,expiresAt:issued.expiresAt,verificationMethod:mode};
+        }catch(error){if(error instanceof VerificationChallengeLimitError)return {status:'verification_limited'};throw error;}
+      }
       await users.updateLastLogin(user.id);
-      // SECURITY (H-01): the token carries token_version for invalidation.
-      const token = generateToken(user.id, (user as { token_version?: number }).token_version || 1);
-      return { status: 'ok', user: users.safeUser(user), token };
+      return {status:'ok',user:users.safeUser(user),token:outcome.token};
     },
 
     async endSessions(actor) {

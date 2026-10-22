@@ -159,7 +159,7 @@ export interface ICronEngine {
   /**
    * Execute job immediately (manual trigger)
    */
-  executeJob(jobId: string): Promise<JobExecutionResult>;
+  executeJob(jobId: string, trigger?: 'manual' | 'scheduled'): Promise<JobExecutionResult>;
 }
 
 /**

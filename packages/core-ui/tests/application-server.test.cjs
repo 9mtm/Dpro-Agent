@@ -364,3 +364,73 @@ test('remembered session uses HttpOnly cookie, validates bearer upstream and cle
  assert.equal((await s.request('/api/auth/me',{headers:{Authorization:'Bearer dpro-remembered-session',Cookie:cookie.split(';')[0],Origin:'http://other.invalid'}})).status,403);
  const logout=await s.request('/api/auth/logout',{method:'POST',headers:{Authorization:'Bearer dpro-remembered-session',Cookie:cookie.split(';')[0]}});assert.equal(logout.status,200);assert.match(logout.headers['set-cookie'][0],/Max-Age=0/);
 });
+test('verification challenges cross local bridge without cookies; recovery clears remembered session',async t=>{
+ let value={verificationRequired:true,challenge:'a'.repeat(43),nonce:'b'.repeat(43),expiresAt:1800000000000,verificationMethod:'totp',secret:'strip-me'};
+ const s=await setup(t,(_req,res)=>res.end(JSON.stringify(value)));
+ const body={email:'fixture@example.invalid',password:'fiction-only'};
+ const challenge=await s.request('/api/auth/login',{method:'POST',body});assert.equal(challenge.status,200);
+ assert.equal(challenge.headers['set-cookie'],undefined);assert.equal(JSON.parse(challenge.text).verificationRequired,true);assert.doesNotMatch(challenge.text,/strip-me/);
+ value={recovered:true,requiresSignIn:true};
+ const recovered=await s.request('/api/auth/login',{method:'POST',body:{...body,recovery:true,verification:{challenge:'a'.repeat(43),nonce:'b'.repeat(43),code:'c'.repeat(32)}}});assert.equal(recovered.status,200);assert.match(recovered.headers['set-cookie'][0],/Max-Age=0/);assert.equal(JSON.parse(recovered.text).token,undefined);
+ value={verificationRequired:true,challenge:'a'.repeat(43),nonce:'b'.repeat(43),expiresAt:1800000000000,verificationMethod:'totp',token:'forbidden'};
+ const invalid=await s.request('/api/auth/login',{method:'POST',body});assert.equal(invalid.status,502);assert.equal(invalid.headers['set-cookie'],undefined);
+ value={user,token,deviceToken:'d'.repeat(43)};
+ const forbidden=await s.request('/api/auth/login',{method:'POST',body:{...body,recovery:true}});assert.equal(forbidden.status,502);assert.equal(forbidden.headers['set-cookie'],undefined);
+});
+
+test('approval proof HTTP projection never creates a session or forwards unreviewed fields', async t => {
+ const path='/api/approvals/12345678-1234-1234-1234-123456789012';
+ let value={challenge:'c'.repeat(43),expiresAt:1800000000000,privateMetadata:'strip-me'};
+ const s=await setup(t,(_req,res)=>res.end(JSON.stringify(value)));
+ const issued=await s.request(path+'/verification',{method:'POST',body:{paramsHash:hash}});
+ assert.equal(issued.status,200);assert.deepEqual(JSON.parse(issued.text),{challenge:'c'.repeat(43),expiresAt:1800000000000});assert.equal(issued.headers['set-cookie'],undefined);
+ value={receipt:'r'.repeat(43),expiresAt:1800000000000,privateMetadata:'strip-me'};
+ const completed=await s.request(path+'/verification/complete',{method:'POST',body:{paramsHash:hash,challenge:'c'.repeat(43),code:'012345'}});
+ assert.equal(completed.status,200);assert.deepEqual(JSON.parse(completed.text),{receipt:'r'.repeat(43),expiresAt:1800000000000});assert.equal(completed.headers['set-cookie'],undefined);
+ value={...value,token:'forbidden'};
+ const mixed=await s.request(path+'/verification/complete',{method:'POST',body:{paramsHash:hash,challenge:'c'.repeat(43),code:'012345'}});
+ assert.equal(mixed.status,502);assert.equal(mixed.text,'null');assert.equal(mixed.headers['set-cookie'],undefined);
+ const count=s.calls.length;
+ const spoofed=await s.request(path+'/verification',{method:'POST',body:{paramsHash:hash,userId:'other'}});
+ assert.equal(spoofed.status,400);assert.equal(s.calls.length,count);
+ assert.deepEqual(s.calls.map(call=>call.path),[path+'/verification',path+'/verification/complete',path+'/verification/complete']);
+});
+
+test('approval metadata and decision survive client plus bridge conversation-route overlap',async t=>{
+ const id='12345678-1234-1234-1234-123456789012',path='/api/approvals/'+id,paramsHash='a'.repeat(64),receipt='r'.repeat(43);
+ const row={id,status:'pending',agentId:'fixture-agent',toolName:'fixture_action',category:'other',paramsPreview:{text:'fixture'},truncated:false,requestedAt:'2026-10-22T09:00:00Z',expiresAt:'2026-10-23T09:00:00Z',decidedAt:null,executedAt:null,resultPreview:null,error:null,params:{text:'fixture'},paramsHash,maskedFields:[],runScope:null,verificationRequired:true};
+ const s=await setup(t,(req,res)=>res.end(JSON.stringify(req.url==='/api/auth/login'?{user,token,deviceToken:'d'.repeat(43)}:req.url==='/api/auth/me'?{user}:req.url.endsWith('/approve')?{approval:{...row,status:'executed'},result:{ok:true}}:{approval:row})));
+ const client=new SessionClient({live:createSameOriginTransport('http://127.0.0.1:42522',async(url,init)=>{const response=await fetch(s.origin+new URL(url).pathname,{...init,headers:{...init.headers,Origin:s.origin}});return {status:response.status,headers:response.headers,url,json:()=>response.json()};})});
+ client.selectMode('live');await client.login(user.email,'fiction-only');
+ const detail=await client.request({method:'GET',path});assert.equal(detail.body.approval.verificationRequired,true);assert.equal(detail.body.approval.agentId,'fixture-agent');assert.equal(detail.body.approval.requestedAt,row.requestedAt);assert.equal(detail.body.approval.paramsHash,paramsHash);
+ const decided=await client.request({method:'POST',path:path+'/approve',body:{paramsHash,verificationReceipt:receipt}});assert.deepEqual(decided.body.result,{ok:true});assert.equal(decided.body.approval.status,'executed');assert.deepEqual(JSON.parse(s.calls.at(-1).body),{paramsHash,verificationReceipt:receipt});
+});
+test('reviewer proof bridge preserves only opaque proof, creates no cookies and refuses identity injection',async t=>{
+ const ref={policyId:'12345678-1234-1234-1234-123456789012',policyRevision:1,approvalId:'12345678-1234-1234-1234-123456789013',paramsHash:hash,requestHash:'b'.repeat(64),policyHash:'c'.repeat(64),decision:'approve'};
+ let value={challenge:'d'.repeat(43),expiresAt:1800000000000,private:'strip'};const s=await setup(t,(_req,res)=>res.end(JSON.stringify(value)));
+ const issued=await s.request('/api/reviewer-votes/challenge',{method:'POST',body:ref});assert.equal(issued.status,200);assert.deepEqual(JSON.parse(issued.text),{challenge:value.challenge,expiresAt:value.expiresAt});assert.equal(issued.headers['set-cookie'],undefined);
+ value={receipt:'e'.repeat(43),expiresAt:1800000000000};const payload={...ref,challenge:'d'.repeat(43),code:'012345'};
+ const proof=await s.request('/api/reviewer-votes/complete',{method:'POST',body:payload});assert.equal(proof.status,200);assert.equal(proof.headers['set-cookie'],undefined);assert.deepEqual(JSON.parse(proof.text),value);
+ value={...value,token:'forbidden'};const mixed=await s.request('/api/reviewer-votes/complete',{method:'POST',body:payload});assert.equal(mixed.status,502);assert.equal(mixed.text,'null');assert.equal(mixed.headers['set-cookie'],undefined);
+ const count=s.calls.length;assert.equal((await s.request('/api/reviewer-votes/challenge',{method:'POST',body:{...ref,userId:'owner'}})).status,400);assert.equal(s.calls.length,count);
+});
+test('owner eligible-human projection survives actual client and HTTP bridge without private fields',async t=>{
+ const s=await setup(t,(req,res)=>res.end(JSON.stringify(req.url==='/api/auth/login'?{user,token,deviceToken:'d'.repeat(43)}:req.url==='/api/auth/me'?{user}:{items:[{id:'human-a',name:'Human A',role:'user',sealed_secret:'private'}],nextCursor:null})));
+ const client=new SessionClient({live:createSameOriginTransport('http://127.0.0.1:42522',async(url,init)=>{const u=new URL(url),response=await fetch(s.origin+u.pathname+u.search,{...init,headers:{...init.headers,Origin:s.origin}});return {status:response.status,headers:response.headers,url,json:()=>response.json()};})});client.selectMode('live');await client.login(user.email,'fiction-only');
+ const result=await client.request({method:'GET',path:'/api/reviewer-policies/eligible-humans?cursor=human-0'});assert.deepEqual(result.body,{items:[{id:'human-a',name:'Human A',role:'user'}],nextCursor:null});assert.equal(s.calls.at(-1).path,'/api/reviewer-policies/eligible-humans?cursor=human-0');
+});
+test('schedule consent bridge projects proof without cookies and rejects identity and mixed authentication',async t=>{
+ const id='12345678-1234-1234-1234-123456789012',base='/api/scheduler/jobs/'+id+'/authorization',expiresAt=1800000000000,operation={kind:'schedule_authorization',jobId:id,jobRevision:1,authorizationRevision:0,definitionHash:'c'.repeat(64),authorizationExpiresAt:expiresAt,policyVersion:1};let value={challenge:'a'.repeat(43),expiresAt};
+ const s=await setup(t,(req,res)=>res.end(JSON.stringify(value)));
+ const issued=await s.request(base+'/challenge',{method:'POST',body:{operation}});assert.equal(issued.status,200);assert.deepEqual(JSON.parse(issued.text),value);assert.equal(issued.headers['set-cookie'],undefined);
+ value={receipt:'b'.repeat(43),expiresAt};const payload={operation,challenge:'a'.repeat(43),code:'012345'},proof=await s.request(base+'/complete',{method:'POST',body:payload});assert.equal(proof.status,200);assert.deepEqual(JSON.parse(proof.text),value);assert.equal(proof.headers['set-cookie'],undefined);
+ value={...value,token:'must-not-become-session'};const mixed=await s.request(base+'/complete',{method:'POST',body:payload});assert.equal(mixed.status,502);assert.equal(mixed.text,'null');assert.equal(mixed.headers['set-cookie'],undefined);
+ const calls=s.calls.length;assert.equal((await s.request(base+'/challenge',{method:'POST',body:{operation,userId:'owner'}})).status,400);assert.equal(s.calls.length,calls);
+});
+test('schedule definition bridge returns only masked readback and paused save metadata without cookies',async t=>{
+ const id='12345678-1234-1234-1234-123456789012',path='/api/scheduler/definitions/'+id,definitionHash='c'.repeat(64),review={definitionHash,name:'Daily update',description:null,cronExpression:'0 9 * * *',timeZone:'UTC',actionType:'api-call',action:{method:'POST',url:'https://example.test/update',headers:{Authorization:{hidden:true}}},maskedFields:['action.headers.Authorization']};let value={jobId:id,revision:1,enabled:false,review,edited_by:'private-editor'};
+ const s=await setup(t,(req,res)=>res.end(JSON.stringify(value))),read=await s.request(path);assert.equal(read.status,200);assert.equal(read.headers['set-cookie'],undefined);assert.ok(!read.text.includes('private-editor'));assert.deepEqual(JSON.parse(read.text).review.action.headers.Authorization,{hidden:true});
+ value={jobId:id,revision:2,enabled:false,definitionHash};const write=await s.request(path,{method:'PUT',body:{expectedRevision:1,changes:{name:'Renamed'}}});assert.equal(write.status,200);assert.equal(write.headers['set-cookie'],undefined);assert.deepEqual(JSON.parse(write.text),value);
+ const count=s.calls.length;assert.equal((await s.request(path,{method:'PUT',body:{expectedRevision:1,changes:{enabled:true}}})).status,400);assert.equal(s.calls.length,count);
+ value={...value,token:'must-not-become-auth'};assert.equal((await s.request(path,{method:'PUT',body:{expectedRevision:1,changes:{name:'Renamed'}}})).status,502);
+});

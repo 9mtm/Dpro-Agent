@@ -1,5 +1,6 @@
 import {NewChatDialog} from './NewChatDialog';
-import {ApprovalPage,usePendingApprovalCount} from './ApprovalPage';
+import {usePendingApprovalCount} from './ApprovalPage';
+import {ApprovalsWorkspace} from './HumanReviewsPage';
 import { useEffect, useState, useSyncExternalStore } from 'react';
 import type { ReactNode } from 'react';
 import type { SessionClient } from './session';
@@ -28,7 +29,7 @@ import type { Command } from './CommandPalette';
 
 type Page = 'approvals' | 'chat' | 'genvr' | 'agents' | 'board' | 'memory' | 'skills' | 'mcp' | 'terminal' | 'account' | 'settings' | 'about';
 /** Sections that own the sidebar with their own places (the chat list shows only in Chat). */
-const OWN_SIDEBAR: ReadonlyArray<Page> = ['memory', 'settings', 'agents', 'skills', 'mcp', 'terminal'];
+const OWN_SIDEBAR: ReadonlyArray<Page> = ['memory', 'settings', 'agents', 'skills', 'mcp', 'terminal', 'approvals'];
 const pages: ReadonlyArray<{ key: Page; label: string; icon: IconName | 'board' }> = [
   { key: 'chat', label: 'Chat', icon: 'message-circle' },
   { key: 'agents', label: 'Agents', icon: 'user' },
@@ -103,7 +104,7 @@ export function SignedInShell({ client, notice }: { client: SessionClient; notic
   }, []);
   const newChat = () => {setChoosingChat(true);setPage('chat');};
   const commands: Command[] = [
-    ...pages.filter(p=>p.key!=='genvr'&&(p.key!=='approvals'||user.role==='owner')).map(p => ({ id: `go-${p.key}`, group: 'Go to', label: p.key==='approvals'?approvalLabel:p.label, icon:p.icon==='board'?<UiIcon name="board" size={14}/>:<Icon name={p.icon}/>, run: () => setPage(p.key) })),
+    ...pages.filter(p=>p.key!=='genvr'&&(p.key!=='approvals'||user.role!=='guest')).map(p => ({ id: `go-${p.key}`, group: 'Go to', label: p.key==='approvals'?approvalLabel:p.label, icon:p.icon==='board'?<UiIcon name="board" size={14}/>:<Icon name={p.icon}/>, run: () => setPage(p.key) })),
     ...tools.map(t=>({...t,id:'tool-'+t.id,group:'Tools',keywords:t.id==='specialties'?'agent templates':t.id==='skills'?'skill abilities':t.id==='terminal'?'console shell':t.id==='genvr'?'spaces worlds':'connectors'})),
     { id: 'new-chat', group: 'Actions', icon:<UiIcon name="compose" size={14}/>, label: 'New chat', run: newChat },
     ...(chatState?.conversations ?? []).slice(0, 30).map(c => ({ id: `chat-${c.id}`, group: 'Conversations', icon:<Icon name="message-circle"/>, label: c.title || c.preview || 'New chat', run: () => { void chat?.open(c.id); setPage('chat'); } })),
@@ -156,7 +157,7 @@ export function SignedInShell({ client, notice }: { client: SessionClient; notic
       </section>
       <section className="page page-scroll" hidden={page !== 'agents'}><div className="page-column"><AgentsDestination key={`agents-${connectorsFocus}`} client={client} active={page === 'agents'} sidebarSlot={slot} focusConnectors={connectorsFocus > 0} onOpenMemory={agentId => { if (agentId) setMemoryFocus(f => ({ scope: `agent:${agentId}`, n: (f?.n ?? 0) + 1 })); setPage('memory'); }}/></div></section>
       <section className="page page-scroll page-board page-ui" hidden={page !== 'board'}>{board && <TaskBoard controller={board} active={page === 'board'} onOpenChat={id => { void chat?.open(id); setPage('chat'); }}/>}</section>
-      {user.role==='owner'&&<section className="page page-scroll" hidden={page!=='approvals'}><ApprovalPage client={client} active={page==='approvals'} onDecision={pendingApprovals.reload}/></section>}
+      {user.role!=='guest'&&<section className="page page-scroll" hidden={page!=='approvals'}><ApprovalsWorkspace client={client} active={page==='approvals'} slot={slot} onDecision={pendingApprovals.reload} onAccount={()=>setPage('account')}/></section>}
       <section className="page page-ui mem-desk" hidden={page !== 'memory'}><MemoryWindow client={client} active={page === 'memory'} focus={memoryFocus} sidebarSlot={slot} onOpenChat={id => { void chat?.open(id); setPage('chat'); }} onOpenSettings={openMemorySettings}/></section>
       {user.role === 'owner' && <>
         <section className="page page-ui mem-desk" hidden={page !== 'skills'}><SkillsSection client={client} active={page === 'skills'} slot={slot}/></section>
@@ -176,7 +177,7 @@ export function SignedInShell({ client, notice }: { client: SessionClient; notic
         <button type="button" className="status-item" aria-current={page === 'agents' ? 'page' : undefined} onClick={() => setPage('agents')}><Icon name="user"/>Agents</button>
         <button type="button" className="status-item" aria-current={page === 'board' ? 'page' : undefined} onClick={() => setPage('board')}>Board{typeof openCards === 'number' && boardState?.boards.length ? ` · ${openCards} cards` : ''}</button>
         <button type="button" className="status-item" aria-current={page === 'memory' ? 'page' : undefined} onClick={() => setPage('memory')}><Icon name="database"/>Memory</button>
-        {user.role==='owner'&&<button type="button" className="status-item" aria-current={page === 'approvals' ? 'page' : undefined} onClick={()=>setPage('approvals')}><Icon name="clock"/>{approvalLabel}</button>}
+        {user.role!=='guest'&&<button type="button" className="status-item" aria-current={page === 'approvals' ? 'page' : undefined} onClick={()=>setPage('approvals')}><Icon name="clock"/>{approvalLabel}</button>}
         {tools.map(t=><button key={t.id} type="button" className="status-item" aria-current={page === t.id ? 'page' : undefined} onClick={t.run}>{t.icon}{t.label}</button>)}
         <button type="button" className="status-item" aria-current={page === 'settings' ? 'page' : undefined} onClick={() => setPage('settings')}><Icon name="settings"/>Settings</button>
       </span>

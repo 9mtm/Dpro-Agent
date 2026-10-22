@@ -1,3 +1,7 @@
+import {scheduleDefinitionRoute,allowedScheduleDefinition,scheduleDefinitionResponse} from './scheduler-definitions-contract.js';
+import {scheduleAuthorizationRoute,allowedScheduleAuthorization,scheduleAuthorizationResponse} from './scheduler-authorization-contract.js';
+import {allowedVerification,verificationRoute,verificationResponse} from './verification-contract.js';
+import {allowedReviewer,reviewerRoute,reviewerOwnerRoute,reviewerResponse} from './reviewers-contract.js';
 import {approvalRoute,allowedApproval,approvalResponse} from './approvals-contract.js';
 import { allowedConnections, connectionsRoute, connectionsResponse } from './connections-contract.js';
 import {allowedTemplates,templatePath,templatesResponse} from './specialty-contract.js';
@@ -27,7 +31,7 @@ import type { RunEvent } from './conversation-contract.js';
 import { allowedHire, batchPath, grantsAgentId, permissionsAgentId, hireResponse, hireRoute, BATCHES_PATH, CATALOGUE_PATH, DISTRIBUTION_PATH, PLAN_PATH } from './hire-contract.js';
 import type { HireRequest } from './hire';
 import type { BoardRequest } from './board';
-import { validDeviceToken, validLoginBody } from './login-contract.js';
+import { validDeviceToken, validLoginBody, loginContinuation } from './login-contract.js';
 import { setupStatus } from './setup-status.js';
 import { OWNER_SETUP_PATH, validOwnerSetupBody, ownerSetupResponse } from './owner-setup-contract.js';
 import type { OwnerSetupBody, OwnerSetupCode } from './owner-setup-contract.js';
@@ -48,7 +52,7 @@ export type User = Readonly<{ id: string; email: string; username: string; role:
 /** What the UI calls the account: the name typed at setup, else the user name. */
 export const displayName = (u: User): string => u.name ?? u.username;
 type BoundaryNotice = 'published_password' | 'account_inactive' | 'rate_limited' | 'origin_not_allowed' | 'host_not_allowed';
-export type SessionState = Readonly<{ mode: Mode; epoch: number; retryAfterSeconds?: number; setup?: 'checking' | 'required' | 'login' | 'unavailable'; phase: 'signed-out' | 'signing-in' | 'authenticated' | 'signing-out'; user?: User; notice?: BoundaryNotice | 'invalid' | 'denied' | 'limited' | 'unavailable' | 'expired' | 'logout-confirmed' | 'logout-unknown' }>;
+export type SessionState = Readonly<{ mode: Mode; epoch: number; retryAfterSeconds?: number; setup?: 'checking' | 'required' | 'login' | 'unavailable'; phase: 'signed-out' | 'signing-in' | 'verifying' | 'recovery-codes' | 'authenticated' | 'signing-out'; verification?:Readonly<{method:'totp'|'recovery';expiresAt:number}>; user?: User; notice?: BoundaryNotice | 'invalid' | 'denied' | 'limited' | 'unavailable' | 'expired' | 'logout-confirmed' | 'logout-unknown' | 'recovered' }>;
 import { SessionFailure } from './session-failure';
 export { SessionFailure } from './session-failure';
 export interface WireRequest { method: 'GET' | 'POST' | 'PUT' | 'PATCH' | 'DELETE'; path: string; body?: unknown; headers: Readonly<Record<string, string>>; signal: AbortSignal }
@@ -69,6 +73,10 @@ function user(value: unknown): User {
 }
 // Reject before URL normalization. No generic URL, header, key or mutation escape hatch.
 export function allowedRequest(method: string, path: string, body?: unknown): boolean {
+  if(scheduleDefinitionRoute(path))return allowedScheduleDefinition(method,path,body);
+  if(scheduleAuthorizationRoute(path))return allowedScheduleAuthorization(method,path,body);
+  if(reviewerRoute(path))return allowedReviewer(method,path,body);
+  if(verificationRoute(path))return allowedVerification(method,path,body);
   if (approvalRoute(path)) return allowedApproval(method,path,body);
   if (connectionsRoute(path)) return allowedConnections(method,path,body);
   if (mcpImportPath(path)) return allowedMcpImport(method,path,body);
@@ -123,6 +131,10 @@ function safeResponse(path: string, response: WireResponse): WireResponse {
   return delay === undefined ? projected : { ...projected, retryAfterSeconds: delay };
 }
 function projectResponse(path: string, response: WireResponse): WireResponse {
+  if(scheduleDefinitionRoute(path))return {status:response.status,body:scheduleDefinitionResponse(path,response.status,response.body)};
+  if(scheduleAuthorizationRoute(path))return {status:response.status,body:scheduleAuthorizationResponse(path,response.status,response.body)};
+  if(reviewerRoute(path))return {status:response.status,body:reviewerResponse(path,response.status,response.body)};
+  if(verificationRoute(path))return {status:response.status,body:verificationResponse(path,response.status,response.body)};
   if (path === '/api/setup/status') return { status: response.status, body: setupStatus(response.status, response.body) };
   if (path === OWNER_SETUP_PATH) return { status: response.status, body: ownerSetupResponse(response.status, response.body) };
   if (path === '/api/chat') return { status: response.status, body: chatError(response.status, response.body) };
@@ -131,10 +143,10 @@ function projectResponse(path: string, response: WireResponse): WireResponse {
   if (personalityRoute(path)) return { status: response.status, body: personalityResponse(path, response.status, response.body) };
   if (hireRoute(path, response.status)) return { status: response.status, body: hireResponse(path, response.status, response.body) };
   if (boardRoute(path)) return { status: response.status, body: boardResponse(path, response.status, response.body) };
+  if (approvalRoute(path)) return {status:response.status,body:approvalResponse(path,response.status,response.body)};
   if (conversationRoute(path)) return { status: response.status, body: conversationResponse(path, response.status, response.body) };
   if (cardRoute(path)) return { status: response.status, body: agentCardResponse(path, response.status, response.body) };
   if (terminalRoute(path)) return { status: response.status, body: terminalResponse(path, response.status, response.body) };
-  if (approvalRoute(path)) return {status:response.status,body:approvalResponse(path,response.status,response.body)};
   if (connectionsRoute(path)) return { status: response.status, body: connectionsResponse(path, response.status, response.body) };
   if (mcpImportPath(path)) return { status: response.status, body: mcpImportResponse(path,response.status,response.body) };
   if (templatePath(path)) return {status:response.status,body:templatesResponse(path,response.status,response.body)};
@@ -156,6 +168,7 @@ function projectResponse(path: string, response: WireResponse): WireResponse {
   if (path === '/api/agents' || (path.startsWith('/api/agents/') && path !== '/api/agents/name-suggestion')) return agentResponse(path, response);
   if (response.status === 200 && (path === '/api/auth/login' || path === '/api/auth/me')) {
     if (!record(response.body)) throw new SessionFailure('unavailable');
+    if(path==='/api/auth/login'){const continuation=loginContinuation(response.body);if(continuation)return {status:200,body:continuation};}
     const projectedUser = user(response.body.user);
     if (path === '/api/auth/me') return { status: 200, body: { user: projectedUser } };
     if (typeof response.body.token !== 'string' || !/^[A-Za-z0-9._~-]{1,8192}$/.test(response.body.token) || !validDeviceToken(response.body.deviceToken)) throw new SessionFailure('unavailable');
@@ -233,6 +246,8 @@ export function createSameOriginTransport(origin: string, fetcher: typeof fetch)
 export type TokenKeep = { load(): string | null; save(token: string | null): void };
 
 export class SessionClient {
+  #recoveryCodes:readonly string[]|undefined;
+  #verification: {email:string;challenge:string;nonce:string;method:'totp'|'recovery';expiresAt:number}|undefined;
   #token: string | undefined;
   #keep: TokenKeep | undefined;
   /** Set by resume(): a later sign-in in this tab is kept too. */
@@ -250,20 +265,22 @@ export class SessionClient {
   }
   getSnapshot = () => this.#state;
   subscribe = (fn: () => void) => { this.#listeners.add(fn); return () => { this.#listeners.delete(fn); }; };
+  recoveryCodes=():readonly string[]=>this.#state.phase==='recovery-codes'&&this.#recoveryCodes?Object.freeze([...this.#recoveryCodes]):Object.freeze([]);
+  finishRecoveryCodes(){if(this.#state.phase==='recovery-codes')this.#reset(this.#state.mode,'signed-out','expired','login');}
   canUse(mode: Mode) { return mode === 'fixture' || !!this.transports[mode]; }
   #publish(state: SessionState) { this.#state = Object.freeze(state); this.#listeners.forEach(fn => fn()); }
-  #reset(mode: Mode, phase: SessionState['phase'], notice?: SessionState['notice'], setup?: SessionState['setup'], delay?: number) {
+  #reset(mode: Mode, phase: SessionState['phase'], notice?: SessionState['notice'], setup?: SessionState['setup'], delay?: number, recoveryCodes?:readonly string[]) {
     for (const controller of this.#pending) controller.abort();
-    this.#pending.clear(); this.#token = undefined;
+    this.#pending.clear(); this.#token = undefined; this.#verification=undefined;this.#recoveryCodes=recoveryCodes;
     this.#keep?.save(null); this.#keep = undefined;
     this.#publish({ mode, phase, epoch: this.#state.epoch + 1, ...(notice ? { notice } : {}), ...(setup ? { setup } : {}), ...(retryAfterSeconds(delay) !== undefined ? { retryAfterSeconds: delay } : {}) });
   }
   selectMode(mode: Mode) {
-    if (!this.canUse(mode) || this.#state.phase === 'signing-out') return;
+    if (!this.canUse(mode) || this.#state.phase === 'signing-out' || this.#state.phase==='recovery-codes') return;
     this.#device = undefined; this.#deviceBinding = undefined; this.#nextKeep = undefined;
     this.#reset(mode, 'signed-out');
   }
-  cancel() { this.#reset(this.#state.mode, 'signed-out', this.#state.phase === 'signing-out' ? 'logout-unknown' : undefined); }
+  cancel() { this.#reset(this.#state.mode, 'signed-out', this.#state.phase === 'signing-out' ? 'logout-unknown' : undefined,this.#state.setup==='login'?'login':undefined); }
   async #send(method: WireRequest['method'], path: string, body: unknown, token: string | undefined, epoch: number, signal?: AbortSignal, observeResponse?: (response: WireResponse) => void): Promise<WireResponse> {
     const mode = this.#state.mode;
     if (mode === 'fixture' || !allowedRequest(method, path, body)) throw new SessionFailure('blocked');
@@ -330,9 +347,21 @@ export class SessionClient {
     }
     return { ok: true };
   }
-  async login(email: string, password: string) {
+  async login(email:string,password:string){return this.#login(email,password);}
+  async startRecovery(password:string){
+    const pending=this.#verification;
+    if(!pending||this.#state.phase!=='verifying')return;
+    return this.#login(pending.email,password,undefined,true);
+  }
+  async completeVerification(password:string,code:string){
+    const pending=this.#verification;
+    if(!pending||this.#state.phase!=='verifying')return;
+    if(pending.expiresAt<=Date.now()){this.#reset(this.#state.mode,'signed-out','expired',this.#state.setup);return;}
+    return this.#login(pending.email,password,{challenge:pending.challenge,nonce:pending.nonce,code},pending.method==='recovery');
+  }
+  async #login(email: string, password: string,verification?:{challenge:string;nonce:string;code:string},recovery=false) {
     const keep = this.#nextKeep;
-    if (this.#state.mode === 'fixture' || this.#state.phase === 'signing-out') return;
+    if (this.#state.mode === 'fixture' || this.#state.phase === 'signing-out' || this.#state.phase==='recovery-codes') return;
     // Discovery is advisory; explicit low-level login still authenticates through login + me.
     // Once checked, unavailable/incomplete discovery cannot fall through to a login.
     const setup = this.#state.setup;
@@ -344,12 +373,16 @@ export class SessionClient {
     const binding = this.#deviceBinding, mode = this.#state.mode;
     const attempt = ++this.#loginAttempt;
     const deviceToken = this.#device?.token;
-    this.#reset(this.#state.mode, 'signing-in', undefined, setup); const epoch = this.#state.epoch;
+    const pendingVerification=this.#verification;
+    this.#reset(this.#state.mode, 'signing-in', undefined, setup);
+    if(pendingVerification&&(verification||recovery))this.#publish({...this.#state,verification:Object.freeze({method:pendingVerification.method,expiresAt:pendingVerification.expiresAt})});
+    const epoch = this.#state.epoch;
     try {
-      const response = await this.#send('POST', '/api/auth/login', { email, password, ...(deviceToken ? { deviceToken } : {}) }, undefined, epoch, undefined, result => {
+      const response = await this.#send('POST', '/api/auth/login', { email, password, ...(deviceToken ? { deviceToken } : {}),...(verification?{verification}:{}),...(recovery?{recovery:true}:{}) }, undefined, epoch, undefined, result => {
         // Epoch changes may cancel auth after the server rotated this credential.
         // A mode/account round trip or newer login attempt invalidates this binding.
         if (binding !== this.#deviceBinding || mode !== this.#state.mode || attempt !== this.#loginAttempt || result?.status !== 200) return;
+        if(record(result.body)&&loginContinuation(result.body))return;
         this.#device = undefined;
         if (record(result.body) && validDeviceToken(result.body.deviceToken)) this.#device = { email: normalizedEmail, token: result.body.deviceToken };
       });
@@ -357,6 +390,18 @@ export class SessionClient {
       if (response.status !== 200) {
         this.#reset(this.#state.mode, 'signed-out', boundaryNotice(response) ?? (response.status === 401 || response.status === 400 ? 'invalid' : response.status === 403 ? 'denied' : response.status === 429 ? 'limited' : 'unavailable'), setup, response.status === 429 ? retryAfterSeconds(response.retryAfterSeconds) : undefined); return;
       }
+      const continuation=loginContinuation(response.body);
+      if(continuation){
+        if('verificationRequired' in continuation){
+          if(continuation.verificationMethod!==(recovery?'recovery':'totp')||continuation.expiresAt<=Date.now()||continuation.expiresAt>Date.now()+300000+5000)throw new SessionFailure('unavailable');
+          this.#verification={email,challenge:continuation.challenge,nonce:continuation.nonce,method:continuation.verificationMethod,expiresAt:continuation.expiresAt};
+          this.#publish({...this.#state,phase:'verifying',verification:Object.freeze({method:continuation.verificationMethod,expiresAt:continuation.expiresAt})});return;
+        }
+        if(!recovery||!verification)throw new SessionFailure('unavailable');
+        this.#device=undefined;this.#nextKeep?.save(null);
+        this.#reset(this.#state.mode,'signed-out','recovered',setup);return;
+      }
+      if(recovery)throw new SessionFailure('unavailable');
       // A success rotates at the server even if /me later fails. Never reuse its predecessor.
       this.#device = undefined;
       if (!record(response.body) || !validDeviceToken(response.body.deviceToken) || typeof response.body.token !== 'string' || !/^[A-Za-z0-9._~-]{1,8192}$/.test(response.body.token)) throw new SessionFailure('unavailable');
@@ -394,6 +439,10 @@ export class SessionClient {
     if (!this.#token || this.#state.phase !== 'authenticated') throw new SessionFailure('blocked');
     // The public adapter transport cannot call login/logout or add arbitrary request fields.
     if (request.path === '/api/setup/status' || request.path === OWNER_SETUP_PATH || request.path === '/api/chat' || request.path === '/api/auth/login' || request.path === '/api/auth/logout' || Object.keys(request).some(k => !['method', 'path', 'body'].includes(k))) throw new SessionFailure('blocked');
+    if((verificationRoute(request.path)||reviewerRoute(request.path))&&this.#state.user?.role==='guest')throw new SessionFailure('blocked');
+    if(scheduleDefinitionRoute(request.path)&&this.#state.user?.role!=='owner')throw new SessionFailure('blocked');
+    if(scheduleAuthorizationRoute(request.path)&&this.#state.user?.role!=='owner')throw new SessionFailure('blocked');
+    if(reviewerOwnerRoute(request.path)&&this.#state.user?.role!=='owner')throw new SessionFailure('blocked');
     if (conversationPath(request.path)?.kind === 'approval' && this.#state.user?.role !== 'owner') throw new SessionFailure('blocked');
     if ((conversationRoute(request.path) || chatSearchRoute(request.path) || chatExportRoute(request.path) || chatSecretsRoute(request.path)) && this.#state.user?.role === 'guest') throw new SessionFailure('blocked');
     if (request.path === CLEANUP_PATH && this.#state.user?.role !== 'owner') throw new SessionFailure('blocked');
@@ -406,7 +455,16 @@ export class SessionClient {
     if (((request.method === 'POST' && request.path === '/api/agents') || grantsAgentId(request.path) || request.path === CATALOGUE_PATH || request.path === PLAN_PATH || request.path === DISTRIBUTION_PATH || request.path === BATCHES_PATH || batchPath(request.path) || permissionsAgentId(request.path) || request.path === BOARDS_PATH || request.path.startsWith(`${BOARDS_PATH}/`)) && this.#state.user?.role !== 'owner') throw new SessionFailure('blocked');
     const epoch = this.#state.epoch;
     const result = await this.#send(request.method, request.path, 'body' in request ? request.body : undefined, this.#token, epoch, signal);
-    if (epoch !== this.#state.epoch) return safeResponse(request.path, result);
+    if (epoch !== this.#state.epoch){if(verificationRoute(request.path)||reviewerRoute(request.path)||scheduleAuthorizationRoute(request.path)||scheduleDefinitionRoute(request.path))throw new SessionFailure('cancelled');return safeResponse(request.path,result);}
+    if(verificationRoute(request.path)&&result.status===200&&request.method==='POST'&&(request.path.endsWith('/confirm')||request.path.endsWith('/disable'))){
+      const projected=safeResponse(request.path,result);
+      if(!record(projected.body)||projected.body.requiresSignIn!==true)throw new SessionFailure('unavailable');
+      const codes=request.path.endsWith('/confirm')&&Array.isArray(projected.body.recoveryCodes)?Object.freeze([...projected.body.recoveryCodes]) as readonly string[]:undefined;
+      if(request.path.endsWith('/confirm')&&!codes)throw new SessionFailure('unavailable');
+      this.#nextKeep?.save(null);
+      this.#reset(this.#state.mode,codes?'recovery-codes':'signed-out',codes?undefined:'expired','login',undefined,codes);
+      return {status:200,body:{requiresSignIn:true}};
+    }
     if (result.status === 403 && record(result.body) && result.body.code === 'inactive_user') this.#reset(this.#state.mode, 'signed-out', 'denied');
     if (result.status === 401) this.#reset(this.#state.mode, 'signed-out', 'expired');
     const notice = boundaryNotice(result);

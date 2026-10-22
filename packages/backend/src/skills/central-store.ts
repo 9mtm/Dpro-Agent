@@ -5,32 +5,25 @@ import path from 'node:path';
 import os from 'node:os';
 import { createHash, randomUUID } from 'node:crypto';
 import { fileURLToPath } from 'node:url';
-import yaml from 'js-yaml';
 import { dataPath } from '../config/data-root.js';
 import { q, sql, one, run, type Step } from '../repositories/sql-steps.js';
 import { redactImportText } from '../memory/import/redact.js';
 import { isValidSkillName } from './skill-ids.js';
 
-export class SkillLibraryError extends Error { constructor(readonly code:string,readonly status=400){super(code);} }
+import {SkillLibraryError,normalizeSkillMarkdown as normalize,skillMarkdownMetadata as metadata,prepareSkillMarkdown} from './markdown-bundle.js';
+export {SkillLibraryError} from './markdown-bundle.js';
 const hash=(text:string)=>createHash('sha256').update(text).digest('hex');
-const normalize=(text:string)=>text.replace(/\r\n?/g,'\n').trim()+'\n';
 const MAX_FILE=200_000,MAX_BUNDLE=2_000_000;
 export type SkillRow={id:string;name:string;description:string;version:string;revision:number;content_hash:string;origin:string};
-type Bundle={name:string;description:string;version:string;files:{path:string;content:string}[];hash:string;redactions:number;omitted:number};
+type Bundle={name:string;description:string;version:string;files:readonly {readonly path:string;readonly content:string}[];hash:string;redactions:number;omitted:number};
 type Source={id:string;name:string;description:string;origin:string;location:string;directory:string};
 type Scan={id:string;owner:string;status:'scanning'|'done'|'error';visited:number;skipped:number;limited:boolean;sources:Source[];seen:Set<string>};
 const safeRelative=(name:string)=>name.length<=400&&name.split('/').every(part=>!!part&&part!=='.'&&part!=='..'&&!part.includes('\\')&&!/[\x00-\x1f]/.test(part));
 async function readText(file:string){const handle=await fs.open(file,constants.O_RDONLY|constants.O_NOFOLLOW);try{const stat=await handle.stat();if(!stat.isFile()||stat.size>MAX_FILE)throw new SkillLibraryError('file_too_large');const bytes=await handle.readFile();if(bytes.includes(0)||bytes.length>MAX_FILE)throw new SkillLibraryError('invalid_text');return bytes.toString('utf8');}finally{await handle.close();}}
-function metadata(content:string){
- const match=/^---\n([\s\S]*?)\n---\n/.exec(normalize(content));if(!match)throw new SkillLibraryError('invalid_skill');
- let raw:any;try{raw=yaml.load(match[1],{schema:yaml.JSON_SCHEMA});}catch{throw new SkillLibraryError('invalid_skill');}
- if(!raw||!isValidSkillName(raw.name)||typeof raw.description!=='string'||!raw.description.trim()||raw.description.length>2000)throw new SkillLibraryError('invalid_skill');
- const version=raw.metadata?.['agent-player']?.version??raw.version??'1.0.0';
- return {name:raw.name.toLowerCase(),description:raw.description.trim(),version:typeof version==='string'?version.slice(0,80):'1.0.0'};
-}
+
 async function bundle(directory:string):Promise<Bundle>{
  const physical=await fs.realpath(directory);if(physical!==path.resolve(directory)||(await fs.lstat(directory)).isSymbolicLink())throw new SkillLibraryError('symlink_refused');
- const files:Bundle['files']=[];let total=0,redactions=0,omitted=0,nodes=0;
+ const files:{path:string;content:string}[]=[];let total=0,redactions=0,omitted=0,nodes=0;
  const visit=async(folder:string,depth:number)=>{if(depth>8)throw new SkillLibraryError('bundle_too_large');for(const entry of await fs.readdir(folder,{withFileTypes:true})){
   if(++nodes>1000)throw new SkillLibraryError('bundle_too_large');if(entry.name.startsWith('.')||['node_modules','dist','vendor'].includes(entry.name)){omitted++;continue;}
   const absolute=path.join(folder,entry.name),relative=path.relative(physical,absolute).split(path.sep).join('/');if(!safeRelative(relative))throw new SkillLibraryError('invalid_path');
@@ -68,7 +61,7 @@ export class CentralSkills {
    });return {skill:{id,name:b.name,description:b.description,version:b.version,revision:result,content_hash:b.hash,origin},duplicate:false};
   });this.tail=work.catch(()=>undefined);return work;
  }
- async installMarkdown(content:string,name:string,origin:string){await this.initialize();const clean=redactImportText(content),text=normalize(clean.text),meta=metadata(text);if(meta.name!==name.toLowerCase())throw new SkillLibraryError('invalid_skill');const files=[{path:'SKILL.md',content:text}];return this.store({...meta,files,hash:hash(JSON.stringify(files)),redactions:clean.total,omitted:0},origin);}
+ async installMarkdown(content:string,name:string,origin:string){const prepared=prepareSkillMarkdown(content,name);await this.initialize();return this.store(prepared,origin);}
  async seedBundled(){await this.seedLegacy();await this.seedGenvrSdk();const directory=fileURLToPath(new URL('../../skills/',import.meta.url));for(const entry of await fs.readdir(directory,{withFileTypes:true}).catch(()=>[])){if(!entry.isDirectory())continue;try{const b=await bundle(path.join(directory,entry.name));if(!(await q.one('SELECT id FROM central_skills WHERE name=?',b.name)))await this.store(b,'bundled');}catch{/* Invalid optional bundled skills never block startup. */}}}
  /** Skills shipped inside the installed GenVR SDK (core-ui/vendor/genvr): added when new and updated
   *  when a newer SDK changes them. Rows the owner imported or edited (other origins) are never replaced. */

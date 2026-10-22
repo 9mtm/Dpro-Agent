@@ -5,6 +5,7 @@
  * Tools can be registered and executed through this registry.
  */
 
+import { requiresReviewerApproval } from '../auth/verification/reviewer-quorum.js';
 import { currentChatRun } from '../services/chat-run-context.js';
 import { modeFor, permissionCategory } from './agent-permissions.js';
 import type { Tool, ToolResult, ToolExecutionContext } from './types.js';
@@ -168,8 +169,12 @@ export class ToolsRegistry {
       };
     }
     if (usesSecret && !category) category = modeCategory ?? 'other';
+    let reviewerRequired=false;
+    try { reviewerRequired=await requiresReviewerApproval(this.context.agentId,toolName); }
+    catch { return {content:[{type:'text',text:'The action was not run: human review rules are unavailable.'}],error:'Human review rules unavailable'}; }
+    if (reviewerRequired) category=category??'other';
     if (currentChatRun()?.reviewTools) category = category ?? 'other';
-    if (category && !isConfinedChannelReply(policy, toolName) && !consumeApprovalTicket(options.approvalTicket, toolName)) {
+    if (category && (reviewerRequired || !isConfinedChannelReply(policy, toolName)) && !consumeApprovalTicket(options.approvalTicket, toolName)) {
       try {
         return await requestApproval(tool, params, this.context, category);
       } catch (error: any) {

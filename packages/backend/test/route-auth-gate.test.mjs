@@ -371,3 +371,29 @@ test('anonymous public-chat post over the limit gets 429 (before any model call)
     await getSettingsManager().updateSettings({ publicRooms: { allowAnonymous: false } });
   }
 });
+
+
+test('real application registers every reviewer endpoint with explicit human or owner access',()=>{
+ const reviewer=routes.filter(r=>/^\/api\/reviewer-(policies|requests|votes)(?:\/|$)/.test(r.url));
+ assert.equal(reviewer.length,19);
+ const expected=[['GET','/api/reviewer-policies'],['GET','/api/reviewer-policies/eligible-humans'],['GET','/api/reviewer-policies/:id'],['GET','/api/reviewer-policies/:id/draft'],['PUT','/api/reviewer-policies/:id/draft']];
+ for(const action of ['activate','revoke'])for(const phase of ['preview','challenge','complete','apply'])expected.push(['POST','/api/reviewer-policies/:id/'+action+'/'+phase]);
+ for(const [method,url]of expected)assert.ok(reviewer.some(r=>r.method===method&&r.url===url&&r.access==='owner'),method+' '+url);
+ for(const url of ['/api/reviewer-requests/policies','/api/reviewer-requests/:policyId','/api/reviewer-requests/:policyId/:approvalId'])assert.ok(reviewer.some(r=>r.method==='GET'&&r.url===url&&r.access==='user'),url);
+ for(const phase of ['challenge','complete','cast'])assert.ok(reviewer.some(r=>r.method==='POST'&&r.url==='/api/reviewer-votes/'+phase&&r.access==='user'),phase);
+});
+
+test('registered application reviewer routes accept enrolled humans and keep owner management private',async()=>{
+ const {beginEnrollment,activateEnrollment}=await import('../src/auth/verification/enrollment.ts');
+ const {hotp,decodeSecret}=await import('../src/auth/verification/totp.ts');
+ for(const [id,role]of [['g-review-owner','owner'],['g-review-human','user']]){
+  addUser(id,role);const when=Date.now()-60000,context={userId:id,tokenVersion:1,sessionHash:'f'.repeat(64)},pending=await beginEnrollment(context,when);
+  await activateEnrollment(context,hotp(decodeSecret(pending.secret),BigInt(Math.floor(when/30000))),when);
+ }
+ const owner={authorization:'Bearer '+generateToken('g-review-owner',2)},human={authorization:'Bearer '+generateToken('g-review-human',2)};
+ const inventory=await app.inject({method:'GET',url:'/api/reviewer-policies',headers:owner});assert.equal(inventory.statusCode,200,inventory.body);assert.deepEqual(inventory.json(),{items:[],nextCursor:null});assert.equal(inventory.headers['cache-control'],'no-store');
+ const assigned=await app.inject({method:'GET',url:'/api/reviewer-requests/policies',headers:human});assert.equal(assigned.statusCode,200,assigned.body);assert.deepEqual(assigned.json(),{policies:[]});assert.equal(assigned.headers['cache-control'],'no-store');
+ assert.equal((await app.inject({method:'GET',url:'/api/reviewer-policies',headers:human})).statusCode,403);
+ assert.equal((await app.inject({method:'POST',url:'/api/reviewer-votes/challenge',headers:{...human,origin:'http://untrusted.invalid'},payload:{userId:'g-review-owner'}})).statusCode,403);
+ assert.equal((await app.inject({method:'POST',url:'/api/reviewer-votes/challenge',headers:{...human,origin:'http://localhost:41521'},payload:{userId:'g-review-owner'}})).statusCode,400);
+});
