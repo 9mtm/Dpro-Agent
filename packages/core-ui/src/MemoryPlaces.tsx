@@ -3,6 +3,7 @@
 // Each shows a quiet list and the selected thing beside it.
 import { useEffect, useState, useSyncExternalStore } from 'react';
 import type { SessionClient } from './session';
+import {DesignRuleReviewSheet} from './DesignRuleReviewSheet';
 import { Markdown } from './markdown';
 import { readableDrawer } from './SessionPanels';
 import { UiIcon } from './ui-icons';
@@ -86,7 +87,9 @@ export function GroupView({ d, sc, groupId }: { d: MemoryDesktopController; sc: 
 }
 
 // ---------------------------------------------------------------- Design
-export function DesignView({ d, slug }: { d: MemoryDesktopController; slug: string }) {
+export function DesignView({ d, slug, client }: { d: MemoryDesktopController; slug: string; client?:SessionClient }) {
+  const [reviewRule,setReviewRule]=useState<{slug:string;id:string}|null>(null);
+  useEffect(()=>setReviewRule(null),[slug]);
   const s = useSyncExternalStore(d.subscribe, d.getSnapshot, d.getSnapshot);
   useEffect(() => { if (s.design === null) void d.loadDesign(slug); }, [slug]);
   if (s.design === 'missing') return NOT_YET('Design and brand found on their own');
@@ -105,7 +108,7 @@ export function DesignView({ d, slug }: { d: MemoryDesktopController; slug: stri
       {x.logos.length > 0 && <section className="dk-list-group"><h3>Logos</h3><div className="dk-logos" role="listbox" aria-label="Logos">{x.logos.map(l => <button key={l.id} type="button" role="option" aria-selected={s.logoOpen === l.id} className="dk-logo" onClick={() => d.openLogo(l.id)}>
         <span className="dk-logo-art"><UiIcon name="image" size={22}/></span><span>{l.path.split('/').pop()}{l.main ? ' · main' : ''}</span></button>)}</div>{x.hiddenLogos > 0 && <p className="fine-print dk-pad">{x.hiddenLogos} marked "not a logo".</p>}</section>}
       {x.fonts.length > 0 && <section className="dk-list-group"><h3>Type</h3>{x.fonts.map(f => <div key={f.name + f.source} className="dk-row"><span className="dk-row-icon"><UiIcon name="type" size={14}/></span><span className="dk-row-text"><span className="dk-row-main" style={{ fontFamily: f.name }}>{f.name}</span><span className="dk-row-sub">{f.source}</span></span></div>)}</section>}
-      {x.rules.length > 0 && <section className="dk-list-group"><h3>Rules</h3>{x.rules.map((r, i) => <div key={i} className="dk-row"><span className="dk-row-icon"><UiIcon name="shield" size={14}/></span><span className="dk-row-text"><span className="dk-row-main" dir="auto"><WithSwatches text={r.text}/></span><span className="dk-row-sub">{r.source}</span></span></div>)}</section>}
+      {x.rules.length > 0 && <section className="dk-list-group"><h3>Rules</h3>{x.rules.map((r, i) => <button type="button" key={r.id??i} className="dk-row design-rule-row" disabled={!client||!r.reviewable||!r.id} onClick={()=>{if(r.id)setReviewRule({slug,id:r.id});}}><span className="dk-row-icon"><UiIcon name="shield" size={14}/></span><span className="dk-row-text"><span className="dk-row-main" dir="auto"><WithSwatches text={oneLine(r.text).slice(0,100)}/>{r.text.length>100?'…':''}</span><span className="dk-row-sub">{r.source} · {r.confirmed?'In use':r.reviewable?'Needs review':'Review unavailable'}</span></span></button>)}</section>}
       <p className="fine-print dk-pad">Found in: {x.sources.map(src => src.path).join(', ') || 'the project files'}. Agents read this before any design work.{x.canUndo ? ' ' : ''}{x.canUndo && <button type="button" className="link-button" onClick={() => void d.undoDesign(slug)}>Undo the last automatic change</button>}</p>
       {writeSwitch}
     </div>
@@ -118,6 +121,7 @@ export function DesignView({ d, slug }: { d: MemoryDesktopController; slug: stri
       </div>
       <p className="fine-print">Dpro keeps a link and a small preview. Your file is never moved or changed.</p>
     </div>}</aside>
+    {reviewRule?.slug===slug&&client&&<DesignRuleReviewSheet key={slug+reviewRule.id} client={client} slug={slug} ruleId={reviewRule.id} onClose={()=>{setReviewRule(null);void d.loadDesign(slug);}}/>}
   </div>;
 }
 
