@@ -12,7 +12,8 @@ export interface PaperProposal {
  accountId:string; policyId:string; policyRevision:number; appRevision:number; currency:string;
  symbol:string; side:'buy'|'sell'; notional:number; idempotencyKey:string;
 }
-type Result={ok:true;reservationId:string;replayed:boolean;notional:number}|{ok:false;reason:string};
+type Status='pending'|'cancelled';
+type Result={ok:true;reservationId:string;replayed:boolean;notional:number;status:Status}|{ok:false;reason:string};
 const object=(x:unknown):x is Record<string,unknown>=>!!x&&typeof x==='object'&&!Array.isArray(x)&&[Object.prototype,null].includes(Object.getPrototypeOf(x))&&Reflect.ownKeys(x).every(k=>typeof k==='string'&&Object.hasOwn(Object.getOwnPropertyDescriptor(x,k)!,'value'));
 const id=(x:unknown):x is string=>typeof x==='string'&&/^[A-Za-z0-9][A-Za-z0-9_.:-]{0,127}$/.test(x);
 const uint=(x:unknown,min=0):x is number=>typeof x==='number'&&Number.isSafeInteger(x)&&x>=min;
@@ -24,10 +25,16 @@ function policyValid(p:unknown):p is PaperPolicy {
  return object(p)&&['id','ownerId','accountId'].every(k=>id(p[k]))&&['revision','appRevision','expiresAt','maxOrder','maxExposure','maxDailyLoss','maxOrders','maxQuoteAgeMs'].every(k=>uint(p[k],1))&&uint(p.cooldownMs)&&typeof p.enabled==='boolean'&&p.mode==='paper'&&typeof p.currency==='string'&&/^[A-Z]{3}$/.test(p.currency)&&Array.isArray(p.symbols)&&p.symbols.length>0&&p.symbols.length<=500&&p.symbols.every(id);
 }
 export function initializePaperLedger(db:Database.Database):void {
+ db.transaction(()=>{
  db.exec(`CREATE TABLE IF NOT EXISTS paper_accounts(account_id TEXT PRIMARY KEY, owner_id TEXT NOT NULL, mode TEXT NOT NULL CHECK(mode='paper'), currency TEXT NOT NULL, cash INTEGER NOT NULL CHECK(cash>=0), exposure INTEGER NOT NULL CHECK(exposure>=0), app_enabled INTEGER NOT NULL, app_revision INTEGER NOT NULL, stopped INTEGER NOT NULL);
  CREATE TABLE IF NOT EXISTS paper_policies(policy_id TEXT PRIMARY KEY, account_id TEXT NOT NULL, revision INTEGER NOT NULL, policy_json TEXT NOT NULL);
  CREATE TABLE IF NOT EXISTS paper_quotes(account_id TEXT NOT NULL,symbol TEXT NOT NULL,quote_at INTEGER NOT NULL,PRIMARY KEY(account_id,symbol));
  CREATE TABLE IF NOT EXISTS paper_reservations(reservation_id TEXT PRIMARY KEY,account_id TEXT NOT NULL,policy_id TEXT NOT NULL,idempotency_key TEXT NOT NULL,intent_hash TEXT NOT NULL,notional INTEGER NOT NULL CHECK(notional>0),created_at INTEGER NOT NULL,UNIQUE(account_id,idempotency_key));`);
+ // Explicit caller-owned initialization upgrades the preceding reservation-only schema.
+ const columns=(db.prepare('PRAGMA table_info(paper_reservations)').all() as {name:string}[]).map(c=>c.name);
+ if(!columns.includes('status'))db.exec("ALTER TABLE paper_reservations ADD COLUMN status TEXT NOT NULL DEFAULT 'pending' CHECK(status IN ('pending','cancelled'))");
+ if(!columns.includes('cancelled_at'))db.exec('ALTER TABLE paper_reservations ADD COLUMN cancelled_at INTEGER');
+ }).immediate();
 }
 /** Trusted provisioning only; never expose this helper as an order/configuration endpoint. */
 export function provisionPaperAccount(db:Database.Database,input:{policy:PaperPolicy;cash:number;exposure:number}):void {
@@ -63,22 +70,55 @@ export function reservePaperOrder(db:Database.Database,ownerId:string,input:unkn
   const now=clock();if(!uint(now))return {ok:false,reason:'invalid_clock'};
   const a=db.prepare('SELECT * FROM paper_accounts WHERE account_id=?').get(intent.accountId) as {owner_id:string;currency:string;mode:string;cash:number;exposure:number;app_enabled:number;app_revision:number;stopped:number}|undefined;
   if(!a||a.owner_id!==ownerId||!uint(a.cash)||!uint(a.exposure))return {ok:false,reason:'unavailable'};
-  const old=db.prepare('SELECT reservation_id,intent_hash,notional FROM paper_reservations WHERE account_id=? AND idempotency_key=?').get(intent.accountId,intent.idempotencyKey) as {reservation_id:string;intent_hash:string;notional:number}|undefined;
-  if(old)return old.intent_hash===hash?{ok:true,reservationId:old.reservation_id,replayed:true,notional:old.notional}:{ok:false,reason:'idempotency_conflict'};
+  const old=db.prepare('SELECT reservation_id,intent_hash,notional,status FROM paper_reservations WHERE account_id=? AND idempotency_key=?').get(intent.accountId,intent.idempotencyKey) as {reservation_id:string;intent_hash:string;notional:number;status:Status}|undefined;
+  if(old)return old.intent_hash===hash?{ok:true,reservationId:old.reservation_id,replayed:true,notional:old.notional,status:old.status}:{ok:false,reason:'idempotency_conflict'};
   const row=db.prepare('SELECT * FROM paper_policies WHERE policy_id=? AND account_id=?').get(intent.policyId,intent.accountId) as {revision:number;policy_json:string}|undefined;
   const quote=db.prepare('SELECT quote_at FROM paper_quotes WHERE account_id=? AND symbol=?').get(intent.accountId,intent.symbol) as {quote_at:number}|undefined;
   if(!row||!quote)return {ok:false,reason:'unavailable'};
   const p:unknown=JSON.parse(row.policy_json);if(!policyValid(p)||p.revision!==row.revision)return {ok:false,reason:'unavailable'};
-  const pending=db.prepare('SELECT notional,created_at,policy_id FROM paper_reservations WHERE account_id=?').all(intent.accountId) as {notional:number;created_at:number;policy_id:string}[];
+  const pending=db.prepare('SELECT notional,created_at,policy_id,status FROM paper_reservations WHERE account_id=?').all(intent.accountId) as {notional:number;created_at:number;policy_id:string;status:Status}[];
   let reserved=0,orders=0,lastOrderAt=0;
   const day=Math.floor(now/86400000);
-  for(const r of pending){reserved+=r.notional;if(!Number.isSafeInteger(reserved))return {ok:false,reason:'limit'};if(r.policy_id===p.id){lastOrderAt=Math.max(lastOrderAt,r.created_at);if(Math.floor(r.created_at/86400000)===day)orders++;}}
-  // No fills exist: daily losses are zero, all reservations remain pending and conservative exposure.
+  for(const r of pending){if(r.status==='pending')reserved+=r.notional;if(!Number.isSafeInteger(reserved))return {ok:false,reason:'limit'};if(r.policy_id===p.id){lastOrderAt=Math.max(lastOrderAt,r.created_at);if(Math.floor(r.created_at/86400000)===day)orders++;}}
+  // No fills exist: daily losses are zero. Cancellation never resets accepted-order history.
   const verdict=admitPaperOrder(p,intent,{accountId:intent.accountId,policyId:p.id,policyRevision:row.revision,appRevision:a.app_revision,currency:a.currency,quoteSymbol:intent.symbol,accountMode:a.mode,ownerId,appEnabled:a.app_enabled===1,stopped:a.stopped!==0,now,quoteAt:quote.quote_at,exposure:a.exposure,reserved,dailyLoss:0,orders,lastOrderAt});
   if(!verdict.allowed)return {ok:false,reason:verdict.reason};
   if(reserved>a.cash||intent.notional>a.cash-reserved)return {ok:false,reason:'cash'};
   const reservationId=randomUUID();
-  db.prepare('INSERT INTO paper_reservations VALUES(?,?,?,?,?,?,?)').run(reservationId,intent.accountId,p.id,intent.idempotencyKey,hash,intent.notional,now);
-  return {ok:true,reservationId,replayed:false,notional:intent.notional};
+  db.prepare('INSERT INTO paper_reservations(reservation_id,account_id,policy_id,idempotency_key,intent_hash,notional,created_at) VALUES(?,?,?,?,?,?,?)').run(reservationId,intent.accountId,p.id,intent.idempotencyKey,hash,intent.notional,now);
+  return {ok:true,reservationId,replayed:false,notional:intent.notional,status:'pending'};
  }).immediate();
+}
+
+/** Pending reservations only: no broker cancellation or fill lifecycle is implied. */
+export function cancelPaperReservation(db:Database.Database,ownerId:string,accountId:string,reservationId:string,clock:()=>number=Date.now):Result {
+ if(![ownerId,accountId,reservationId].every(id))return {ok:false,reason:'invalid'};
+ return db.transaction(():Result=>{
+  const now=clock();if(!uint(now))return {ok:false,reason:'invalid_clock'};
+  const account=db.prepare('SELECT owner_id FROM paper_accounts WHERE account_id=?').get(accountId) as {owner_id:string}|undefined;
+  if(account?.owner_id!==ownerId)return {ok:false,reason:'unavailable'};
+  const row=db.prepare('SELECT notional,status,created_at FROM paper_reservations WHERE account_id=? AND reservation_id=?').get(accountId,reservationId) as {notional:number;status:Status;created_at:number}|undefined;
+  if(!row||!uint(row.notional,1)||!['pending','cancelled'].includes(row.status))return {ok:false,reason:'unavailable'};
+  if(row.status==='cancelled')return {ok:true,reservationId,replayed:true,notional:row.notional,status:'cancelled'};
+  if(now<row.created_at)return {ok:false,reason:'invalid_clock'};
+  db.prepare("UPDATE paper_reservations SET status='cancelled',cancelled_at=? WHERE account_id=? AND reservation_id=? AND status='pending'").run(now,accountId,reservationId);
+  return {ok:true,reservationId,replayed:false,notional:row.notional,status:'cancelled'};
+ }).immediate();
+}
+
+/** Safe owner-scoped read model. HTTP authentication remains the caller's responsibility. */
+export function readPaperAccount(db:Database.Database,ownerId:string,accountId:string){
+ if(![ownerId,accountId].every(id))return {ok:false as const,reason:'invalid'};
+ return db.transaction(()=>{
+  const a=db.prepare('SELECT owner_id,mode,currency,cash,exposure,app_enabled,app_revision,stopped FROM paper_accounts WHERE account_id=?').get(accountId) as {owner_id:string;mode:string;currency:string;cash:number;exposure:number;app_enabled:number;app_revision:number;stopped:number}|undefined;
+  if(!a||a.owner_id!==ownerId)return {ok:false as const,reason:'unavailable'};
+  const rows=db.prepare('SELECT reservation_id,policy_id,notional,created_at,status,cancelled_at FROM paper_reservations WHERE account_id=? ORDER BY created_at,reservation_id').all(accountId) as {reservation_id:string;policy_id:string;notional:number;created_at:number;status:Status;cancelled_at:number|null}[];
+  let reserved=0,pendingCount=0;
+  for(const r of rows)if(r.status==='pending'){reserved+=r.notional;pendingCount++;}
+  if(!uint(a.cash)||!uint(a.exposure)||!uint(reserved)||reserved>a.cash||!Number.isSafeInteger(a.exposure+reserved))return {ok:false as const,reason:'unavailable'};
+  const policies=db.prepare('SELECT policy_id,revision,policy_json FROM paper_policies WHERE account_id=? ORDER BY policy_id').all(accountId) as {policy_id:string;revision:number;policy_json:string}[];
+  const safePolicies=[];
+  for(const row of policies){let p:unknown;try{p=JSON.parse(row.policy_json);}catch{return {ok:false as const,reason:'unavailable'};}if(!policyValid(p)||p.id!==row.policy_id||p.accountId!==accountId||p.ownerId!==ownerId||p.revision!==row.revision)return {ok:false as const,reason:'unavailable'};safePolicies.push({id:row.policy_id,revision:row.revision,enabled:p.enabled,expiresAt:p.expiresAt});}
+  return {ok:true as const,accountId,mode:a.mode,currency:a.currency,cash:a.cash,availableCash:a.cash-reserved,exposure:a.exposure,pendingExposure:reserved,totalExposure:a.exposure+reserved,pendingCount,appEnabled:a.app_enabled===1,appRevision:a.app_revision,stopped:a.stopped!==0,policies:safePolicies,reservationCount:rows.length,reservations:rows.slice(-200).map(r=>({id:r.reservation_id,policyId:r.policy_id,notional:r.notional,createdAt:r.created_at,status:r.status,cancelledAt:r.cancelled_at}))};
+ }).deferred();
 }
