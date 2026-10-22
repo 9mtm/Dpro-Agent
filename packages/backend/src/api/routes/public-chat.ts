@@ -605,15 +605,9 @@ export async function registerPublicChatRoutes(fastify: FastifyInstance) {
       content: msg.content,
     }));
 
-    // SECURITY (S0-A.14): the agent's MEMORY.md is the owner's private data.
-    // Only the room owner, when allowed to read agent memory anyway (owner or
-    // admin role), gets it in the prompt; anonymous and other visitors do not,
-    // unless the server opts in (OUTSIDER_AGENT_MEMORY=true).
-    const senderRole = userId
-      ? (await q.one('SELECT role FROM users WHERE id = ?', userId) as { role?: string } | undefined)?.role
-      : undefined;
-    const senderIsOwner = !!userId && userId === room.owner_user_id && (senderRole === 'owner' || senderRole === 'admin');
-    const includeAgentMemory = senderIsOwner || outsiderAgentMemoryEnabled();
+    // A public-room answer is visible to visitors even when the sender owns the room.
+    // Private agent memory requires the explicit server sharing opt-in for every sender.
+    const includeAgentMemory = outsiderAgentMemoryEnabled();
 
     // Load agent files if agent is configured
     let personalityContent = '';

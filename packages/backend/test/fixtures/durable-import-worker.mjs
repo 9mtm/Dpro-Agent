@@ -17,7 +17,7 @@ let calls=0;const extract=async text=>{
  const content=text.split('Owner: ')[1]?.trim();
  return [{title:'Fixture fact',content,scope:'owner',evidence:content}];
 };
-const wait=async id=>{let j;for(let i=0;i<150;i++){j=await L.getJob('durable-owner',id);if(j?.status!=='running')return j;await new Promise(r=>setTimeout(r,20))}throw Error('Job timeout')};
+const wait=async id=>{let j;for(let i=0;i<150;i++){j=await L.getJob('durable-owner',id);if(j?.status!=='running')return j;await new Promise(r=>setTimeout(r,20))}throw Error('Job timeout: '+JSON.stringify({status:j?.status,done:j?.done,total:j?.total,errors:j?.errors,calls}))};
 try {
  if(mode==='crash'){
   db.prepare("INSERT INTO users (id,email,username,password_hash,role,status,email_verified) VALUES ('durable-owner','durable@example.invalid','durable','fixture','owner','active',1)").run();

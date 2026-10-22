@@ -118,14 +118,14 @@ test('channel turn: no MEMORY.md and no body memoryContext by default; personali
   assert.ok(p.includes(PERSONALITY_MARK), 'personality still used');
 });
 
-test('public room: anonymous and non-owner visitors get no MEMORY.md; the room owner does', async () => {
+test('public room: no sender including the owner exposes private MEMORY.md by default', async () => {
   const anon = await sent(() => roomPost());
   assert.ok(!anon.includes(MEMORY_MARK), 'anonymous');
   assert.ok(anon.includes(PERSONALITY_MARK));
   const member = await sent(() => roomPost(bearer('u-member')));
   assert.ok(!member.includes(MEMORY_MARK), 'non-owner member');
   const owner = await sent(() => roomPost(bearer('u-owner')));
-  assert.ok(owner.includes(MEMORY_MARK), 'room owner');
+  assert.ok(!owner.includes(MEMORY_MARK), 'owner replies are public too');
 });
 
 test('OUTSIDER_AGENT_MEMORY=true opts back in for channels and public rooms', async () => {

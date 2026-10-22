@@ -46,3 +46,14 @@ test('activation is independent, durable and owner-only without activating sibli
  assert.equal((await toggle('slack',false,{authorization:'Bearer '+generateToken('channel-user',1)})).statusCode,403);
  for(const payload of [{enabled:'true'},{enabled:true,auto_reply:true}])assert.equal((await app.inject({method:'PUT',url:'/api/agent-connect/slack/activation',headers:auth,payload})).statusCode,400);
 });
+
+test('catalog membership rejects property-like adapter IDs before either write route', async () => {
+ const before=db.prepare("SELECT extension_id,config_json,enabled FROM extension_configs ORDER BY extension_id").all();
+ for(const id of ['__proto__','constructor','prototype','toString']){
+  for(const suffix of ['config','activation']){
+   const payload=suffix==='config'?{allowedUsers:[],allowedChannels:[]}:{enabled:false};
+   assert.equal((await app.inject({method:'PUT',url:`/api/agent-connect/${id}/${suffix}`,headers:auth,payload})).statusCode,404);
+  }
+ }
+ assert.deepEqual(db.prepare("SELECT extension_id,config_json,enabled FROM extension_configs ORDER BY extension_id").all(),before);
+});

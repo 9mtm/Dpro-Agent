@@ -213,7 +213,7 @@ export interface ApprovalRunScope {
 }
 
 export function runScopeOf(context: ToolExecutionContext): ApprovalRunScope {
-  const scope: ApprovalRunScope = { memoryDrawers: toolMemoryDrawers(context).map((d) => (d.key ? { kind: d.kind, key: d.key } : { kind: d.kind })) };
+  const scope: ApprovalRunScope = { memoryDrawers: toolMemoryDrawers(context).map((d) => ({kind:d.kind,...(d.key?{key:d.key}:{}),...(d.readOnly===true?{readOnly:true}:{} )})) };
   if (typeof context.taskId === 'string' && context.taskId) scope.taskId = context.taskId;
   if (context.taskRun && typeof context.taskRun.runId === 'string' && Number.isInteger(context.taskRun.stepIndex)) {
     scope.runId = context.taskRun.runId;

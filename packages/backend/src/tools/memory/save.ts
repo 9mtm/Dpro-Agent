@@ -9,6 +9,7 @@ import type { Tool, ToolResult } from '../types.js';
 import type { MemoryType } from '../../memory/types.js';
 import type { ToolExecutionContext } from '../types.js';
 import { toolMemoryUser, toolOwnerTurn } from './scope.js';
+import { drawerWritable } from '../../repositories/scope.js';
 import { repositories } from '../../repositories/index.js';
 import { toolMemoryActor } from '../../repositories/actor.js';
 import { isUserConversation, linkAgentProposal } from '../../services/chat-memory.js';
@@ -156,7 +157,7 @@ Examples:
         throw new Error('That memory drawer is not open for this conversation');
       }
       // CORE-PERMS-01: the owner may make a drawer read-only for this agent.
-      if (actor.writeKinds && !actor.writeKinds.includes(drawer.kind)) {
+      if (!drawerWritable(actor, drawer)) {
         throw new Error('This agent may not write to that memory drawer');
       }
 

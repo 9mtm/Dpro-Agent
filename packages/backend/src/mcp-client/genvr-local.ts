@@ -1,5 +1,6 @@
 import { logAudit } from '../services/audit-logger.js';
-import fs from 'node:fs/promises';
+import { readRegularFile } from '../services/read-regular-file.js';
+import { pinnedEntryArgs } from './pinned-entry.js';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { createHash } from 'node:crypto';
@@ -18,13 +19,14 @@ let queue:Promise<unknown>=Promise.resolve();
 export function ensureGenvrMcp(ownerId:string) {
  const work=queue.then(async()=>{
   const entry=fileURLToPath(new URL('../../../core-ui/vendor/genvr/package/dist/mcp.js',import.meta.url));
-  try{if((await fs.lstat(entry)).isSymbolicLink()||createHash('sha256').update(await fs.readFile(entry)).digest('hex')!==PACKAGE_HASH)return {status:'unavailable',id:null};}catch{return {status:'unavailable',id:null};}
+  try{if(createHash('sha256').update((await readRegularFile(entry,16*1024*1024)).data).digest('hex')!==PACKAGE_HASH)return {status:'unavailable',id:null};}catch{return {status:'unavailable',id:null};}
+  const launchArgs=pinnedEntryArgs(entry,PACKAGE_HASH);
   const worldDir=path.join(mcpServersBaseDir(),NAME,'worlds');
   const env={GENVR_WORLD_DIR:worldDir,GENVR_STUDIO_CONNECTION:studioConnectionFile()};
   let row=await getServerRowByName(NAME),upgraded=false;
-  if(!row){const saved=await createServer({name:NAME,description:DESCRIPTION,transport:'stdio',command:process.execPath,args:[entry],env},ownerId,{dormantImport:true});row=await getServerRowByName(NAME);if(!row)return {status:'unavailable',id:saved.id};}
+  if(!row){const saved=await createServer({name:NAME,description:DESCRIPTION,transport:'stdio',command:process.execPath,args:launchArgs,env},ownerId,{dormantImport:true});row=await getServerRowByName(NAME);if(!row)return {status:'unavailable',id:saved.id};}
   const secrets=await readSecrets(row);
-  const same=row.transport==='stdio'&&row.command===process.execPath&&JSON.stringify(parseList(row.args))===JSON.stringify([entry])&&JSON.stringify(Object.keys(secrets.env).sort())===JSON.stringify(Object.keys(env).sort())&&Object.entries(env).every(([k,v])=>secrets.env[k]===v)&&!Object.keys(secrets.headers).length;
+  const same=row.transport==='stdio'&&row.command===process.execPath&&JSON.stringify(parseList(row.args))===JSON.stringify(launchArgs)&&JSON.stringify(Object.keys(secrets.env).sort())===JSON.stringify(Object.keys(env).sort())&&Object.entries(env).every(([k,v])=>secrets.env[k]===v)&&!Object.keys(secrets.headers).length;
   if(!same){
    // An earlier bundled package (other path/version/env) is re-pointed to this one: the launch
    // changes, so its approval and tool grants are reset like any edited server. Anything else
@@ -32,7 +34,7 @@ export function ensureGenvrMcp(ownerId:string) {
    const bundled=row.transport==='stdio'&&row.description===DESCRIPTION&&!Object.keys(secrets.headers).length&&Object.keys(secrets.env).every(k=>k in env)&&parseList(row.args).length===1&&/[\\/]vendor[\\/]genvr[\\/]package[\\/]dist[\\/]mcp\.js$/.test(parseList(row.args)[0]??'');
    if(!bundled)return {status:'conflict',id:row.id};
    if(!isExecToolsEnabled())return {status:'blocked',id:row.id};
-   await updateServer(row.id,{command:process.execPath,args:[entry],env},ownerId);upgraded=true;
+   await updateServer(row.id,{command:process.execPath,args:launchArgs,env},ownerId);upgraded=true;
    row=await getServerRowByName(NAME);if(!row)return {status:'unavailable',id:null};
   }
   // A deliberate disable after the first activation is retained on future visits.

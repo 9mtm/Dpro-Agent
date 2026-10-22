@@ -303,8 +303,13 @@ export function envDatabase(text: string): { engine: string; host: string | null
   }
   if (v.DATABASE_URL) {
     try {
-      const u = new URL(v.DATABASE_URL);
-      return { engine: u.protocol.replace(/:$/, ''), host: u.hostname || null, port: u.port || null, database: u.pathname.replace(/^\/+/, '') || null };
+      const raw = v.DATABASE_URL.replace(/^jdbc:/i, '');
+      if (!/^[a-z][a-z0-9+.-]*:\/\//i.test(raw)) throw new Error('Missing database authority');
+      const u = new URL(raw);
+      if (!u.hostname) throw new Error('Missing database hostname');
+      const ambiguousCredentials = raw.includes('@') && !u.username && !u.password;
+      const database = ambiguousCredentials ? null : u.pathname.replace(/[^/@]*@/g, '').replace(/^\/+/, '') || null;
+      return { engine: u.protocol.replace(/:$/, ''), host: u.hostname, port: u.port || null, database };
     } catch { /* not a URL: fall back to the DB_* names */ }
   }
   const engine = v.DB_CONNECTION || (v.POSTGRES_DB ? 'pgsql' : v.MYSQL_DATABASE ? 'mysql' : '');

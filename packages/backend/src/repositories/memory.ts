@@ -321,7 +321,8 @@ export const memoryRepository: MemoryRepository = {
 
   async doctorFix(actor, input) {
     const s = doctorScope(actor);
-    return fixMemory(s.userId, { ...input, actor: s.label }, { drawers: s.drawers });
+    const drawers = s.drawers?.filter((d) => drawerWritable(requireActor(actor), d)) ?? null;
+    return fixMemory(s.userId, { ...input, actor: s.label }, { drawers });
   },
 };
 

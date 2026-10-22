@@ -122,7 +122,7 @@ export const memoryRecall: MemoryRecallRepository = {
       candidates: input.candidates.map((c) => ({ ...c, origin })),
       actor: versionActor(a),
       agentId: agent ? a.agentId : undefined,
-      openDrawers: agent ? [...(a.drawers ?? [])] : null,
+      openDrawers: agent ? [...(a.drawers ?? [])].filter((d) => drawerWritable(a, d)) : null,
       metadata: input.metadata,
       ...(input.review ? { review: true } : {}),
     });
@@ -134,7 +134,7 @@ export const memoryRecall: MemoryRecallRepository = {
     return agentChange({
       userId, memoryId: input.memoryId, op: input.op, updates: input.updates,
       actor: versionActor(a), agentId: agent ? a.agentId : undefined,
-      openDrawers: agent ? [...(a.drawers ?? [])] : null, outsider: agent && !!a.channel,
+      openDrawers: agent ? [...(a.drawers ?? [])].filter((d) => drawerWritable(a, d)) : null, outsider: agent && !!a.channel,
       reason: input.reason ?? null,
     });
   },
