@@ -22,3 +22,20 @@ test('space agent contracts reject duplicates, forged grants and invalid avatars
  for(const agents of [[...b.agents,...b.agents],[{id:'main-agent',avatar:8}],[{id:'main-agent',avatar:0,permissions:['all']}],[{id:'../keys',avatar:0}]])assert.equal(allowed('PUT',route,{...b,agents}),false);
  assert.deepEqual(genvrResponse('/api/genvr/agents',200,{agents:[{id:'main-agent',name:'Fictional agent',avatar:2,systemPrompt:'private'}]}),{agents:[{id:'main-agent',name:'Fictional agent',avatar:2}]});
 });
+
+test('asset replaced by a symlink between path validation and open is never served',()=>{
+ const folder=fs.mkdtempSync(path.join(os.tmpdir(),'genvr-assets-race-'));
+ const open=fs.openSync;
+ try{
+  const {VERSION,SHA256}=require('../scripts/prepare-genvr.cjs');
+  const file=path.join(folder,'vendor/genvr/package/dist/test.js');fs.mkdirSync(path.dirname(file),{recursive:true});
+  fs.writeFileSync(file,'reviewed asset');
+  fs.writeFileSync(path.join(folder,'private'),'private fixture');
+  fs.writeFileSync(path.join(folder,'vendor/genvr/manifest.json'),JSON.stringify({version:VERSION,archiveSha256:SHA256,files:{'dist/test.js':crypto.createHash('sha256').update('reviewed asset').digest('hex')}}));
+  const serve=createGenVRAssets(folder);let status,body;
+  fs.openSync=function(target,...args){if(target===file){fs.renameSync(file,file+'.old');fs.symlinkSync(path.join(folder,'private'),file);}return open.call(fs,target,...args);};
+  const res={writeHead:x=>status=x,end:x=>body=x,setHeader:()=>{}};
+  assert.equal(serve({method:'GET'},res,'/genvr/dist/test.js'),true);
+  assert.equal(status,503);assert.ok(!String(body).includes('private fixture'));
+ }finally{fs.openSync=open;fs.rmSync(folder,{recursive:true,force:true});}
+});

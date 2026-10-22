@@ -1,3 +1,4 @@
+import {narrowProjectMemory} from '../../tools/memory/project-access.js';
 import { FakeRaw } from '../../services/chat-runs.js';
 import { vaultChatFrames } from '../../services/chat-secrets.js';
 import { currentChatRun } from '../../services/chat-run-context.js';
@@ -387,7 +388,7 @@ async function readableDrawers(agentId: string | undefined, drawers: DrawerRef[]
   if (!agentId || drawers.length === 0) return drawers;
   const project = drawers.find((d) => d.kind === 'project')?.key ?? null;
   const read = (await loadRunPermissions(agentId, [], { userId, project })).memoryRead;
-  return drawers.filter((d) => read.includes(d.kind));
+  return (await narrowProjectMemory({agentId,userId,memoryDrawers:drawers}) ?? []).filter((d) => read.includes(d.kind));
 }
 
 /**
@@ -467,7 +468,7 @@ export async function executeChatTurn(reply: FastifyReply, input: ChatTurnInput)
     // MEM-SCALE-01: an archived project is kept but never loaded into a reply.
     memoryDrawers = await withoutArchivedDrawers(userId, memoryDrawers);
     // MEM-UX-02: a group of projects that shares within opens its other projects too (audited).
-    const grouped = await withGroupDrawers(userId, memoryDrawers);
+    const grouped = await withGroupDrawers(userId, memoryDrawers, async project => !agentConfig?.id || (await loadRunPermissions(agentConfig.id, [], {userId,project})).memoryRead.includes('project'));
     if (grouped.added.length) {
       memoryDrawers = grouped.drawers;
       logAudit({

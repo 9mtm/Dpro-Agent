@@ -17,6 +17,7 @@
  * the backend at start (auth.ts).
  */
 import fs from 'node:fs';
+import { readRegularFile } from './regular-file.js';
 import path from 'node:path';
 import { createHash, randomUUID } from 'node:crypto';
 import { dataPath } from '../../config/data-root.js';
@@ -49,12 +50,10 @@ export interface RegistrationPreview {
 }
 
 function readConfig(file: string): { bytes: Buffer | null; mode: number | null; problem?: string } {
-  let st: fs.Stats;
-  try { st = fs.lstatSync(file); } catch (e: any) { return e.code === 'ENOENT' ? { bytes: null, mode: null } : { bytes: null, mode: null, problem: 'cannot be read' }; }
-  if (st.isSymbolicLink()) return { bytes: null, mode: null, problem: 'is a symbolic link' };
-  if (!st.isFile()) return { bytes: null, mode: null, problem: 'is not a regular file' };
-  if (st.size > MAX_CONFIG_BYTES) return { bytes: null, mode: null, problem: 'is too large' };
-  return { bytes: fs.readFileSync(file), mode: st.mode & 0o777 };
+  try { return readRegularFile(file, MAX_CONFIG_BYTES); }
+  catch (e: any) {
+    return e.code === 'ENOENT' ? { bytes: null, mode: null } : { bytes: null, mode: null, problem: 'is unreadable, changed, oversized or not a regular file' };
+  }
 }
 
 function jsonEntry(client: BridgeClient, l: ServerLaunch): Record<string, unknown> {

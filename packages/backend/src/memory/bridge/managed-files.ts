@@ -19,6 +19,7 @@
  * markers) unless the owner turns that off.
  */
 import fs from 'node:fs';
+import { readRegularFile } from './regular-file.js';
 import path from 'node:path';
 import { createHash, randomUUID } from 'node:crypto';
 import { redactImportText } from '../import/redact.js';
@@ -94,14 +95,14 @@ export interface FilesPreview { projectId: string; folder: string; files: FilePl
 type Planned = FilePlan & { abs: string; after: string | null; mode: number | null };
 
 function readExisting(abs: string): { text: string | null; mode: number | null; problem?: string } {
-  let st: fs.Stats;
-  try { st = fs.lstatSync(abs); } catch (e: any) { if (e.code === 'ENOENT') return { text: null, mode: null }; return { text: null, mode: null, problem: 'unreadable' }; }
-  if (st.isSymbolicLink()) return { text: null, mode: null, problem: 'is a symbolic link' };
-  if (!st.isFile()) return { text: null, mode: null, problem: 'is not a regular file' };
-  if (st.size > MAX_MANAGED_FILE_BYTES) return { text: null, mode: null, problem: 'is larger than 1 MiB' };
-  const text = fs.readFileSync(abs, 'utf8');
-  if (text.includes('\0')) return { text: null, mode: null, problem: 'is not a text file' };
-  return { text, mode: st.mode & 0o777 };
+  try {
+    const { bytes, mode } = readRegularFile(abs, MAX_MANAGED_FILE_BYTES);
+    const text = bytes.toString('utf8');
+    if (text.includes('\0')) return { text: null, mode: null, problem: 'is not a text file' };
+    return { text, mode };
+  } catch (e: any) {
+    return e.code === 'ENOENT' ? { text: null, mode: null } : { text: null, mode: null, problem: 'is unreadable, changed, oversized or not a regular file' };
+  }
 }
 
 function blockDiff(oldBlock: string | null, newBlock: string): string {

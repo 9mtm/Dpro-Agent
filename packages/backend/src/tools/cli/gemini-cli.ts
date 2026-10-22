@@ -13,7 +13,7 @@ import { safeConsole } from '../../services/safe-error-log.js';
  *   - Any task that benefits from Gemini 2.0+ models
  */
 
-import { execFile, exec } from 'node:child_process';
+import { execFile } from 'node:child_process';
 import { promisify } from 'node:util';
 import * as os from 'node:os';
 import * as path from 'node:path';
@@ -24,7 +24,7 @@ import { getEnvProviderApiKey } from '../../credentials/authority.js';
 import { cliFailureText, cliNoOutputText, safeErrorFields } from '../../services/safe-error-log.js';
 
 const execFileAsync = promisify(execFile);
-const execAsync = promisify(exec);
+import { cliInvocation } from './process-invocation.js';
 
 // npm global bin dirs — checked in priority order
 const NODE_BIN_DIRS_WIN = [
@@ -115,25 +115,13 @@ export const geminiCliTool: Tool = {
       let stdout: string;
       let stderr: string;
 
-      if (process.platform === 'win32' && gemini.endsWith('.cmd')) {
-        // On Windows, .cmd files need exec() (shell) — use the command name so PATH is used
-        const binName = path.basename(gemini, '.cmd');
-        const shellArgs = args.map(a => (a.includes(' ') ? `"${a.replace(/"/g, '\\"')}"` : a)).join(' ');
-        const shellCmd = `${binName} ${shellArgs}`;
-        ({ stdout, stderr } = await execAsync(shellCmd, {
-          timeout,
-          maxBuffer: 1024 * 1024 * 10,
-          cwd: os.homedir(),
-          env: childEnv,
-        }));
-      } else {
-        ({ stdout, stderr } = await execFileAsync(gemini, args, {
-          timeout,
-          maxBuffer: 1024 * 1024 * 10,
-          cwd: os.homedir(),
-          env: childEnv,
-        }));
-      }
+      const invocation = await cliInvocation(gemini, args, process.platform, 'gemini');
+      ({ stdout, stderr } = await execFileAsync(invocation.file, invocation.args, {
+        timeout,
+        maxBuffer: 1024 * 1024 * 10,
+        cwd: os.homedir(),
+        env: childEnv,
+      }));
 
       // SECURITY (FU-03): stderr is never the answer, even on exit 0 (it can
       // hold the prompt, paths or tokens). Empty stdout gets a generic text.

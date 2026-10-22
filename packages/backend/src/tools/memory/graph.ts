@@ -212,7 +212,7 @@ action "dismiss" (cluster_id): "not a topic"; it is not suggested again until it
     if (!toolOwnerTurn(context)) return fail("only in the owner's own turn, not in a board task run");
     if (context?.toolPolicy) return fail('not available when answering someone else');
     if (!(await isOwnerAccount(userId))) return fail('the memory graph is for the owner only');
-    const scope: GraphScope = { userId, drawers: toolMemoryDrawers(context) };
+    const scope: GraphScope = { userId, drawers: toolMemoryDrawers(context).filter(d=>!d.readOnly) };
     const actor = `agent:${context?.agentId ?? 'unknown'}`;
     try {
       // The owner's approval of this call is the explicit confirm.
@@ -247,6 +247,7 @@ export const memoryGraphSyncTool: Tool = {
     if (!(await isOwnerAccount(userId))) return fail('the memory graph is for the owner only');
     const limit = typeof params.limit === 'number' && Number.isInteger(params.limit) ? Math.min(1000, Math.max(1, params.limit)) : 200;
     // The owner's approval of this call is the explicit confirm.
+    if(toolMemoryDrawers(context).some(d=>d.readOnly))return fail('shared project memory is read-only; rebuild from the owner workspace');
     const r = await syncMemoryGraph(userId, limit);
     return { content: [{ type: 'text', text: `Map rebuilt: ${r.indexed} memories indexed, ${r.unchanged} unchanged, ${r.pruned.links} links and ${r.pruned.entities} entities removed.` }], data: { success: true, ...r } } as ToolResult;
   },

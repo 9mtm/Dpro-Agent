@@ -27,3 +27,21 @@ test('Windows batch shims never interpret shell metacharacters in prompts or mod
     await rm(root, { recursive: true, force: true, maxRetries: 5, retryDelay: 100 });
   }
 });
+
+
+test('Gemini Windows shim sends malicious-looking arguments literally without a shell', async () => {
+ const root = await mkdtemp(path.join(tmpdir(), 'dpro-gemini-invocation-'));
+ try {
+  const script = path.join(root, 'node_modules', '@google', 'gemini-cli', 'dist', 'index.js');
+  await mkdir(path.dirname(script), {recursive:true});
+  await writeFile(script, 'process.stdout.write(JSON.stringify(process.argv.slice(2)))');
+  const marker = path.join(root, 'injected-output');
+  const args = ['-m', 'model&echo bad', '-p', `" & echo injected > "${marker}" | %COMSPEC% $(whoami)\nnext`];
+  const invocation = await cliInvocation(path.join(root, 'gemini.cmd'), args, 'win32', 'gemini');
+  assert.equal(invocation.file, process.execPath);
+  const {stdout} = await promisify(execFile)(invocation.file, invocation.args, {cwd:root});
+  assert.deepEqual(JSON.parse(stdout), args);
+  await assert.rejects(access(marker));
+  await assert.rejects(cliInvocation(path.join(root, 'absent', 'gemini.cmd'), args, 'win32', 'gemini'), {code:'ENOENT'});
+ } finally {await rm(root,{recursive:true,force:true});}
+});

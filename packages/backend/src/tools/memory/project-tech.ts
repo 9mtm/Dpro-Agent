@@ -51,7 +51,7 @@ async function run(tool: string, fn: () => Promise<ToolResult>): Promise<ToolRes
 
 export const projectDesignTool: Tool = {
   name: 'project_design',
-  description: `The design Dpro found for a project (colours with the main one marked, fonts, logos, the owner's design rules,
+  description: `The design Dpro found for a project (colours with the main one marked, fonts, logos, quoted repository rule references and owner confirmation status,
 open questions). Read it before you change any screen of the project; DESIGN.md in the project folder holds the same section.
 project: the project slug (default: the project open in this conversation).`,
   input_schema: { type: 'object', properties: { project: { type: 'string' } } },

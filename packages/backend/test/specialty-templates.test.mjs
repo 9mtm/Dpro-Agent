@@ -75,3 +75,16 @@ test('approved planning catalogue is readable but cannot grant, assign, hire or 
  assert.equal(db.prepare('SELECT count(*) n FROM agents_config').get().n,before);assert.equal(db.prepare('SELECT count(*) n FROM agent_specialties').get().n,links);
  assert.equal(db.prepare('SELECT id FROM specialty_templates WHERE id=?').get(planned.id),undefined);
 });
+
+test('template storage refuses symlink content and writable shared object directories',async()=>{
+ const {SpecialtyTemplates}=await import('../src/services/specialty-templates.ts');const store=new SpecialtyTemplates();
+ const row=db.prepare('SELECT content_hash FROM specialty_templates WHERE id=?').get(template.id);
+ const dir=path.join(root,'specialty-templates','objects'),file=path.join(dir,row.content_hash+'.md');
+ const secret=path.join(root,'untrusted-file');await fs.writeFile(secret,'untrusted fixture');
+ await fs.rename(file,file+'.saved');await fs.symlink(secret,file);
+ try{await assert.rejects(store.get(template.id),{code:'storage_unavailable'});}finally{await fs.unlink(file);await fs.rename(file+'.saved',file);}
+ if(process.platform!=='win32'){
+  await fs.chmod(dir,0o777);
+  try{const {id,...body}=template;body.revision=0;const out=await call('PUT',base+'/'+randomUUID(),body);assert.equal(out.statusCode,503,out.body);}finally{await fs.chmod(dir,0o700);}
+ }
+});

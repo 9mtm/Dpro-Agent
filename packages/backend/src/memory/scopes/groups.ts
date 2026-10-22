@@ -168,15 +168,16 @@ export async function groupSiblings(ownerId: string, slug: string): Promise<{ gr
  * on any error the drawers come back unchanged). `added` lists the extra
  * drawers so the caller can audit the widening.
  */
-export async function withGroupDrawers(ownerId: string | null | undefined, drawers: DrawerRef[]): Promise<{ drawers: DrawerRef[]; added: DrawerRef[]; groupId: string | null }> {
+export async function withGroupDrawers(ownerId: string | null | undefined, drawers: DrawerRef[], canReadSibling: (project: string) => Promise<boolean> = async () => false): Promise<{ drawers: DrawerRef[]; added: DrawerRef[]; groupId: string | null }> {
   const project = drawers.find((d) => d.kind === 'project' && d.key);
   if (!ownerId || !project) return { drawers, added: [], groupId: null };
   try {
     const sib = await groupSiblings(ownerId, project.key!);
     if (!sib) return { drawers, added: [], groupId: null };
-    const added: DrawerRef[] = sib.projects
-      .filter((s) => !drawers.some((d) => d.kind === 'project' && d.key === s))
-      .map((s) => ({ kind: 'project', key: s }));
+    const added: DrawerRef[] = [];
+    for (const key of sib.projects) {
+      if (!drawers.some(d => d.kind === 'project' && d.key === key) && await canReadSibling(key)) added.push({kind:'project', key, readOnly:true});
+    }
     return { drawers: [...drawers, ...added], added, groupId: sib.groupId };
   } catch {
     return { drawers, added: [], groupId: null };

@@ -122,7 +122,7 @@ function query(raw, rules) {
     const key = part.slice(0, i);
     let value;
     try { value = decodeURIComponent(part.slice(i + 1)); } catch { return null; }
-    if (!rules[key] || key in out || encodeURIComponent(value) !== part.slice(i + 1) || !rules[key](value)) return null;
+    if (!Object.hasOwn(rules, key) || typeof rules[key] !== 'function' || Object.hasOwn(out, key) || encodeURIComponent(value) !== part.slice(i + 1) || !rules[key](value)) return null;
     out[key] = value;
   }
   return out;

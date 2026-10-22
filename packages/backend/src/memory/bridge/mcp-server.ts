@@ -16,7 +16,7 @@
  * straight into memory. A folder Dpro does not know gets nothing.
  * Light on purpose: no database, no credential store, no model.
  */
-import fs from 'node:fs';
+import { readRegularFile } from './regular-file.js';
 import path from 'node:path';
 import { randomBytes, timingSafeEqual, createHmac } from 'node:crypto';
 import { Server } from '@modelcontextprotocol/sdk/server/index.js';
@@ -34,7 +34,7 @@ export const BRIDGE_TOOL_DEFINITIONS = [
   { name: 'pinned_facts', description: "The facts the owner pinned for this work: company rules, the project's department and the project itself. They hold unless the owner changes them.", inputSchema: { type: 'object', properties: {} } },
   { name: 'latest_handoff', description: 'The newest done / left / next note left in this project by any agent (Dpro, Claude Code, Codex, Gemini, Antigravity).', inputSchema: { type: 'object', properties: {} } },
   { name: 'memory_search', description: "Search this project's approved Dpro memory.", inputSchema: { type: 'object', properties: { query: { type: 'string' }, limit: { type: 'integer', minimum: 1, maximum: 20 } }, required: ['query'] } },
-  { name: 'project_design', description: "The design Dpro found for this project: colours (the main one marked), fonts, logos and the owner's design rules. Read it before you change any screen; DESIGN.md in the folder holds the same section.", inputSchema: { type: 'object', properties: {} } },
+  { name: 'project_design', description: "The design Dpro found for this project: colours (the main one marked), fonts, logos and quoted repository rule references with owner confirmation status. Read it before you change any screen; DESIGN.md in the folder holds the same section.", inputSchema: { type: 'object', properties: {} } },
   { name: 'memory_propose', description: 'Propose a lasting fact, decision or correction for this project. It is NOT saved directly: the owner reviews it in Dpro first. One idea per call; never include keys, passwords or tokens.', inputSchema: { type: 'object', properties: { content: { type: 'string', maxLength: 4000 } }, required: ['content'] } },
   { name: 'handoff_write', description: 'Before you stop, leave a short handoff for the next agent in this project (of any brand): what is done, what is left, next steps, open questions. Never include secrets.', inputSchema: { type: 'object', properties: { done: list('What is finished'), left: list('What is still open'), next: list('The next steps'), questions: list('Open questions for the owner') } } },
 ] as const;
@@ -58,11 +58,11 @@ type Instance = { id: string; secret: string };
 /** instance.json next to the CLI token (0600, written by the backend at start). */
 export function readInstance(configDir: string): Instance {
   const file = path.join(configDir, 'instance.json');
-  let st: fs.Stats;
-  try { st = fs.lstatSync(file); } catch { throw new BridgeClientError('Dpro has not started on this computer yet (instance.json is missing). Start Dpro once.'); }
-  if (!st.isFile() || st.size > 64 * 1024) throw new BridgeClientError('Dpro\'s instance.json is not a regular file.');
-  if (process.platform !== 'win32' && (st.mode & 0o077) !== 0) throw new BridgeClientError('Dpro\'s instance.json is readable by other users; restart Dpro to fix it.');
-  const d = JSON.parse(fs.readFileSync(file, 'utf8'));
+  let contents: ReturnType<typeof readRegularFile>;
+  try { contents = readRegularFile(file, 64 * 1024); }
+  catch { throw new BridgeClientError('Dpro instance.json is missing, unreadable or not a regular file. Restart Dpro.'); }
+  if (process.platform !== 'win32' && (contents.mode & 0o077) !== 0) throw new BridgeClientError('Dpro instance.json is readable by other users; restart Dpro to fix it.');
+  const d = JSON.parse(contents.bytes.toString('utf8'));
   if (d?.createdBy !== 'agent-player-backend' || typeof d.id !== 'string' || !/^[0-9a-f]{64}$/i.test(d.secret ?? '')) throw new BridgeClientError('Dpro\'s instance.json is not valid; restart Dpro.');
   return { id: d.id, secret: d.secret };
 }

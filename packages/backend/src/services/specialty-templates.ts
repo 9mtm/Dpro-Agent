@@ -1,6 +1,7 @@
 import fs from 'node:fs/promises';
 import {extendSpecialtyList,plannedSpecialty} from './specialty-catalogue.js';
 import {constants} from 'node:fs';
+import {readRegularFile} from './read-regular-file.js';
 import path from 'node:path';
 import {createHash,randomUUID} from 'node:crypto';
 import {q,sql,one,run,dialect,all} from '../repositories/sql-steps.js';
@@ -30,12 +31,19 @@ export class SpecialtyTemplates{
  private root=dataPath('specialty-templates/objects');
  private async content(instructions:string){
   const clean=redactImportText(instructions.replace(/\r\n?/g,'\n').trim()+'\n').text,id=hash(clean);
-  await fs.mkdir(this.root,{recursive:true,mode:0o700});if((await fs.lstat(this.root)).isSymbolicLink())throw new TemplateError('storage_unavailable',503);this.root=await fs.realpath(this.root);
+  const base=await fs.realpath(dataPath());
+  for(const dir of [path.join(base,'specialty-templates'),path.join(base,'specialty-templates','objects')]){
+   await fs.mkdir(dir,{recursive:true,mode:0o700});
+   const handle=await fs.open(dir,constants.O_RDONLY|(constants.O_NOFOLLOW??0)|(constants.O_DIRECTORY??0));
+   try{const stat=await handle.stat();if(!stat.isDirectory()||(process.platform!=='win32'&&((stat.mode&0o022)!==0||(process.getuid&&stat.uid!==process.getuid()))))throw new TemplateError('storage_unavailable',503);}finally{await handle.close();}
+   if(await fs.realpath(dir)!==dir)throw new TemplateError('storage_unavailable',503);
+  }
+  this.root=path.join(base,'specialty-templates','objects');
   const file=path.join(this.root,id+'.md'),temporary=path.join(this.root,'pending-'+randomUUID());
   const handle=await fs.open(temporary,'wx',0o600);try{await handle.writeFile(clean);await handle.sync();}finally{await handle.close();}
   try{await fs.link(temporary,file);}catch(e){if((e as NodeJS.ErrnoException).code!=='EEXIST')throw e;}finally{await fs.unlink(temporary);}
   const directory=await fs.open(this.root,'r');try{await directory.sync();}finally{await directory.close();}
-  if((await fs.lstat(file)).isSymbolicLink()||hash(await fs.readFile(file,'utf8'))!==id)throw new TemplateError('storage_unavailable',503);return id;
+  if(hash((await readRegularFile(file,120000)).data.toString('utf8'))!==id)throw new TemplateError('storage_unavailable',503);return id;
  }
  async initialize(){
   for(const item of COMPANY_SPECIALTIES){const digest=hash(item.department+':'+item.name),id=`${digest.slice(0,8)}-${digest.slice(8,12)}-${digest.slice(12,16)}-${digest.slice(16,20)}-${digest.slice(20,32)}`;if(await q.one('SELECT id FROM specialty_templates WHERE id=?',id))continue;
@@ -45,7 +53,7 @@ export class SpecialtyTemplates{
  }
  async list(){const rows=await q.all<Pick<Row,'id'|'name'|'department'|'description'|'revision'>>('SELECT id,name,department,description,revision FROM specialty_templates ORDER BY department,name');const links=await q.all<{template_id:string;id:string;name:string}>('SELECT s.template_id,a.id,a.name FROM agent_specialties s JOIN agents_config a ON a.id=s.agent_id ORDER BY a.name');return extendSpecialtyList(rows.map(r=>({...r,agents:links.filter(l=>l.template_id===r.id).map(l=>({id:l.id,name:l.name}))})));}
  async read(id:string){const planned=plannedSpecialty(id);if(planned&&!await q.one('SELECT id FROM specialty_templates WHERE id=?',id))return planned;return this.get(id);}
- async get(id:string){if(!uuid(id))throw new TemplateError('invalid_input');const row=await q.one<Row>('SELECT * FROM specialty_templates WHERE id=?',id);if(!row)throw new TemplateError('not_found',404);const file=path.join(this.root,row.content_hash+'.md');if(!/^[a-f0-9]{64}$/.test(row.content_hash)||(await fs.lstat(file)).isSymbolicLink())throw new TemplateError('storage_unavailable',503);const handle=await fs.open(file,constants.O_RDONLY|constants.O_NOFOLLOW);let instructions:string;try{const stat=await handle.stat();if(!stat.isFile()||stat.size>120000)throw new TemplateError('storage_unavailable',503);instructions=await handle.readFile('utf8');}finally{await handle.close();}if(hash(instructions)!==row.content_hash)throw new TemplateError('storage_unavailable',503);return {id:row.id,name:row.name,department:row.department,description:row.description,revision:row.revision,instructions,config:JSON.parse(row.config_json) as TemplateConfig};}
+ async get(id:string){if(!uuid(id))throw new TemplateError('invalid_input');const row=await q.one<Row>('SELECT * FROM specialty_templates WHERE id=?',id);if(!row)throw new TemplateError('not_found',404);const file=path.join(this.root,row.content_hash+'.md');if(!/^[a-f0-9]{64}$/.test(row.content_hash))throw new TemplateError('storage_unavailable',503);let instructions:string;try{instructions=(await readRegularFile(file,120000)).data.toString('utf8');}catch{throw new TemplateError('storage_unavailable',503);}if(hash(instructions)!==row.content_hash)throw new TemplateError('storage_unavailable',503);return {id:row.id,name:row.name,department:row.department,description:row.description,revision:row.revision,instructions,config:JSON.parse(row.config_json) as TemplateConfig};}
  async catalogue(){const skills=await q.all('SELECT id,name,revision FROM central_skills ORDER BY name');const tools=[];for(const tool of (await createAgentToolsRegistry({workspaceDir:process.cwd()})).listRegistered()){if(tool.selfOnly)continue;const binding=tool.mcp?await currentMcpTool(tool.name):undefined;tools.push({name:tool.name,description:tool.description.slice(0,500),server:tool.mcp?.serverName??null,fingerprint:binding?.fingerprint??null,available:isToolObjectAllowedByExecPolicy(tool)});}return {skills,tools};}
  private async config(raw:unknown,requireAvailable=true){
   if(!object(raw)||!keys(raw,['primarySkill','skills','tools','memoryRead','memoryWrite','sharedMemory','modes','requirements'])||!(raw.primarySkill===null||uuid(raw.primarySkill))||!Array.isArray(raw.skills)||raw.skills.length>49||!raw.skills.every(uuid)||new Set(raw.skills).size!==raw.skills.length||raw.skills.includes(raw.primarySkill)||!Array.isArray(raw.tools)||raw.tools.length>500)throw new TemplateError('invalid_input');

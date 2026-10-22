@@ -1,4 +1,5 @@
 import {specialtyLibraryTool,specialtyApplyTool} from './specialties.js';
+import {narrowProjectMemory,narrowProjectMemorySync} from './memory/project-access.js';
 /**
  * Tools System - Main Export
  *
@@ -197,6 +198,7 @@ function runScope(context: ToolExecutionContext): RunScope {
  * throws when an agentId is given; use createAgentToolsRegistry).
  */
 export function createToolsRegistry(context: ToolExecutionContext): ToolsRegistry {
+  context={...context,memoryDrawers:narrowProjectMemorySync(context)};
   // MCP tools: the cache or a synchronous SQLite read; on PostgreSQL the
   // cache only (B2.2c; use createAgentToolsRegistry to get them for sure).
   const registry = buildToolsRegistry(context, getMcpToolsSync());
@@ -220,6 +222,7 @@ export function createToolsRegistry(context: ToolExecutionContext): ToolsRegistr
  * drivers; B2.2b-3). Use it wherever the caller can await.
  */
 export async function createAgentToolsRegistry(context: ToolExecutionContext): Promise<ToolsRegistry> {
+  context={...context,memoryDrawers:await narrowProjectMemory(context)};
   const registry = buildToolsRegistry(context, await getMcpTools());
   if (!context.grants) {
     registry.updateContext({

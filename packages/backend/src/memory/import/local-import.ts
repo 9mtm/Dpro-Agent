@@ -200,9 +200,9 @@ export async function latestImportJob(userId: string): Promise<ImportJob | undef
 async function kick(job: SavedImport, opts: Options, release: () => Promise<void>) {
   job.status = 'running'; job.notice = undefined; await saveImport(job);
   const abort = new AbortController();
-  const promise = runImport(job, opts.extract ?? ollamaExtract, opts.home, abort.signal).catch(async (err) => {
+  const promise = runImport(job, opts.extract ?? ollamaExtract, opts.home, abort.signal).catch(async () => {
     if (!stopping && job.status !== 'paused') {
-      console.warn(`[Memory import] Stopped at ${job.cursor} of ${job.ids.length}: ${err instanceof Error ? err.message.slice(0, 200) : 'unknown error'}`); job.status = 'error'; job.notice = 'Import paused. Check the local model and review queue, then resume; saved progress is retained.'; await saveImport(job); }
+      console.warn('[Memory import] Stopped; review the local model and resume from saved progress.'); job.status = 'error'; job.notice = 'Import paused. Check the local model and review queue, then resume; saved progress is retained.'; await saveImport(job); }
   }).finally(async () => { await release(); workers.delete(job.id); });
   workers.set(job.id, { promise, abort });
   void promise.catch(() => { console.warn('[Memory import] Progress could not be saved; recovery checkpoint retained.'); });
