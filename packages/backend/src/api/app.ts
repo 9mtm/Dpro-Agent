@@ -1,3 +1,4 @@
+import {skillInstallRoutes} from './routes/skill-installs.js';
 import { mcpImportRoutes } from './routes/mcp-import.js';
 /**
  * Agent Player Fastify app factory.
@@ -320,6 +321,7 @@ export async function buildServer(options: BuildServerOptions = {}): Promise<Fas
   await fastify.register(pluginsRoutes); // 🔌 Plugins System
   await fastify.register(channelsRoutes); // 📱 Channels System
   await fastify.register(skillsRoutes);
+  await fastify.register(skillInstallRoutes);
   await fastify.register(mcpImportRoutes);
   await fastify.register(skillLibraryRoutes);
   await fastify.register(specialtyTemplateRoutes); // 🛠️ Skills System

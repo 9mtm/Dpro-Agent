@@ -6,13 +6,14 @@ export class SkillArtifactError extends Error{constructor(){super('Invalid skill
 export type SkillArtifactOperation=Readonly<{kind:'skill_install';version:1;source:Readonly<{provider:'anthropic-skills';commit:string;path:string}>;target:Readonly<{name:string;expectedRevision:number;previousContentHash:string|null}>;contentHash:string;byteLength:number;effect:'store-markdown-only';enabled:false}>;
 function invalid():never{throw new SkillArtifactError();}
 const hash=(value:unknown):value is string=>typeof value==='string'&&/^[a-f0-9]{64}$/.test(value);
+export const isValidSkillArtifactTarget=(value:unknown):value is string=>typeof value==='string'&&/^[a-z][a-z0-9_-]{0,63}$/.test(value)&&!/^(con|prn|aux|nul|com[1-9]|lpt[1-9])$/.test(value);
 /** Internal snapshot only: no network, filesystem, approval receipt, registration or activation. */
 export function captureSkillArtifact(input:unknown):Readonly<{operation:SkillArtifactOperation;planHash:string;content:string}>{
  const keys=['provider','commit','sourcePath','targetName','expectedRevision','previousContentHash','expectedContentHash','content'];
  if(!input||typeof input!=='object'||types.isProxy(input)||Array.isArray(input)||![Object.prototype,null].includes(Object.getPrototypeOf(input))||Object.keys(input).length!==keys.length||!keys.every(key=>Object.hasOwn(input,key)&&Object.hasOwn(Object.getOwnPropertyDescriptor(input,key)!,'value')))invalid();
  const value=input as Record<string,unknown>;
  if(value.provider!=='anthropic-skills'||typeof value.commit!=='string'||!/^[a-f0-9]{40}$/.test(value.commit)||/^0+$/.test(value.commit)||!isValidSkillSourcePath(value.sourcePath))invalid();
- if(typeof value.targetName!=='string'||!/^[a-z][a-z0-9_-]{0,63}$/.test(value.targetName)||/^(con|prn|aux|nul|com[1-9]|lpt[1-9])$/.test(value.targetName))invalid();
+ if(!isValidSkillArtifactTarget(value.targetName))invalid();
  if(typeof value.expectedRevision!=='number'||!Number.isInteger(value.expectedRevision)||value.expectedRevision<0||value.expectedRevision>2147483646||!hash(value.expectedContentHash))invalid();
  if(value.expectedRevision===0?value.previousContentHash!==null:!hash(value.previousContentHash))invalid();
  if(typeof value.content!=='string'||!value.content||value.content.length>200000||/[\x00-\x08\x0b\x0c\x0e-\x1f\x7f\u202a-\u202e\u2066-\u2069]/.test(value.content))invalid();

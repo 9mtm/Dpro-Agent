@@ -35,6 +35,7 @@ export async function stageSkillReview(context:OperationContext,actor:Actor,inpu
  const owner=capture(context,actor,now),review=prepareSkillArtifactReview(input),id=randomUUID(),expiresAt=now+300000;
  return sql().tx(function*(){
   const policyVersion=yield* active(owner),targetId=yield* target(review);
+  yield* run('DELETE FROM skill_install_reviews WHERE owner_id=? AND expires_at<=? AND NOT EXISTS (SELECT 1 FROM skill_install_events e WHERE e.review_id=skill_install_reviews.id)',owner.userId,now);
   const count=yield* one<{n:number}>('SELECT COUNT(*) AS n FROM skill_install_reviews WHERE owner_id=? AND expires_at>?',owner.userId,now);
   if(Number(count?.n??0)>=8)throw new SkillReviewStageError('limit');
   const reviewJson=JSON.stringify(review),reviewHash=digest(JSON.stringify(['skill-review-stage-v1',id,targetId,review.planHash,policyVersion,expiresAt]));
