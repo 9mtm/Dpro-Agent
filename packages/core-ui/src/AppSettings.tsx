@@ -44,7 +44,7 @@ export function AppSettings({ signedIn, preference, onTheme, onAccount, onAgents
     {!aboutOnly&&!sidebarSlot&&<select aria-label="Settings sections" value={active_} onChange={e=>choose(e.target.value as SettingsTab)}>{tabs.map(t=><option value={t.value} key={t.value}>{t.label}</option>)}</select>}</header>
     {!aboutOnly&&sidebarSlot&&active?createPortal(sidebar,sidebarSlot):null}
     <div id="settings-view-panel" aria-label={activeLabel} className="settings-content" data-pane={active_}><div className="preferences-page">
-      {active_==='schedules'&&owner&&client&&<ScheduledTasks client={client} active={active}/>}
+      {active_==='schedules'&&owner&&client&&<ScheduledTasks client={client} active={active} onOpenConnections={()=>choose('connections')}/>}
       {active_==='permissions'&&owner&&client&&<PermissionsSettings client={client} onApprovals={onApprovals??(()=>{})} onAccount={onAccount} onAgent={onAgent}/>}
       {active_==='verification'&&signedIn&&client&&<VerificationSettings client={client} onApprovals={onApprovals??(()=>{})} onBoard={onBoard??(()=>{})} onAgent={onAgent??(()=>onAgents?.())} onAccount={onAccount}/>}
       {active_==='apps'&&signedIn&&onOpenApps&&<section><p>Applications and local add-ons for this workspace.</p><button onClick={onOpenApps}>Open Apps</button></section>}

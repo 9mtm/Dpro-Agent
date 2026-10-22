@@ -22,7 +22,7 @@ test('metadata projection strips action settings and run output on both sides of
 test('page uses a searchable list and selected inspector; non-owner render sends no requests',()=>{
  const React=require('../node_modules/react'),{renderToStaticMarkup}=require('../node_modules/react-dom/server'),{ScheduledTasks,scheduleLabel}=require('../src/ScheduledTasks.tsx');
  let calls=0;const snapshot={phase:'authenticated',epoch:1,user:{role:'owner'}};const client={subscribe:()=>()=>{},getSnapshot:()=>snapshot,request:()=>{calls++;throw Error('no automatic server-render calls')}};
- const html=renderToStaticMarkup(React.createElement(ScheduledTasks,{client}));assert.match(html,/Search scheduled tasks/);assert.match(html,/Filter schedules/);assert.match(html,/Selected schedule/);assert.equal(calls,0);
- const denied=renderToStaticMarkup(React.createElement(ScheduledTasks,{client:{...client,getSnapshot:()=>({user:{role:'user'}})}}));assert.match(denied,/Only the workspace owner/);assert.doesNotMatch(denied,/Run now/);
+ const html=renderToStaticMarkup(React.createElement(ScheduledTasks,{client}));assert.match(html,/aria-label="New schedule"/);assert.match(html,/Search scheduled tasks/);assert.match(html,/Filter schedules/);assert.match(html,/Selected schedule/);assert.equal(calls,0);
+ const denied=renderToStaticMarkup(React.createElement(ScheduledTasks,{client:{...client,getSnapshot:()=>({user:{role:'user'}})}}));assert.match(denied,/Only the workspace owner/);assert.doesNotMatch(denied,/Run now|New schedule/);
  assert.equal(scheduleLabel('*/10 * * * *'),'Every 10 minutes');assert.equal(scheduleLabel('0 9 * * *'),'Daily at 09:00');assert.equal(scheduleLabel('0 9 * * 1'),'Custom schedule');
 });
