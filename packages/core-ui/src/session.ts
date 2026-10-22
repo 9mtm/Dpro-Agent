@@ -1,3 +1,4 @@
+import {tradingPaperRoute,allowedTradingPaper,tradingPaperResponse} from './trading-paper-contract.js';
 import {skillInstallRoute,allowedSkillInstall,skillInstallResponse} from './skill-install-contract.js';
 import {scheduleDefinitionRoute,allowedScheduleDefinition,scheduleDefinitionResponse} from './scheduler-definitions-contract.js';
 import {scheduleAuthorizationRoute,allowedScheduleAuthorization,scheduleAuthorizationResponse} from './scheduler-authorization-contract.js';
@@ -84,6 +85,7 @@ export function allowedRequest(method: string, path: string, body?: unknown): bo
   if(reviewerRoute(path))return allowedReviewer(method,path,body);
   if(verificationRoute(path))return allowedVerification(method,path,body);
   if(coverageRoute(path))return allowedCoverage(method,path,body);
+  if(tradingPaperRoute(path))return allowedTradingPaper(method,path,body);
   if(schedulerRoute(path))return allowedScheduler(method,path,body);
   if(sourceCatalogueRoute(path))return allowedSourceCatalogue(method,path,body);
   if(appsCatalogueRoute(path))return allowedAppsCatalogue(method,path,body);
@@ -148,6 +150,7 @@ function projectResponse(path: string, response: WireResponse): WireResponse {
   if(reviewerRoute(path))return {status:response.status,body:reviewerResponse(path,response.status,response.body)};
   if(verificationRoute(path))return {status:response.status,body:verificationResponse(path,response.status,response.body)};
   if(coverageRoute(path))return {status:response.status,body:coverageResponse(response.status,response.body)};
+  if(tradingPaperRoute(path))return {status:response.status,body:tradingPaperResponse(path,response.status,response.body)};
   if(schedulerRoute(path))return {status:response.status,body:schedulerResponse(path,response.status,response.body)};
   if(sourceCatalogueRoute(path))return {status:response.status,body:sourceCatalogueResponse(response.status,response.body)};
   if(appsCatalogueRoute(path))return {status:response.status,body:appsCatalogueResponse(response.status,response.body)};
@@ -458,6 +461,7 @@ export class SessionClient {
     if (request.path === '/api/setup/status' || request.path === OWNER_SETUP_PATH || request.path === '/api/chat' || request.path === '/api/auth/login' || request.path === '/api/auth/logout' || Object.keys(request).some(k => !['method', 'path', 'body'].includes(k))) throw new SessionFailure('blocked');
     if((verificationRoute(request.path)||reviewerRoute(request.path))&&this.#state.user?.role==='guest')throw new SessionFailure('blocked');
     if(skillInstallRoute(request.path)&&this.#state.user?.role!=='owner')throw new SessionFailure('blocked');
+    if(tradingPaperRoute(request.path)&&this.#state.user?.role!=='owner')throw new SessionFailure('blocked');
     if(scheduleDefinitionRoute(request.path)&&this.#state.user?.role!=='owner')throw new SessionFailure('blocked');
     if(scheduleAuthorizationRoute(request.path)&&this.#state.user?.role!=='owner')throw new SessionFailure('blocked');
     if(reviewerOwnerRoute(request.path)&&this.#state.user?.role!=='owner')throw new SessionFailure('blocked');
@@ -473,7 +477,7 @@ export class SessionClient {
     if (((request.method === 'POST' && request.path === '/api/agents') || grantsAgentId(request.path) || request.path === CATALOGUE_PATH || request.path === PLAN_PATH || request.path === DISTRIBUTION_PATH || request.path === BATCHES_PATH || batchPath(request.path) || permissionsAgentId(request.path) || request.path === BOARDS_PATH || request.path.startsWith(`${BOARDS_PATH}/`)) && this.#state.user?.role !== 'owner') throw new SessionFailure('blocked');
     const epoch = this.#state.epoch;
     const result = await this.#send(request.method, request.path, 'body' in request ? request.body : undefined, this.#token, epoch, signal);
-    if (epoch !== this.#state.epoch){if(skillInstallRoute(request.path)||verificationRoute(request.path)||reviewerRoute(request.path)||scheduleAuthorizationRoute(request.path)||scheduleDefinitionRoute(request.path))throw new SessionFailure('cancelled');return safeResponse(request.path,result);}
+    if (epoch !== this.#state.epoch){if(tradingPaperRoute(request.path)||skillInstallRoute(request.path)||verificationRoute(request.path)||reviewerRoute(request.path)||scheduleAuthorizationRoute(request.path)||scheduleDefinitionRoute(request.path))throw new SessionFailure('cancelled');return safeResponse(request.path,result);}
     if(verificationRoute(request.path)&&result.status===200&&request.method==='POST'&&(request.path.endsWith('/confirm')||request.path.endsWith('/disable'))){
       const projected=safeResponse(request.path,result);
       if(!record(projected.body)||projected.body.requiresSignIn!==true)throw new SessionFailure('unavailable');

@@ -1,3 +1,4 @@
+const {tradingPaperRoute,allowedTradingPaper,tradingPaperResponse}=require('../src/trading-paper-contract.js');
 const {skillInstallRoute,allowedSkillInstall,skillInstallResponse}=require('../src/skill-install-contract.js');
 const {scheduleDefinitionRoute,allowedScheduleDefinition,scheduleDefinitionResponse}=require('../src/scheduler-definitions-contract.js');
 const {scheduleAuthorizationRoute,allowedScheduleAuthorization,scheduleAuthorizationResponse}=require('../src/scheduler-authorization-contract.js');
@@ -79,6 +80,7 @@ function allowed(method, target, body) {
   if(reviewerRoute(target))return allowedReviewer(method,target,body);
   if(verificationRoute(target))return allowedVerification(method,target,body);
   if(sourceCatalogueRoute(target))return allowedSourceCatalogue(method,target,body);
+  if(tradingPaperRoute(target))return allowedTradingPaper(method,target,body);
   if(schedulerRoute(target))return allowedScheduler(method,target,body);
   if(coverageRoute(target))return allowedCoverage(method,target,body);
   if(appsCatalogueRoute(target))return allowedAppsCatalogue(method,target,body);
@@ -138,6 +140,7 @@ function project(target, status, body) {
   if(reviewerRoute(target))return reviewerResponse(target,status,body);
   if(verificationRoute(target)){const projected=verificationResponse(target,status,body);if(!projected)throw Error();return projected;}
   if(sourceCatalogueRoute(target))return sourceCatalogueResponse(status,body);
+  if(tradingPaperRoute(target))return tradingPaperResponse(target,status,body);
   if(schedulerRoute(target))return schedulerResponse(target,status,body);
   if(coverageRoute(target))return coverageResponse(status,body);
   if(appsCatalogueRoute(target))return appsCatalogueResponse(status,body);
