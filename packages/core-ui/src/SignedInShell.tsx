@@ -1,3 +1,4 @@
+import {TradingWorkspace} from './TradingWorkspace';
 import {AppsWorkspace} from './AppsWorkspace';
 import {SpecialtyLibrary} from './SpecialtyLibrary';
 import {NewChatDialog} from './NewChatDialog';
@@ -29,9 +30,9 @@ import { CommandPalette } from './CommandPalette';
 import { ChatSearchController } from './chat-search';
 import type { Command } from './CommandPalette';
 
-type Page = 'apps' | 'approvals' | 'chat' | 'genvr' | 'agents' | 'board' | 'memory' | 'skills' | 'mcp' | 'terminal' | 'account' | 'settings' | 'about' | 'specialties';
+type Page = 'trading' | 'apps' | 'approvals' | 'chat' | 'genvr' | 'agents' | 'board' | 'memory' | 'skills' | 'mcp' | 'terminal' | 'account' | 'settings' | 'about' | 'specialties';
 /** Sections that own the sidebar with their own places (the chat list shows only in Chat). */
-const OWN_SIDEBAR: ReadonlyArray<Page> = ['memory', 'settings', 'agents', 'skills', 'mcp', 'terminal','specialties','board','approvals','apps'];
+const OWN_SIDEBAR: ReadonlyArray<Page> = ['memory', 'settings', 'agents', 'skills', 'mcp', 'terminal','specialties','board','approvals','apps','trading'];
 const pages: ReadonlyArray<{ key: Page; label: string; icon: IconName | 'board' }> = [
   { key: 'chat', label: 'Chat', icon: 'message-circle' },
   { key: 'agents', label: 'Agents', icon: 'user' },
@@ -117,7 +118,7 @@ export function SignedInShell({ client, notice }: { client: SessionClient; notic
     { id: 'rail', group: 'Actions', icon:<UiIcon name="sidebar" size={14}/>, label: rail ? 'Hide the sidebar' : 'Show the sidebar', run: () => setRail(v => !v) },
   ];
   const active = chatState?.conversations.find(c => c.id === chatState.activeId);
-  const pageTitle = page === 'specialties'?'Specialties':page === 'chat' && active ? (active.title || 'Chat') : page === 'skills' ? 'Skills' : page === 'mcp' ? 'MCP connections' : page === 'terminal' ? 'Terminal' : pages.find(p => p.key === page)?.label ?? '';
+  const pageTitle = page === 'trading'?'Trading':page === 'specialties'?'Specialties':page === 'chat' && active ? (active.title || 'Chat') : page === 'skills' ? 'Skills' : page === 'mcp' ? 'MCP connections' : page === 'terminal' ? 'Terminal' : pages.find(p => p.key === page)?.label ?? '';
   const openCards = boardState?.boards.reduce((a, b) => a + b.cards, 0);
 
   const sidebarShown = rail && (page === 'chat' || ownSidebar);
@@ -170,6 +171,7 @@ export function SignedInShell({ client, notice }: { client: SessionClient; notic
         <section className="page page-ui mem-desk" hidden={page !== 'terminal'}><TerminalSection client={client} active={page === 'terminal'} slot={slot} onOpenTerminal={openTerminal}/></section>
       </>}
       <section className="page page-apps" hidden={page!=='apps'}><AppsWorkspace client={client} active={page==='apps'} sidebarSlot={slot} onOpen={id=>setPage(id)} onConnections={()=>setPage('mcp')} onChat={()=>setPage('chat')} onPermissions={()=>{setSettingsTab('permissions');setSettingsVisit(n=>n+1);setPage('settings');}}/></section>
+      {user.role==='owner'&&<section className="page page-trading" hidden={page!=='trading'}><TradingWorkspace active={page==='trading'} sidebarSlot={slot} onBack={()=>setPage('apps')}/></section>}
       <section className="page page-genvr" hidden={page !== 'genvr'}><GenVRPage key={user.id} client={client} active={page === 'genvr'}/></section>
       {(page === 'settings' || page === 'about') && <section className="page page-settings"><AppSettings onOpenApps={()=>setPage('apps')} onApprovals={()=>setPage('approvals')} onBoard={()=>setPage('board')} onAgent={id=>{setAgentFocus(f=>({id,n:(f?.n??0)+1}));setPage('agents');}} onOpenChat={()=>setPage('chat')} onOpenTool={tool=>setPage(tool)} key={settingsVisit} initialTab={settingsTab} initialMemoryPane={memoryPane} sidebarSlot={page === 'settings' ? slot : null} active={page === 'settings'} signedIn client={client} preference={appearance.preference} onTheme={appearance.setPreference} onAccount={() => setPage('account')} onAgents={() => setPage('agents')} onOpenMemory={() => setPage('memory')} aboutOnly={page === 'about'}/></section>}
       <section className="page page-scroll" hidden={page !== 'account'}><div className="page-column"><AccountPanel client={client}/></div></section>

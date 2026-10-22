@@ -1,0 +1,6 @@
+require('./load.cjs');
+const {test}=require('node:test'),assert=require('node:assert/strict');
+const React=require('../node_modules/react'),{renderToStaticMarkup}=require('../node_modules/react-dom/server');
+const {TradingWorkspace}=require('../src/TradingWorkspace.tsx');
+test('trading preview labels fictional prices/history and exposes no execution or provider controls',()=>{const html=renderToStaticMarkup(React.createElement(TradingWorkspace,{active:true,onBack(){}}));assert.match(html,/Paper · Demo data · Not live/);assert.match(html,/fictional price chart/);assert.match(html,/Search sample instruments/);assert.match(html,/Sector heatmap · illustrative/);assert.match(html,/Trading place/);assert.doesNotMatch(html,/>Buy<|>Sell<|>Start bot<|>Connect broker<|src="https?:/);});
+test('trading catalogue entry stays owner-only and is clearly a preview',()=>{const {AppsWorkspace,builtinApps}=require('../src/AppsWorkspace.tsx');assert.ok(builtinApps.some(x=>x.id==='trading'));for(const role of ['owner','user']){const client={getSnapshot:()=>({user:{role}})};const html=renderToStaticMarkup(React.createElement(AppsWorkspace,{client,active:true,onOpen(){},onConnections(){},onChat(){},onPermissions(){}}));if(role==='owner')assert.match(html,/Trading preview/);else assert.doesNotMatch(html,/Trading preview/);assert.doesNotMatch(html,/>Install</);}});
