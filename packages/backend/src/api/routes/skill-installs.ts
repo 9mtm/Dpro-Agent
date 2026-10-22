@@ -13,6 +13,7 @@ import {issueSkillInstallProof,completeSkillInstallProof} from '../../plugins/sk
 import {ReviewedSkillInstaller} from '../../plugins/skill-install-apply.js';
 import {sql,one} from '../../repositories/sql-steps.js';
 import {changePasswordRateLimit} from '../rate-limit-config.js';
+const installRateLimit={...changePasswordRateLimit,keyGenerator:(request:Parameters<typeof changePasswordRateLimit.keyGenerator>[0])=>changePasswordRateLimit.keyGenerator(request).replace('change-password-user:','skill-install-user:'),errorResponseBuilder:()=>({statusCode:429,error:'Too many installation attempts',code:'rate_limited',message:'Wait before trying to install a skill again.'})};
 const exact=(v:unknown,keys:string[]):v is Record<string,unknown>=>!!v&&typeof v==='object'&&!Array.isArray(v)&&Object.keys(v).length===keys.length&&keys.every(k=>Object.hasOwn(v,k));
 const uuid=(v:unknown):v is string=>typeof v==='string'&&/^[a-f0-9]{8}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{12}$/.test(v);
 const token=(v:unknown):v is string=>typeof v==='string'&&/^[A-Za-z0-9_-]{43}$/.test(v);
@@ -30,7 +31,7 @@ function refused(reply:FastifyReply,error:unknown){
 export async function skillInstallRoutes(app:FastifyInstance,options:{source?:Pick<PinnedSkillSource,'fetch'>;installer?:ReviewedSkillInstaller}={}){
  const source=options.source??new PinnedSkillSource(),installer=options.installer??new ReviewedSkillInstaller(),base='/api/skills/reviewed-installs';
  app.addHook('onRequest',async(_r,reply)=>{reply.header('Cache-Control','no-store');});
- app.post(base+'/stage',{config:{access:'owner',rateLimit:changePasswordRateLimit},bodyLimit:2048},async(request,reply)=>{
+ app.post(base+'/stage',{config:{access:'owner',rateLimit:installRateLimit},bodyLimit:2048},async(request,reply)=>{
   try{
    const {context,actor}=await reviewerRequestIdentity(request,true),body=request.body;
    if(Object.keys(request.query as object).length||!exact(body,['commit','sourcePath','targetName'])||typeof body.commit!=='string'||!/^[a-f0-9]{40}$/.test(body.commit)||/^0+$/.test(body.commit)||!isValidSkillSourcePath(body.sourcePath)||!isValidSkillArtifactTarget(body.targetName))return reply.code(400).send(invalid);
@@ -49,7 +50,7 @@ export async function skillInstallRoutes(app:FastifyInstance,options:{source?:Pi
  app.get(base+'/:id',{config:{access:'owner'}},async(request,reply)=>{
   try{const {context,actor}=await reviewerRequestIdentity(request,true),{id}=request.params as {id:string};if(!uuid(id)||Object.keys(request.query as object).length)return reply.code(400).send(invalid);const s=await readSkillReview(context,actor,id);return {id:s.id,expiresAt:s.expiresAt,reviewHash:s.reviewHash,operation:s.review.operation,files:s.review.bundle.files};}catch(error){return refused(reply,error);}
  });
- for(const phase of ['challenge','complete','apply'] as const)app.post(base+'/:id/'+phase,{config:{access:'owner',rateLimit:changePasswordRateLimit},bodyLimit:2048},async(request,reply)=>{
+ for(const phase of ['challenge','complete','apply'] as const)app.post(base+'/:id/'+phase,{config:{access:'owner',rateLimit:installRateLimit},bodyLimit:2048},async(request,reply)=>{
   try{
    const {context,actor}=await reviewerRequestIdentity(request,true),{id}=request.params as {id:string},body=request.body;
    if(!uuid(id)||Object.keys(request.query as object).length||!exact(body,phase==='challenge'?[]:phase==='complete'?['challenge','code']:['receipt']))return reply.code(400).send(invalid);

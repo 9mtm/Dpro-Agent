@@ -416,7 +416,7 @@ test('reviewed skill installation routes are owner-only in the registered applic
   const badOrigin=await app.inject({method:'POST',url:base+'/stage',headers:{...owner,origin:'http://untrusted.invalid'},payload:{}});assert.equal(badOrigin.statusCode,403);
   const noFactor=await app.inject({method:'POST',url:base+'/stage',headers:{...bearer('g-owner'),origin:owner.origin},payload:{}});assert.equal(noFactor.statusCode,403);
   for(let i=0;i<5;i++){const r=await app.inject({method:'POST',url:base+'/stage',headers:owner,payload:{}});assert.equal(r.statusCode,400,r.body);assert.equal(r.headers['cache-control'],'no-store');}
-  const limited=await app.inject({method:'POST',url:base+'/stage',headers:owner,payload:{}});assert.equal(limited.statusCode,429,limited.body);assert.ok(limited.headers['retry-after']);
+  const limited=await app.inject({method:'POST',url:base+'/stage',headers:owner,payload:{}});assert.equal(limited.statusCode,429,limited.body);assert.ok(limited.headers['retry-after']);assert.equal(limited.json().code,'rate_limited');assert.equal(limited.body.includes('password'),false);
   const separate=await app.inject({method:'POST',url:base+'/stage',headers:other,payload:{}});assert.equal(separate.statusCode,400,separate.body);
   const read=await app.inject({method:'GET',url:base+'/00000000-0000-4000-8000-000000000000',headers:other});assert.equal(read.statusCode,404,read.body);assert.equal(read.headers['cache-control'],'no-store');
   assert.equal(contacted,0);
