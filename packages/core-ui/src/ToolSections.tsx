@@ -1,3 +1,4 @@
+import {AvailableSkillsWorkspace} from './AvailableSkillsWorkspace';
 // Skills, MCP connections and Terminal as sections of their own (board M33
 // L3–L5): each owns the sidebar, and each lists what the computer scan found
 // for it ("Found on this computer"): skills, MCP servers, SSH hosts. Added
@@ -82,9 +83,9 @@ function Toolbar({ title, sub }: { title: string; sub?: string }) {
 
 export function SkillsSection({client,active,slot,onOpenAgents}:{client:SessionClient;active:boolean;slot?:HTMLElement|null;onOpenAgents?:()=>void}){
  const [place,setPlace]=useState('library');const c=useDiscovery(client,active&&place==='found');
- const places:Place[]=[{key:'library',icon:'file',label:'Installed skills'},{key:'import',icon:'search',label:'Import from apps'},{key:'sources',icon:'globe',label:'Publisher sources'},{key:'found',icon:'folder',label:'Found in folders',badge:fresh(c,'skill')}];
+ const places:Place[]=[{key:'library',icon:'file',label:'Installed skills'},{key:'available',icon:'download',label:'Available skills'},{key:'import',icon:'search',label:'Import from apps'},{key:'sources',icon:'globe',label:'Publisher sources'},{key:'found',icon:'folder',label:'Found in folders',badge:fresh(c,'skill')}];
  return <Section slot={slot} active={active} label="Skills" sidebar={<SectionSidebar title="Skills" places={places} current={place} onPick={setPlace}/>}>
- {place==='sources'?<PublisherSources kind="skill"/>:place==='found'?<><Toolbar title="Found in folders" sub="Skills from allowed folders"/><div className="dk-body">{c?<FoundOnComputer c={c} kind="skill"/>:null}</div></>:<SkillLibrary client={client} active={active} view={place==='import'?'discover':'installed'} onDiscover={()=>setPlace('import')} onOpenAgents={onOpenAgents}/>}
+ {place==='available'?<AvailableSkillsWorkspace client={client} active={active} onOpenLibrary={()=>setPlace('library')}/>:place==='sources'?<PublisherSources kind="skill"/>:place==='found'?<><Toolbar title="Found in folders" sub="Skills from allowed folders"/><div className="dk-body">{c?<FoundOnComputer c={c} kind="skill"/>:null}</div></>:<SkillLibrary client={client} active={active} view={place==='import'?'discover':'installed'} onDiscover={()=>setPlace('import')} onOpenAgents={onOpenAgents}/>}
  </Section>;
 }
 export function McpSection({ client, active, slot, onOpenAgents }: { client: SessionClient; active: boolean; slot?: HTMLElement | null; onOpenAgents?:()=>void }) {
