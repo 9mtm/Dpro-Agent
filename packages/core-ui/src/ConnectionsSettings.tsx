@@ -1,3 +1,4 @@
+import {UiIcon} from './ui-icons';
 import { useCallback, useEffect, useState, useSyncExternalStore } from 'react';
 import type { SessionClient } from './session';
 import type { Connection, Publication } from './connections-contract.js';
@@ -46,12 +47,11 @@ export function ConnectionsSettings({ client }: { client: SessionClient }) {
   };
   if (!owner) return <section aria-label="Connections"><h3>Connections</h3><p className="fine-print">Only the owner can see and manage connected applications.</p></section>;
   return <section aria-label="Connections" className="connections">
-    <h3>Connections</h3>
-    <p className="fine-print">Applications linked to this Dpro through your own account. Each link is approved on the application's website and can be removed here at any time. Keys stay in the encrypted key store on this computer.</p>
+
     {phase === 'loading' && <p role="status">Loading connections…</p>}
     {phase === 'error' && <p role="alert" className="error">Connections could not be loaded. <button type="button" onClick={() => void load()}>Try again</button></p>}
     {genvr && <article className="connection-card" aria-label="Genvr connection">
-      <header className="connection-head"><div><strong>Genvr</strong><p className="fine-print">3D worlds: create private drafts, publish and share worlds you own.</p></div>
+      <header className="connection-head"><span className="preference-icon"><UiIcon name="layers" size={22}/></span><div><strong>GenVR</strong><p className="fine-print">Your world account</p></div>
         <span className={`connection-state is-${genvr.status}`} role="status">{STATUS[genvr.status]}</span></header>
       {genvr.status === 'connecting' && genvr.pending && <div className="connection-pending">
         <p>Open Genvr, sign in, and approve <b>Dpro Agent</b>. Check that this code is shown there:</p>
@@ -69,8 +69,8 @@ export function ConnectionsSettings({ client }: { client: SessionClient }) {
           : <button type="button" disabled={busy} onClick={() => setConfirmOff(true)}>Disconnect</button>)}
       </div>
       {notice && <p role="alert" className="error">{notice}</p>}
-      {genvr.status === 'connected' && <TestPublication send={send}/>}
-    </article>}
+      {genvr.status === 'connected' && <details className="preference-help"><summary>Test world publication</summary><TestPublication send={send}/></details>}
+    </article>}<details className="preference-help"><summary>How account connections work</summary><p>Approve each link on the provider website. Credentials stay in the encrypted key store. Disconnecting removes the link from this workspace.</p></details>
   </section>;
 }
 

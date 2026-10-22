@@ -1,3 +1,4 @@
+import {teamResources} from '../../services/team-resources.js';
 import { COMPANY_SPECIALTIES } from '../../services/company-specialties.js';
 /**
  * Company setup: team catalogue and team proposal (ONBOARD-TEAM-01). Owner
@@ -36,6 +37,10 @@ const owner = (request: FastifyRequest, reply: FastifyReply) => authorizeActiveR
 export async function teamPlanRoutes(fastify: FastifyInstance) {
   const config = { access: 'owner' as const };
 
+  fastify.post('/api/onboarding/team-resources',{config,bodyLimit:60000},async(request,reply)=>{
+    if(owner(request,reply)===null)return reply;
+    try{if(!request.body||typeof request.body!=='object'||Array.isArray(request.body))throw new CompanyPlanInputError('Invalid plan');return await teamResources(request.body as Record<string,unknown>);}catch(err){if(err instanceof CompanyPlanInputError)return reply.code(400).send({code:'invalid_plan'});return reply.code(503).send({code:'resources_unavailable'});}
+  });
   fastify.get('/api/onboarding/team-catalogue', { config }, async (request, reply) => {
     if (owner(request, reply) === null) return reply;
     return {

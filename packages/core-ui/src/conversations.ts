@@ -110,6 +110,7 @@ export class ConversationsController {
   attach(files: readonly { name: string; text: string }[]): string | null {
     const next = [...this.#state.attachments];
     for (const f of files) {
+      if(next.some(x=>x.name===f.name.slice(0,120)))return `${f.name} is already attached. Remove it before adding another file with the same name.`;
       if (f.text.length > ATTACH_FILE_CHARS) return `${f.name} is too big (more than ${ATTACH_FILE_CHARS / 1000}k characters).`;
       if (/\u0000/.test(f.text)) return `${f.name} is not a text file.`;
       next.push({ name: f.name.slice(0, 120), text: f.text });

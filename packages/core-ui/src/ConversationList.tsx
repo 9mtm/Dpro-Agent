@@ -50,11 +50,11 @@ export function ConversationList({ controller, onOpen, search }: { controller: C
     onOpen={() => { void controller.open(c.id); onOpen(); }} controller={controller}/>;
   return <div className="conversations">
     <div className="conversation-controls">{picker}
-    <input className="conversation-filter" type="search" placeholder={search ? 'Search chats' : 'Filter conversations'} aria-label={search ? 'Search chats' : 'Filter conversations'} value={query}
-      maxLength={400} onChange={e => type(e.target.value)} onKeyDown={e => { if (e.key === 'Escape' && query) { e.preventDefault(); type(''); } }}/></div>
+    <label className="conversation-search"><UiIcon name="search" size={13}/><input className="conversation-filter" type="search" placeholder={search ? 'Search chats' : 'Filter conversations'} aria-label={search ? 'Search chats' : 'Filter conversations'} value={query}
+      maxLength={400} onChange={e => type(e.target.value)} onKeyDown={e => { if (e.key === 'Escape' && query) { e.preventDefault(); type(''); } }}/></label></div>
     {searching ? <SearchResults state={found} projectName={projectName} onOpen={openHit}/> : <>
       {pinned.length > 0 && <><p className="conversation-group">Pinned</p>{pinned.map(row)}</>}
-      {dateGroups(recent).map(([label, items]) => <div key={label}><p className="conversation-group">{label}</p>{items.map(row)}</div>)}
+      {dateGroups(recent).map(([label, items]) => <details key={label} className="chat-date-group" open><summary><UiIcon name="chevron" size={11}/>{label}</summary>{items.map(row)}</details>)}
       {rows.length === 0 && <p className="session-empty">{q ? 'No match.' : 'No conversations in this project yet.'}</p>}
     </>}
   </div>;
@@ -72,7 +72,7 @@ function Row({ c, active, running, onOpen, controller }: { c: Conversation; acti
   </form>;
   return <div className="session-row" aria-current={active ? 'true' : undefined} data-menu={menu || confirm || undefined}>
     <button type="button" className="session-open" onClick={onOpen} title={title}>
-      <span className="dot" data-running={running || undefined} aria-hidden="true"/>
+      <span className="session-kind" data-running={running||undefined}><UiIcon name="message" size={13}/></span>
       <span className="session-title" dir="auto">{title}</span>
     </button>
     {confirm
@@ -134,7 +134,7 @@ function ProjectPicker({ controller }: { controller: ConversationsController }) 
       {s.projects.map(p => <option key={p.id} value={p.id}>{p.name}</option>)}
       <option value="__new">+ New project…</option>
     </select>
-    <button type="button" className="link-button project-general" title="Start a general chat without a project folder" aria-label="New general chat" onClick={()=>{ controller.filterProject(''); controller.newChat(); }}>General chat</button>
+    <button type="button" className="link-button project-general" title="Start a general chat without a project folder" aria-label="New general chat" onClick={()=>{ controller.filterProject(''); controller.newChat(); }}><UiIcon name="message" size={12}/>General chat</button>
     {current && <button type="button" className="row-tool" aria-label={`Edit project ${current.name}`} title="Rename, change folder or repo, or delete"
       onClick={() => { setForm({ name: current.name, folder: current.folder ?? '', repoUrl: current.repoUrl ?? '' }); setEditing(current.id); }}><UiIcon name="pencil" size={12}/></button>}
   </div>;

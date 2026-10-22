@@ -16,3 +16,21 @@ test('settings and agent skill views show honest unassigned loading states',()=>
  const html=renderToStaticMarkup(React.createElement(SkillLibrary,{client:{}}));assert.match(html,/Scan local skills/);assert.match(html,/Loading skills/);assert.doesNotMatch(html,/dangerouslySetInnerHTML/);
  const agent=renderToStaticMarkup(React.createElement(AgentSkills,{client:{},agentId:'main-agent'}));assert.match(agent,/Assigned skills/);assert.match(agent,/Tool and MCP permissions stay separate/);assert.match(agent,/Loading skills/);
 });
+
+test('installed document route exposes only verified Markdown data with no mutation shape',()=>{
+ const path=SKILLS_PATH+'/items/'+id;
+ assert.ok(allowed('GET',path));assert.ok(allowedRequest('GET',path));
+ for(const method of ['POST','PUT','DELETE'])assert.equal(allowed(method,path,{}),false);
+ assert.equal(allowed('GET',SKILLS_PATH+'/items/../../secrets'),false);
+ const row={id,name:'example',description:'Test',version:'1',revision:1,content_hash:hash,origin:'bundled'};
+ const result=skillLibraryResponse(path,200,{skill:row,files:[{path:'SKILL.md',content:'# Instructions',directory:'/private',secret:'hidden'}],directory:'/private'});
+ assert.deepEqual(result,{skill:row,files:[{path:'SKILL.md',content:'# Instructions'}]});
+ for(const file of ['../secret.md','/secret.md','run.sh'])assert.throws(()=>skillLibraryResponse(path,200,{skill:row,files:[{path:file,content:'x'}]}));
+});
+test('desktop skill viewer uses a single list inspector and labels read-only files honestly',()=>{
+ const React=require('../node_modules/react'),{renderToStaticMarkup}=require('../node_modules/react-dom/server'),{SkillsWorkspace}=require('../src/SkillsWorkspace.tsx'),{DocumentEditor}=require('../src/DocumentEditor.tsx');
+ const html=renderToStaticMarkup(React.createElement(SkillsWorkspace,{client:{}}));
+ assert.match(html,/Loading skills/);assert.match(html,/Selected skill/);assert.doesNotMatch(html,/role="tablist"|catalogue-grid|textarea/);
+ const document=renderToStaticMarkup(React.createElement(DocumentEditor,{title:'Example',files:[{id:'SKILL.md',name:'SKILL.md',content:'# Example',readOnly:true}],onChange(){},onClose(){}}));
+ assert.match(document,/Read-only/);assert.match(document,/aria-readonly="true"/);assert.doesNotMatch(document,/Draft saved in this editor/);
+});

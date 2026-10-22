@@ -1,3 +1,4 @@
+import {specialtyLibraryTool,specialtyApplyTool} from './specialties.js';
 /**
  * Tools System - Main Export
  *
@@ -113,6 +114,7 @@ const extensionTools: Tool[] = [];
 
 /** Built-in tools, in registration order. */
 const CORE_TOOLS: Tool[] = [
+  specialtyLibraryTool, specialtyApplyTool,
   execTool, readTool, writeTool, webFetchTool, executeCodeTool,
   browserNavigateTool, browserScreenshotTool, browserExtractTool, browserInteractTool,
   memorySaveTool, memorySearchTool, memoryReflectTool, memoryStatsTool, memoryEditTool, memoryDeleteTool, memoryForgetTool, memoryGraphTool,

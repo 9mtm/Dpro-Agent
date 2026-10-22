@@ -123,3 +123,11 @@ test('build disables Vite env loading and injects only the parsed compile consta
   assert.match(source, /__LIVE_ENTRY_CANDIDATE__: JSON.stringify\(entryMode === 'live-candidate'\)/);
   assert.doesNotMatch(source, /process\.env|loadEnv/);
 });
+
+test('packaged logo GIF stays integrity-checked and serves only from the manifest',()=>{
+ const root=fs.mkdtempSync(path.join(os.tmpdir(),'core-ui-logo-'));
+ const pending=beginBuild(root,'candidate','fictional');fs.mkdirSync(path.join(pending.output,'assets'));
+ for(const [name,data] of [['index.html','<meta name="core-ui-entry" content="fictional">'],['THIRD_PARTY_NOTICES.txt','fixture'],['assets/a.js','void 0;'],['assets/a.css','body{}'],['assets/dpro-startup-verified.gif','GIF89a']])fs.writeFileSync(path.join(pending.output,name),data);
+ completeBuild(root,pending.buildId,'candidate');assert.equal(readCurrent(root,'candidate').files.get('assets/dpro-startup-verified.gif').toString(),'GIF89a');
+ fs.writeFileSync(path.join(pending.output,'assets/dpro-startup-verified.gif'),'changed');assert.throws(()=>readCurrent(root,'candidate'),/integrity mismatch/);
+});

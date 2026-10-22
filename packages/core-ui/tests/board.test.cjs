@@ -97,7 +97,7 @@ test('offline: open, add cards, edit in the panel, move, comment, archive', asyn
   s = b.getSnapshot();
   assert.equal(s.open, undefined); assert.ok(!s.cards.some(c => c.id === banner.id));
   html = markup(b);
-  for (const label of ['Search cards', 'All agents', 'All departments', 'Add column', '+ Add a card']) assert.match(html, new RegExp(label.replace('+', '\\+')));
+  for (const label of ['Search cards', 'Filter tasks', 'Board actions', 'New task', 'Add task']) assert.match(html, new RegExp(label.replace('+', '\\+')));
 });
 
 test('a stale card shows the latest version; nothing is sent for an unchanged card', async t => {
@@ -169,7 +169,7 @@ test('offline: create department and shared boards from templates, switch, edit 
   s = b.getSnapshot();
   assert.equal(s.meta.kind, 'shared'); assert.equal(s.boards.length, 3);
   const html = markup(b);
-  for (const label of ['Whole company', 'marketing', 'Shared by departments', '\\+ New board', 'Board settings']) assert.match(html, new RegExp(label));
+  for (const label of ['Whole company', 'marketing', 'Shared by departments', 'New board', 'Board actions']) assert.match(html, new RegExp(label));
   // Switch back to the company board.
   await b.openBoard(s.boards.find(x => x.name === 'Company board').id);
   assert.equal(b.getSnapshot().meta.name, 'Company board');
@@ -220,4 +220,41 @@ test('richer cards: type, dates, cover, labels and checklist from the panel', as
     assert.equal(allow('PUT', '/api/boards/b1/cards/k1/checklist/i1', { remove: false }), false);
     assert.equal(allow('DELETE', '/api/boards/b1/cards/k1/checklist/i1', undefined), false);
   }
+});
+
+test('desktop task draft is not silently lost when another card or board is opened',async t=>{
+ const {b}=await fixture(t);await b.load();const column=b.getSnapshot().columns[0].id;
+ await b.addCard(column,'First draft task');await b.addCard(column,'Second draft task');
+ assert.equal(b.getSnapshot().boards.find(x=>x.id===b.getSnapshot().boardId).cards,2);
+ const [first,second]=b.getSnapshot().cards;
+ await b.openCard(first.id);b.editDraft({description:'Unsaved acceptance criteria'});
+ assert.equal(b.hasUnsavedDraft(),true);await b.openCard(second.id);
+ assert.equal(b.getSnapshot().open,first.id);assert.equal(b.getSnapshot().draft.description,'Unsaved acceptance criteria');
+ assert.match(b.getSnapshot().notice,/Save or close/);
+ assert.equal(await b.createBoard({name:'Would lose draft',template:b.getSnapshot().templates[0].id,color:'blue',departments:[]}),false);
+ assert.equal(await b.saveCard(),true);assert.equal(b.hasUnsavedDraft(),false);
+ await b.openCard(second.id);assert.equal(b.getSnapshot().open,second.id);
+ assert.equal(b.commentAuthor('user','another-user'),'Team member');
+ const html=markup(b);assert.match(html,/Comments/);assert.match(html,/Write a comment/);assert.match(html,/Save changes/);assert.doesNotMatch(html,/<textarea/);
+});
+
+test('board timestamps preserve UTC instants across legacy and repeated bridge projections',()=>{
+ const path='/api/boards/b1/cards/k1/comments';
+ for(const [input,expected] of [['2026-10-22 10:30:00','2026-10-22T10:30:00.000Z'],['2026-10-22T12:30:00+02:00','2026-10-22T10:30:00.000Z']]){
+  const result=boardResponse(path,200,{comments:[{id:'note-1',authorKind:'user',authorId:'owner',body:'Review update',createdAt:input}]});
+  assert.equal(result.comments[0].createdAt,expected);assert.deepEqual(boardResponse(path,200,result),result);
+ }
+});
+
+test('department provisioning and overview routes accept only reviewed requests and canonical references',()=>{
+ for(const allow of [allowedRequest,allowed]){
+  assert.equal(allow('POST','/api/boards/sync-departments',{}),true);
+  assert.equal(allow('POST','/api/boards/sync-departments',{departments:['fake']}),false);
+  assert.equal(allow('GET','/api/boards/sync-departments',undefined),false);
+  assert.equal(allow('GET','/api/boards/b1/overview',undefined),true);
+  assert.equal(allow('POST','/api/boards/b1/overview',{}),false);
+ }
+ const path='/api/boards/b1/overview',body={tasks:[{cardId:'k1',boardId:'source-board',boardName:'Education',title:'Teach',status:'Preparing',priority:'normal',dueDate:null,secret:'hidden'}],total:1,limited:false};
+ const view=boardResponse(path,200,body);assert.equal(view.tasks[0].boardId,'source-board');assert.ok(!JSON.stringify(view).includes('hidden'));assert.deepEqual(boardResponse(path,200,view),view);
+ assert.throws(()=>boardResponse(path,200,{...body,tasks:[...body.tasks,...body.tasks],total:2}));
 });

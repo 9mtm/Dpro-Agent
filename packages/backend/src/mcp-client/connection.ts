@@ -101,6 +101,7 @@ interface Live {
   key: string;
   client: Promise<Client>;
   idle?: NodeJS.Timeout;
+  connected?: boolean;
 }
 
 const live = new Map<string, Live>();
@@ -158,18 +159,21 @@ async function getClient(row: McpServerRow): Promise<Client> {
   const entry: Live = { key, client: openClient(row, secrets) };
   live.set(row.id, entry);
   entry.client.then((c) => {
+    entry.connected = true;
     c.onclose = () => { if (live.get(row.id) === entry) live.delete(row.id); };
   }, () => { if (live.get(row.id) === entry) live.delete(row.id); });
   touch(row.id, entry);
   return entry.client;
 }
 
+export function connectionState(serverId:string):'connected'|'connecting'|'disconnected'{const entry=live.get(serverId);return !entry?'disconnected':entry.connected?'connected':'connecting';}
+
 export async function closeConnection(serverId: string): Promise<void> {
   const entry = live.get(serverId);
   if (!entry) return;
   live.delete(serverId);
   if (entry.idle) clearTimeout(entry.idle);
-  try { (await entry.client).close(); } catch { /* already gone */ }
+  try { await (await entry.client).close(); } catch { /* already gone */ }
 }
 
 export async function closeAllConnections(): Promise<void> {

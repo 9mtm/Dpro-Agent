@@ -1,0 +1,27 @@
+import test from 'node:test';
+import assert from 'node:assert/strict';
+import fs from 'node:fs';
+import os from 'node:os';
+import path from 'node:path';
+import {randomBytes} from 'node:crypto';
+const root=fs.mkdtempSync(path.join(os.tmpdir(),'dpro-scheduler-workspace-'));
+process.env.AGENT_PLAYER_DATA_DIR=root;process.env.DATABASE_PATH=path.join(root,'test.db');process.env.JWT_SECRET=randomBytes(64).toString('hex');process.env.ENCRYPTION_KEY=randomBytes(32).toString('hex');process.env.AGENT_PLAYER_BACKGROUND='off';
+const {getDatabase,closeDatabase}=await import('../src/db/database.ts');const db=getDatabase();await db.initialize();
+for(const [id,role] of [['schedule-owner','owner'],['schedule-member','user'],['schedule-admin','admin']])db.prepare("INSERT INTO users(id,email,username,password_hash,role,status) VALUES(?,?,?,'fixture',?,'active')").run(id,id+'@example.invalid',id,role);
+const {getCronEngine}=await import('../src/scheduler/engine.ts'),{insertJob}=await import('../src/scheduler/store.ts');const engine=getCronEngine();
+const job={id:'fixture-schedule',name:'Fictional scheduled job',cronExpression:'0 9 * * *',actionType:'memory-job',actionData:{userId:'schedule-owner',job:'weekly-summary'},enabled:false,createdAt:new Date(),updatedAt:new Date()};await insertJob(job);engine.scheduleJob(job);
+let executions=0;const execute=engine.executeJob.bind(engine);engine.executeJob=async()=>{executions++;return {success:true,output:'fixture',duration:1};};
+const {default:Fastify}=await import('fastify'),{registerAuthGate}=await import('../src/auth/auth-gate.ts'),{schedulerRoutes}=await import('../src/api/routes/scheduler.ts'),{generateToken}=await import('../src/auth/jwt.ts');
+const app=Fastify();registerAuthGate(app);await app.register(schedulerRoutes);await app.ready();
+const call=(method,suffix='',user='schedule-owner')=>app.inject({method,url:'/api/scheduler/jobs'+suffix,headers:user?{authorization:'Bearer '+generateToken(user,1)}:{},...(method==='POST'?{payload:{}}:{})});
+test.after(async()=>{engine.executeJob=execute;await engine.stop();await app.close();closeDatabase();fs.rmSync(root,{recursive:true,force:true});});
+test('scheduler owner controls preserve auth gates and durable state without executing on read',async()=>{
+ assert.equal((await call('GET','',null)).statusCode,401);assert.equal((await call('GET','','schedule-member')).statusCode,403);
+ const list=await call('GET');assert.equal(list.statusCode,200);assert.ok(list.json().jobs.some(x=>x.id===job.id));assert.equal(list.json().jobs.find(x=>x.id===job.id).responsibility,'Memory for schedule-owner');
+ assert.equal((await call('GET','/'+job.id)).statusCode,200);assert.equal((await call('GET','/'+job.id+'/history')).statusCode,200);assert.equal(executions,0);
+ for(const user of ['schedule-member','schedule-admin'])for(const operation of ['enable','disable','execute'])assert.equal((await call('POST','/'+job.id+'/'+operation,user)).statusCode,403);
+ assert.equal(executions,0);
+ assert.equal((await call('POST','/'+job.id+'/enable')).statusCode,200);assert.equal(db.prepare('SELECT enabled FROM cron_jobs WHERE id=?').get(job.id).enabled,1);
+ assert.equal((await call('POST','/'+job.id+'/disable')).statusCode,200);assert.equal(db.prepare('SELECT enabled FROM cron_jobs WHERE id=?').get(job.id).enabled,0);assert.equal(executions,0);
+ assert.equal((await call('POST','/'+job.id+'/execute')).statusCode,200);assert.equal(executions,1);
+});

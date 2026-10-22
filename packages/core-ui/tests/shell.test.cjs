@@ -139,6 +139,21 @@ test('source boundary: only injected session transport may network; no browser s
     // dev-session-keep.ts alone may use session storage, and only for the local test build.
     if (name === 'dev-session-keep.ts') assert.doesNotMatch(source, /\b(XMLHttpRequest|WebSocket|EventSource|localStorage|indexedDB|dangerouslySetInnerHTML)\b|document\.cookie/, name);
     else assert.doesNotMatch(source, /\b(XMLHttpRequest|WebSocket|EventSource|localStorage|sessionStorage|indexedDB|dangerouslySetInnerHTML)\b|document\.cookie/, name);
+    if (name === 'PublisherSources.tsx') {
+      // Fixed publisher navigation links are user-opened anchors, never transport targets.
+      const urls = source.match(/https:\/\/[^']+/g) ?? [];
+      assert.deepEqual(urls, [
+        'https://registry.modelcontextprotocol.io/',
+        'https://support.claude.com/en/articles/11176164-use-connectors-to-extend-claude-s-capabilities',
+        'https://github.com/modelcontextprotocol/servers',
+        'https://github.com/anthropics/skills',
+        'https://github.com/openai/plugins',
+        'https://agentskills.io/home',
+      ]);
+      assert.match(source, /href=\{current.url\}/);
+      assert.match(source, /rel="noopener noreferrer"/);
+      source = source.replace(/https:\/\/[^']+/g, 'publisher-source');
+    }
     if (name === 'entry-client.ts') assertEntryBinding(source);
     else if (name !== 'session.ts') assert.doesNotMatch(source, /\bfetch\b|https?:\/\//, name);
     else { assert.match(source, /fetcher: typeof fetch/); assert.doesNotMatch(source, /\bfetch\s*\(/); }

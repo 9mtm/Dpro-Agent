@@ -1,3 +1,5 @@
+import {securityCoverageRoutes} from './routes/security-coverage.js';
+import {chatAddonsRoutes} from './routes/chat-addons.js';
 import { mcpImportRoutes } from './routes/mcp-import.js';
 /**
  * Agent Player Fastify app factory.
@@ -300,6 +302,8 @@ export async function buildServer(options: BuildServerOptions = {}): Promise<Fas
   await fastify.register(workflowRoutes); // ⚡ Workflow Builder
   await fastify.register(sessionsRoutes);
   await fastify.register(modelsRoutes);
+  await fastify.register(securityCoverageRoutes);
+  await fastify.register(chatAddonsRoutes,{home:process.env.DPRO_ADDON_METADATA_HOME});
   await fastify.register(chatRoutes);
   await fastify.register(chatConversationRoutes); // saved conversations + resumable runs (CHAT-REBUILD-01)
   await fastify.register(agentHandoffRoutes); // CORE-MEM-HANDOFF: the agents' handoff notes (owner only)

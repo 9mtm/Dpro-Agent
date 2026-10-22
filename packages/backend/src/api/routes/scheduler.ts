@@ -1,3 +1,4 @@
+import {q} from '../../repositories/sql-steps.js';
 import { safeConsole } from '../../services/safe-error-log.js';
 /**
  * Scheduler API Routes
@@ -13,6 +14,19 @@ import { deleteJob, insertJob, jobHistory, setJobEnabled, updateJobDefinition } 
 import type { CronJob, CronActionType, CronActionData } from '../../scheduler/types.js';
 import { handleError } from '../error-handler.js';
 
+async function responsibility(job:CronJob):Promise<string>{
+ const data=job.actionData as unknown as Record<string,unknown>;
+ if(job.actionType==='memory-job'&&typeof data.userId==='string'){
+  const row=await q.one<{name:string}>('SELECT username AS name FROM users WHERE id=?',data.userId);
+  return row?`Memory for ${row.name}`:'Workspace service';
+ }
+ if(job.actionType==='evolve-agent'&&typeof data.agentId==='string'){
+  const row=await q.one<{name:string}>('SELECT name FROM agents_config WHERE id=?',data.agentId);
+  return row?`Agent: ${row.name}`:'Workspace service';
+ }
+ return 'Workspace service';
+}
+
 export async function schedulerRoutes(fastify: FastifyInstance) {
   const cronEngine = getCronEngine();
   const jobQueue = getJobQueue();
@@ -24,16 +38,17 @@ export async function schedulerRoutes(fastify: FastifyInstance) {
 
       return {
         success: true,
-        jobs: jobs.map((job) => ({
+        jobs: await Promise.all(jobs.map(async (job) => ({
           id: job.id,
           name: job.name,
           description: job.description,
           cronExpression: job.cronExpression,
           actionType: job.actionType,
+          responsibility: await responsibility(job),
           enabled: job.enabled,
           lastRun: job.lastRun,
           nextRun: job.nextRun,
-        })),
+        }))),
         stats: {
           total: jobs.length,
           enabled: jobs.filter((j) => j.enabled).length,
@@ -64,7 +79,7 @@ export async function schedulerRoutes(fastify: FastifyInstance) {
 
         return {
           success: true,
-          job,
+          job: {...job,responsibility:await responsibility(job)},
         };
       } catch (error: any) {
         console.error('[Scheduler API] ❌ Get job failed:', error);

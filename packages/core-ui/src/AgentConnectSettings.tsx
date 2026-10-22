@@ -1,3 +1,5 @@
+import {DocumentEditor} from './DocumentEditor';
+import {UiIcon} from './ui-icons';
 import { useEffect, useState, useSyncExternalStore } from 'react';
 import type { SessionClient } from './session';
 import type { ChannelEntry } from './agent-connect-contract.js';
@@ -14,6 +16,8 @@ export function AgentConnectSettings({ client }: { client: SessionClient }) {
   const [configurable, setConfigurable] = useState(false), [busy, setBusy] = useState(false), [notice, setNotice] = useState('');
   const [users, setUsers] = useState(''), [conversations, setConversations] = useState('');
   const [environment, setEnvironment] = useState<Record<string, string>>({}), [extraEnv, setExtraEnv] = useState(''), [settings, setSettings] = useState('');
+  const [query,setQuery]=useState(''),[view,setView]=useState<'credentials'|'access'|'advanced'>('credentials');
+  const [editor,setEditor]=useState<'environment'|'settings'|null>(null);
   const current = channels.find(c => c.id === selected);
   useEffect(() => {
     if (!owner) return; let disposed = false;
@@ -26,7 +30,7 @@ export function AgentConnectSettings({ client }: { client: SessionClient }) {
   }, [client, owner]);
   useEffect(() => {
     setUsers(current?.allowedUsers.join(', ') ?? ''); setConversations(current?.allowedChannels.join(', ') ?? '');
-    setEnvironment({}); setExtraEnv(''); setSettings(''); setNotice('');
+    setEnvironment({}); setExtraEnv(''); setSettings(''); setNotice('');setEditor(null);
   }, [selected]);
   async function save() {
     if (!current || busy) return;
@@ -72,30 +76,13 @@ export function AgentConnectSettings({ client }: { client: SessionClient }) {
     return () => { disposed = true; clearInterval(timer); };
   }, [client, owner]);
   if (!owner) return null;
-  return <section aria-label="Channels"><h2>Channels</h2>
-    <p className="fine-print">Messaging, email, webhooks, APIs and relays from agent-connect-dpro. Saving settings does not enable an extension, start a provider, install dependencies or send messages.</p>
-    {phase === 'loading' ? <p role="status">Loading integrations…</p> : phase === 'error' ? <p role="alert">Integrations could not be loaded. Reopen settings to try again.</p> : <>
-      <div className="channel-status-list" aria-label="Channel activation and status">{channels.filter(c => c.configured).map(c => <div className="app-settings-row" key={c.id}>
-        <span><strong>{c.label}</strong><span className="fine-print" role="status"> · {c.state === 'restart_required' ? 'Restart application required' : c.state}</span></span>
-        <button type="button" disabled={busy || !configurable} onClick={() => void activate(c)} aria-label={`${c.enabled ? 'Disable' : 'Enable'} ${c.label}`}>{c.enabled ? 'Disable' : 'Enable'}</button>
-      </div>)}</div>
-      {notice && <p role="status">{notice}</p>}
-      <ChannelCatalogSelect channels={channels} selected={selected} busy={busy} onSelect={select}/>
-      {!configurable && <p role="status">Channel extensions currently require the SQLite workspace. Configuration is unavailable for this database type.</p>}
-      {current && <form className="channel-configuration" aria-label={`${current.label} configuration`} onSubmit={e => { e.preventDefault(); void save(); }}>
-        <h3>{current.label}</h3>
-        {!current.configured && <div className="app-settings-row"><span className="fine-print">Not configured. Save credentials before enabling.</span><button type="button" disabled>Enable {current.label}</button></div>}
-        <p className="fine-print">{current.runtime === 'node' ? 'Native Node.js transport.' : 'Optional Python 3.11–3.13 runtime required.'} {current.prerequisites}</p>
-        <p className="fine-print">{current.enabled ? 'Channel is enabled.' : 'Channel is disabled. Save configuration before enabling.'} Real-account delivery has not been verified here.</p>
-        <p className="fine-print">Provider setup guide: Agent Connect repository → docs/CHANNELS.md.</p>
-        {current.requiredEnv.map(key => <label className="field" key={key}><span>{key}</span><input type="password" autoComplete="off" aria-label={key} maxLength={16384} value={environment[key] ?? ''} placeholder={current.hasSecrets ? 'Saved credentials stay hidden; leave empty to keep' : 'Enter provider value'} onChange={e => setEnvironment(values => ({ ...values, [key]: e.target.value }))}/></label>)}
-        <label className="field"><span>Trusted sender IDs (comma separated)</span><input aria-label="Trusted sender IDs" value={users} maxLength={20000} onChange={e => setUsers(e.target.value)}/></label>
-        <label className="field"><span>Permitted conversation IDs (comma separated)</span><input aria-label="Permitted conversation IDs" value={conversations} maxLength={20000} onChange={e => setConversations(e.target.value)}/></label>
-        {current.runtime === 'python' && <details><summary>Provider settings and additional variables</summary><p className="fine-print">Write-only JSON objects. Leave empty to preserve saved values. Runtime executables, local paths and interpreter variables cannot be configured here.</p><label className="field"><span>Additional provider variables (JSON)</span><textarea aria-label="Additional provider variables" value={extraEnv} maxLength={32768} onChange={e => setExtraEnv(e.target.value)} spellCheck={false}/></label><label className="field"><span>Provider settings (JSON)</span><textarea aria-label="Provider settings" value={settings} maxLength={32768} onChange={e => setSettings(e.target.value)} spellCheck={false}/></label></details>}
-        <p className="fine-print">Automatic replies are off for new configurations. Sender and conversation restrictions remain enforced by the host.</p>
-        <button type="submit" disabled={busy || !configurable}>{busy ? 'Saving…' : 'Save configuration'}</button>
-        {notice && <p role="status">{notice}</p>}
-      </form>}
-    </>}
-  </section>;
+  return <section aria-label="Channels" className="channels-settings"><div className="channel-workspace"><div className="channel-service-list"><label className="channel-service-search"><UiIcon name="search" size={14}/><input type="search" aria-label="Find messaging service" placeholder="Find service" value={query} onChange={e=>setQuery(e.target.value)}/></label>{phase==='loading'?<p role="status">Reading services…</p>:phase==='error'?<p role="alert">Services could not be loaded. Reopen settings to retry.</p>:<div role="listbox" aria-label="Messaging services">{channels.filter(c=>c.label.toLowerCase().includes(query.toLowerCase())).map(c=><button type="button" role="option" aria-selected={selected===c.id} disabled={busy} key={c.id} onClick={()=>select(c.id)}><UiIcon name="message" size={17}/><span><strong>{c.label}</strong><small>{c.configured?(c.enabled?'Enabled':'Disabled'):'Not configured'}</small></span></button>)}</div>}</div><div className="channel-detail-pane"><div className="channel-select-fallback"><ChannelCatalogSelect channels={channels} selected={selected} busy={busy} onSelect={select}/></div>
+ {notice&&<p role="status" className="preference-notice">{notice}</p>}{!configurable&&phase==='ready'&&<p role="status">Channel configuration requires a SQLite workspace.</p>}
+ {current?<form className="channel-configuration" aria-label={`${current.label} configuration`} onSubmit={e=>{e.preventDefault();void save();}}><header className="channel-service-head"><span className="preference-icon"><UiIcon name="message" size={22}/></span><div><h3>{current.label}</h3><p>{current.state==='restart_required'?'Restart required':current.state} · {current.runtime==='node'?'Built-in transport':'Python runtime'}</p></div><button type="button" title={`${current.enabled?'Disable':'Enable'} ${current.label}`} aria-label={`${current.enabled?'Disable':'Enable'} ${current.label}`} disabled={busy||!configurable||(!current.configured&&!current.enabled)} onClick={()=>void activate(current)}><UiIcon name="power" size={17}/>{current.enabled?'Disable':'Enable'}</button></header>
+ <div className="preference-views" role="group" aria-label="Service settings">{(['credentials','access','advanced'] as const).map(v=><button type="button" key={v} aria-pressed={view===v} onClick={()=>setView(v)}>{v==='credentials'?'Credentials':v==='access'?'Sender access':'Advanced'}</button>)}</div>
+ {view==='credentials'&&<div className="preference-group channel-form-group">{current.requiredEnv.length?current.requiredEnv.map(key=><label className="channel-field" key={key}><span>{key}</span><input type="password" autoComplete="off" aria-label={key} maxLength={16384} value={environment[key]??''} placeholder={current.hasSecrets?'Leave empty to keep saved value':'Enter provider value'} onChange={e=>setEnvironment(values=>({...values,[key]:e.target.value}))}/></label>):<p>This service uses provider settings instead of credential fields.</p>}<p className="preference-note">Saved credentials stay hidden. Saving does not start a connection.</p></div>}
+ {view==='access'&&<div className="preference-group channel-form-group"><label className="channel-field"><span>Trusted sender IDs</span><input aria-label="Trusted sender IDs" value={users} maxLength={20000} onChange={e=>setUsers(e.target.value)}/><small>Separate IDs with commas.</small></label><label className="channel-field"><span>Permitted conversation IDs</span><input aria-label="Permitted conversation IDs" value={conversations} maxLength={20000} onChange={e=>setConversations(e.target.value)}/><small>Only these conversations may use this connection.</small></label><p className="preference-note">Automatic replies are off for new configurations.</p></div>}
+ {view==='advanced'&&<><div className="preference-group channel-form-group"><div className="channel-document-row"><div><strong>Additional provider variables</strong><small>{extraEnv.trim()?'Draft entered':'Saved values stay hidden'}</small></div><button type="button" disabled={busy} onClick={()=>setEditor('environment')}><UiIcon name="pencil" size={14}/>Edit</button></div>{current.runtime==='python'&&<div className="channel-document-row"><div><strong>Provider settings</strong><small>{settings.trim()?'Draft entered':'JSON object'}</small></div><button type="button" disabled={busy} onClick={()=>setEditor('settings')}><UiIcon name="pencil" size={14}/>Edit</button></div>}</div><details className="preference-help"><summary>Provider requirements</summary><p>{current.prerequisites}</p><p>Provider setup guide: Agent Connect repository / docs/CHANNELS.md.</p><p>Runtime executables, local paths and interpreter variables cannot be configured here. Real-account delivery has not been verified in this preview.</p></details></>}
+ <footer className="channel-savebar"><span>{current.configured?'Configuration saved previously':'Configuration required before enabling'}</span><button type="submit" className="primary" disabled={busy||!configurable}><UiIcon name="check" size={14}/>{busy?'Saving…':'Save configuration'}</button></footer></form>:<div className="channel-no-selection"><UiIcon name="message" size={30}/><h3>Select a messaging service</h3><p>Choose a service to configure credentials and trusted senders.</p></div>}
+ </div></div>{editor&&<DocumentEditor title={editor==='environment'?'Additional provider variables':'Provider settings'} files={[{id:editor,name:editor==='environment'?'variables.json':'settings.json',content:editor==='environment'?extraEnv:settings}]} maxLength={32768} onChange={(_,text)=>editor==='environment'?setExtraEnv(text):setSettings(text)} onClose={()=>setEditor(null)}/>}</section>;
 }

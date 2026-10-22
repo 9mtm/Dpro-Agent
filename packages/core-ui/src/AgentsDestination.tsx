@@ -1,6 +1,6 @@
 import { PersonalityController } from './personality';
 import { AgentCard } from './AgentCard';
-import { useEffect, useState, useSyncExternalStore } from 'react';
+import { useEffect, useRef, useState, useSyncExternalStore } from 'react';
 import { AgentsController } from './agents';
 import { HireController } from './hire';
 import { HireAgent } from './HireAgent';
@@ -13,8 +13,12 @@ import { ConnectorsSection } from './ConnectorsSection';
 import { createPortal } from 'react-dom';
 import { UiIcon } from './ui-icons';
 import { Avatar } from './desktop-ui';
+import { StaffDirectory } from './StaffDirectory';
 
-export function AgentsDestination({ client, active = false, onOpenMemory, focusConnectors = false, sidebarSlot }: { client: SessionClient; active?: boolean; onOpenMemory?: (agentId?: string) => void; focusConnectors?: boolean; sidebarSlot?: HTMLElement | null }) {
+export function AgentsDestination({ client, active = false, onOpenMemory, focusConnectors = false, sidebarSlot,focusAgent }: { client: SessionClient; active?: boolean; onOpenMemory?: (agentId?: string) => void; focusConnectors?: boolean; sidebarSlot?: HTMLElement | null;focusAgent?:{id:string;n:number}|null }) {
+  const [department,setDepartment]=useState('all');
+  const [connections,setConnections]=useState(focusConnectors);
+  useEffect(()=>{if(focusConnectors)setConnections(true);},[focusConnectors]);
   const [open, setOpen] = useState<string | null>(null);
   // The effect owns subscription cleanup; construction also supports offline SSR without reads.
   const [controller, setController] = useState<AgentsController>();
@@ -33,26 +37,25 @@ export function AgentsDestination({ client, active = false, onOpenMemory, focusC
     setController(c); setPersonality(p); setHire(h); setCompany(w);
     return () => { unsubscribe(); c.dispose(); p.dispose(); h.dispose(); w.dispose(); };
   }, [client]);
+  useEffect(()=>{if(active&&focusAgent)setOpen(focusAgent.id);},[active,focusAgent?.n]);
   // Opening the page shows the team at once (one read the first time the page is shown).
   useEffect(() => { if (active && session.phase === 'authenticated' && controller && controller.getSnapshot().phase === 'idle' && !controller.getSnapshot().agents.length) void controller.list(); }, [active, session.phase, controller]);
   // The Agents section owns the sidebar: search, New agent and the team by department (board M28 H4).
   const sidebar = sidebarSlot && active && controller ? createPortal(<AgentsSidebar controller={controller} open={open} onOpen={id => setOpen(id)} onTeam={() => setOpen(null)}
+    department={department} onDepartment={d=>{setDepartment(d);setConnections(false);setOpen(null);}} connections={connections} onConnections={()=>{setConnections(true);setOpen(null);}}
     onNew={owner && hire ? () => { setOpen(null); hire.restart(); setHiring(true); } : undefined}/>, sidebarSlot) : null;
   if (open && controller && !owner) return <>{sidebar}<MemberAgent controller={controller} agentId={open} onBack={() => setOpen(null)}/></>;
-  if (open && controller && personality) return <section aria-label="Agents">{sidebar}
-    <AgentCard client={client} agentId={open} agents={controller} personality={personality} onBack={() => { setOpen(null); void controller.list(); }} onOpenMemory={onOpenMemory}/>
+  if (open && controller && personality) return <section aria-label="Agents">
+    <AgentCard sidebarSlot={active?sidebarSlot:null} client={client} agentId={open} agents={controller} personality={personality} onBack={() => { setOpen(null); void controller.list(); }} onOpenMemory={onOpenMemory}/>
   </section>;
-  return <section aria-label="Agents">{sidebar}<h2>Your team</h2>
-    <p>Each agent is a member of your staff with its own role, persona, memory and permissions. Open an agent to change any of them.{client.getSnapshot().mode === 'mock' ? ' Offline practice: fictional agents only.' : ''}</p>
-    {owner && hire && company && !hiring && !building && <div className="hire-actions">
-      <button type="button" className="primary" onClick={() => { hire.restart(); setHiring(true); }}>Hire an agent</button>
-      <button type="button" onClick={() => { company.restart(); setBuilding(true); }}>Build your company</button>
-    </div>}
-    {owner && company && building && <CompanyWizard controller={company} onClose={() => { setBuilding(false); if (company.getSnapshot().hires.some(x => x.status === 'created')) void controller?.list(); }}/>}
-    {owner && hire && hiring && !building && <HireAgent controller={hire} onClose={() => { setHiring(false); void controller?.list(); }}/>}
-    {!hiring && !building && (controller ? <TeamGrid controller={controller} onOpen={setOpen}/> : <p className="fine-print" role="status">Loading your team…</p>)}
-    {owner && !hiring && !building && <ConnectorsSection client={client} active={active} focus={focusConnectors}/>}
+  const newHire=()=>{if(hire){hire.restart();setHiring(true);}};
+  const newCompany=()=>{if(company){company.restart();setBuilding(true);}};
+  return <section aria-label="Agents" className="agents-destination">{sidebar}
+    {owner && company && building && <CompanyWizard controller={company} onClose={() => { setBuilding(false); void controller?.list(); }}/>}
+    {owner && hire && hiring && !building && <HireSheet onClose={()=>{setHiring(false);void controller?.list();}}><HireAgent controller={hire} onClose={() => { setHiring(false); void controller?.list(); }}/></HireSheet>}
+    {connections ? <><div className="staff-toolbar"><button title="Back to staff" aria-label="Back to staff" onClick={()=>setConnections(false)}><UiIcon name="arrow-left" size={16}/></button><h2>Agent connections</h2></div><div className="staff-connections">{owner?<ConnectorsSection client={client} active={active} focus={focusConnectors}/>:<p>Only the owner can configure connections.</p>}</div></> : controller ? <StaffDirectory controller={controller} department={department} onDepartment={setDepartment} onOpen={setOpen} onMemory={onOpenMemory} onHire={owner?newHire:undefined} onCompany={owner?newCompany:undefined}/>:<p role="status">Loading your team…</p>}
   </section>;
+
 }
 
 /** Members can inspect the readable directory without requesting owner-only configuration. */
@@ -145,23 +148,19 @@ export function AgentsReview({ controller }: { controller: AgentsController }) {
 }
 
 /** The Agents section's sidebar: search agents, New agent, the team by department. */
-function AgentsSidebar({ controller, open, onOpen, onTeam, onNew }: { controller: AgentsController; open: string | null; onOpen: (id: string) => void; onTeam: () => void; onNew?: () => void }) {
-  const s = useSyncExternalStore(controller.subscribe, controller.getSnapshot, controller.getSnapshot);
-  const [q, setQ] = useState('');
-  const shown = s.agents.filter(a => !q.trim() || [a.name, a.department, a.role].some(x => (x ?? '').toLowerCase().includes(q.trim().toLowerCase())));
-  const groups = new Map<string, typeof shown>();
-  for (const a of [...shown].sort((x, y) => Number(!!y.isPrimary) - Number(!!x.isPrimary) || (x.name ?? '').localeCompare(y.name ?? ''))) { const k = a.department ?? 'No department'; groups.set(k, [...(groups.get(k) ?? []), a]); }
-  return <nav className="dk-sidebar" aria-label="Agents">
-    <div className="dk-side-top">
-      <label className="dk-search"><UiIcon name="search" size={13}/><input type="search" placeholder="Search agents" aria-label="Search agents" value={q} onChange={e => setQ(e.target.value)}/></label>
-      {onNew && <button type="button" className="primary dk-main" onClick={onNew}><UiIcon name="plus" size={12}/>New agent</button>}
-    </div>
-    <button type="button" className="nav-item dk-place" aria-current={open === null ? 'page' : undefined} onClick={onTeam}><UiIcon name="users" size={15}/><span className="dk-place-name">Your team</span></button>
-    {[...groups.entries()].map(([dept, list]) => <div key={dept} className="dk-group">
-      <p className="section-label dk-label"><span>{dept[0].toUpperCase() + dept.slice(1)}</span></p>
-      {list.map(a => <button key={a.id} type="button" className="nav-item dk-place" aria-current={open === a.id ? 'page' : undefined} onClick={() => onOpen(a.id)}>
-        <Avatar name={a.name ?? '?'}/><span className="dk-place-name"><bdi>{a.name ?? 'Name unavailable'}</bdi></span>{a.isPrimary && <span className="dk-muted">main</span>}</button>)}
-    </div>)}
-    {s.phase === 'listing' && !s.agents.length && <p className="dk-side-note" role="status">Loading the team…</p>}
-  </nav>;
+function AgentsSidebar({controller,open,onOpen,onTeam,onNew,department,onDepartment,connections,onConnections}:{controller:AgentsController;open:string|null;onOpen:(id:string)=>void;onTeam:()=>void;onNew?:()=>void;department:string;onDepartment:(value:string)=>void;connections:boolean;onConnections:()=>void}){
+ const s=useSyncExternalStore(controller.subscribe,controller.getSnapshot,controller.getSnapshot);
+ const departments=[...new Set(s.agents.map(a=>a.department).filter((d):d is string=>!!d))].sort();
+ return <nav className="dk-sidebar staff-sidebar" aria-label="Agents"><div className="dk-side-top"><p className="section-label">Workspace</p></div>
+ <button className="nav-item dk-place" aria-current={!open&&!connections&&department==='all'?'page':undefined} onClick={()=>{onDepartment('all');onTeam();}}><UiIcon name="users" size={16}/><span>All staff</span></button>
+ {s.agents.filter(a=>a.isPrimary).map(a=><button key={a.id} className="nav-item dk-place" aria-current={open===a.id?'page':undefined} onClick={()=>onOpen(a.id)}><UiIcon name="sparkle" size={16}/><span>Main agent</span></button>)}
+ <p className="section-label dk-label">Departments</p>
+ {departments.map(d=><button key={d} className="nav-item dk-place" aria-current={!connections&&!open&&department===d?'page':undefined} onClick={()=>onDepartment(d)}><UiIcon name="folder" size={16}/><span className="dk-place-name">{d[0].toUpperCase()+d.slice(1)}</span></button>)}
+ <button className="nav-item dk-place" aria-current={!connections&&!open&&department==='none'?'page':undefined} onClick={()=>onDepartment('none')}><UiIcon name="inbox" size={16}/><span>No department</span></button>
+ <p className="section-label dk-label">Setup</p><button className="nav-item dk-place" aria-current={connections?'page':undefined} onClick={onConnections}><UiIcon name="link" size={16}/><span>Agent connections</span></button>
+ </nav>;
+}
+function HireSheet({children,onClose}:{children:React.ReactNode;onClose:()=>void}){
+ const ref=useRef<HTMLDialogElement>(null);useEffect(()=>{ref.current?.showModal();return()=>ref.current?.close();},[]);
+ return <dialog ref={ref} className="staff-hire-sheet" aria-label="Hire an agent" onCancel={e=>{e.preventDefault();}}>{children}</dialog>;
 }

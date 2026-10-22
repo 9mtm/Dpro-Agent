@@ -308,6 +308,15 @@ export interface DiscoveryResult {
   revokedGrants: RevokedGrant[];
 }
 
+/** Reopen an enabled connection, preserving launch approval and grant checks. */
+export async function reconnectServer(id:string,actor:string|null=null):Promise<DiscoveryResult>{
+ const row=await getServerRow(id);if(!row)throw notFound();
+ if(row.enabled!==1)throw new McpPolicyError('enable the MCP server before reconnecting',409,'disabled');
+ if(row.transport==='stdio'){execRequired();if(!isLaunchApproved(row))throw launchApprovalError(row);}
+ await closeConnection(id);
+ return refreshServer(id,actor);
+}
+
 /** Connect, tools/list, store the validated tools (replacing the old list). */
 export async function refreshServer(id: string, actor: string | null = null): Promise<DiscoveryResult> {
   const row = await getServerRow(id);

@@ -19,6 +19,7 @@ const MESSAGES: Record<string, string> = {
   name_taken: 'A connector with this name already exists.',
   disabled: 'Turn the connector on first.',
   not_found: 'This connector no longer exists.',
+  conflict: 'This connection changed elsewhere. Reload it before saving.',
 };
 
 /** NAME=value lines → a map (values are secrets: sent once, never shown again). */
@@ -62,6 +63,12 @@ export class ConnectorsController {
     } catch { this.publish({ phase: 'error', notice: 'Connectors could not be loaded (no connection).' }); }
   }
 
+  /** Read session state without starting a connection or overriding a concurrent local action. */
+  async refreshStatus(){
+    const before=this.#state;if(before.phase!=='ready'||before.busy)return;
+    try{const r=await this.req('GET',CONNECTORS_PATH);if(this.#state===before&&r.status===200&&record(r.body)&&Array.isArray(r.body.servers))this.publish({servers:r.body.servers as Connector[]});}catch{ /* Preserve the current view on a background read failure. */ }
+  }
+
   /** Adds a connector (it starts off). Returns an error message or null. */
   async add(d: ConnectorDraft): Promise<string | null> {
     const name = d.name.trim().toLowerCase();
@@ -76,12 +83,18 @@ export class ConnectorsController {
       if (!d.url.trim()) return 'Enter the connector address.';
       Object.assign(body, { transport: 'http', url: d.url.trim(), allowRemote: d.allowRemote, ...(Object.keys(secrets).length ? { headers: secrets } : {}) });
     }
-    this.publish({ busy: 'add' });
-    try {
-      const r = await this.req('POST', CONNECTORS_PATH, body);
-      if ((r.status === 201 || r.status === 200) && record(r.body) && record(r.body.server)) { this.put(r.body.server as unknown as Connector); return null; }
-      return this.fail(r, 'The connector was not added.');
-    } catch { return 'The connector was not added (no connection).'; } finally { this.publish({ busy: null }); }
+    return this.create(body);
+  }
+
+  /** Exact structured input; adding never enables a connection. */
+  async create(body:Record<string,unknown>):Promise<string|null>{
+    this.publish({busy:'add',notice:undefined});
+    try{const r=await this.req('POST',CONNECTORS_PATH,body);if((r.status===200||r.status===201)&&record(r.body)&&record(r.body.server)){this.put(r.body.server as unknown as Connector);this.publish({notice:'Connection added disabled. Review it before turning it on.'});return null;}return this.fail(r,'The connection was not added.');}catch{return 'The connection was not added (no connection).';}finally{this.publish({busy:null});}
+  }
+
+  async update(id:string,body:Record<string,unknown>):Promise<string|null>{
+    this.publish({busy:id,notice:undefined});
+    try{const r=await this.req('PUT',`${CONNECTORS_PATH}/${id}`,body);if(r.status===200&&record(r.body)&&record(r.body.server)){this.put(r.body.server as unknown as Connector);this.publish({notice:r.body.disabledByChange?'Connection saved and turned off. Discover its tools and review agent access again.':'Connection saved. No tools were granted.'});return null;}return this.fail(r,'The connection was not saved.');}catch{return 'The connection was not saved (no connection).';}finally{this.publish({busy:null});}
   }
 
   /** Turns a connector on, then discovers its tools. A local program first asks for approval of exactly what it starts. */
@@ -106,9 +119,15 @@ export class ConnectorsController {
     try {
       const r = await this.req('POST', `${CONNECTORS_PATH}/${id}/refresh`);
       if (r.status === 200 && record(r.body) && record(r.body.server)) { this.put(r.body.server as unknown as Connector); this.publish({ notice: `Found ${typeof r.body.discovered === 'number' ? r.body.discovered : (r.body.server as unknown as Connector).tools.length} tools. Give them to agents on each agent's tools.` }); }
-      else this.publish({ notice: this.fail(r, 'The tools could not be read.') });
+      else {this.publish({ notice: this.fail(r, 'The tools could not be read.') });await this.syncOne(id);}
     } catch { this.publish({ notice: 'The tools could not be read (no connection).' }); } finally { this.publish({ busy: null }); }
   }
+  /** Close and reopen the connection; never changes grants or bypasses launch approval. */
+  async reconnect(id:string){
+    this.publish({busy:id,notice:undefined});
+    try{const r=await this.req('POST',`${CONNECTORS_PATH}/${id}/reconnect`);if(r.status===200&&record(r.body)&&record(r.body.server)){this.put(r.body.server as unknown as Connector);this.publish({notice:'Reconnected and updated discovered tools. Existing agent policies still apply.'});}else{this.publish({notice:this.fail(r,'The connection could not be reconnected.')});await this.syncOne(id);}}catch{this.publish({notice:'The connection could not be reconnected (no connection).'});}finally{this.publish({busy:null});}
+  }
+  private async syncOne(id:string){try{const r=await this.req('GET',`${CONNECTORS_PATH}/${id}`);if(r.status===200&&record(r.body)&&record(r.body.server))this.put(r.body.server as unknown as Connector);}catch{ /* Keep the failed-action notice. */ }}
   async disable(id: string) {
     this.publish({ busy: id, notice: undefined });
     try {
@@ -128,7 +147,7 @@ export class ConnectorsController {
     this.publish({ busy: id });
     try {
       const r = await this.req('PUT', `${CONNECTORS_PATH}/${id}/tools/${encodeURIComponent(tool)}`, { requiresApproval });
-      if (r.status === 200 && record(r.body) && record(r.body.server)) this.put(r.body.server as unknown as Connector); else this.publish({ notice: this.fail(r, 'The setting was not saved.') });
+      if (r.status === 200 && record(r.body) && record(r.body.server)) this.put(r.body.server as unknown as Connector); else if(r.status===200&&record(r.body)&&record(r.body.tool)){const updated=r.body.tool;const server=this.#state.servers.find(s=>s.id===id);if(server)this.put({...server,tools:server.tools.map(t=>t.name===tool?{...t,...updated}:t)});}else this.publish({ notice: this.fail(r, 'The setting was not saved.') });
     } catch { this.publish({ notice: 'The setting was not saved (no connection).' }); } finally { this.publish({ busy: null }); }
   }
 }

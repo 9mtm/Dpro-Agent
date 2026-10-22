@@ -1,4 +1,5 @@
-import { useState, useSyncExternalStore } from 'react';
+import {TeamResourceReview} from './TeamResourceReview';
+import { useEffect,useRef,useState, useSyncExternalStore } from 'react';
 import { allPresets, allRoles, presetLabel, roleLabel } from './hire';
 import type { Preset, Role } from './hire';
 import { shareRoles, sharesTotal, shareSpecialties } from './company';
@@ -16,6 +17,9 @@ const statusLabel: Record<PlannedHire['status'], string> = { planned: '', creati
 /** Build the company: size, departments, a proposed team to review, then one confirm. */
 export function CompanyWizard({ controller, onClose }: { controller: CompanyController; onClose: () => void }) {
   const s = useSyncExternalStore(controller.subscribe, controller.getSnapshot, controller.getSnapshot);
+  const dialog=useRef<HTMLDialogElement>(null);
+  useEffect(()=>{dialog.current?.showModal();return()=>dialog.current?.close();},[]);
+  const [query,setQuery]=useState('');
   const [custom, setCustom] = useState('');
   const [total, setTotal] = useState('');
   const busy = ['loading', 'planning', 'hiring'].includes(s.phase);
@@ -25,7 +29,7 @@ export function CompanyWizard({ controller, onClose }: { controller: CompanyCont
   const chosen = s.hires.filter(h => h.include);
   const groups = [...new Set(s.hires.map(h => h.department))];
   const bulk = s.total !== undefined || s.shares.length > 0 || !!s.batch;
-  return <section aria-label="Build your company" className="hire company">
+  return <dialog ref={dialog} className="company-wizard" aria-label="Build your company" onCancel={e=>{e.preventDefault();if(!busy)onClose();}}><section aria-label="Company setup" className="hire company">
     <div className="hire-head">
       <h3>Build your company</h3>
       <button type="button" disabled={busy} onClick={onClose}>Back to team</button>
@@ -63,7 +67,8 @@ export function CompanyWizard({ controller, onClose }: { controller: CompanyCont
 
     {s.step === 'departments' && s.catalogue && <div className="hire-form">
       <p>{s.total !== undefined ? `Choose the departments for your ${s.total} ${s.total === 1 ? 'agent' : 'agents'}. Dpro Agent splits them by the size each department usually needs; you can change every count.` : 'Choose the departments you want. Each one gets its own small team.'}</p>
-      <ul className="company-departments" aria-label="Departments">{s.catalogue.departments.map(d => {
+      <label>Suggest departments<select aria-label="Suggested company profile" disabled={busy} defaultValue="" onChange={e=>controller.chooseProfile(e.target.value)}><option value="">Choose a company profile…</option><option value="education">Education, languages and integration</option><option value="software">Software company</option><option value="creative">Creative studio</option></select></label><label>Search departments<input type="search" aria-label="Search departments" value={query} onChange={e=>setQuery(e.target.value)}/></label><p className="fine-print">{s.departments.length} selected · up to 72 per plan. Department selection does not make pending specialty packages executable.</p>
+      <ul className="company-departments" aria-label="Departments">{s.catalogue.departments.filter(d=>`${d.label} ${d.summary}`.toLowerCase().includes(query.toLowerCase())).map(d => {
         const on = s.departments.includes(d.id);
         return <li key={d.id}><button type="button" className="company-dep" aria-pressed={on} disabled={busy} onClick={() => controller.toggleDepartment(d.id)}>
           <strong>{d.label}</strong><small>{d.summary}</small>
@@ -80,6 +85,8 @@ export function CompanyWizard({ controller, onClose }: { controller: CompanyCont
       </div>
     </div>}
 
+    {s.step==='review'&&<TeamResourceReview client={controller.client} departments={[...s.departments]} roles={(bulk?s.shares.flatMap(x=>shareSpecialties(x).map(r=>({department:x.department,name:r.name}))):s.hires.filter(h=>h.include).map(h=>({department:h.department,name:h.title}))).filter(r=>r.name.trim()).slice(0,300)}/>}
+    {(s.step==='done'||s.phase==='stopped')&&s.boardSetup&&<p role="status">{s.boardSetup==='ready'?'Company and department boards are ready. Skills and MCP permissions still need individual review.':s.boardSetup==='syncing'?'Preparing department boards…':s.boardSetup==='error'?<>Agents are kept. Board setup needs another attempt. <button onClick={()=>void controller.setupBoards()}>Retry board setup</button></>:null}</p>}
     {bulk && s.step === 'review' && <ShareReview shares={s.shares} busy={busy} controller={controller}/>}
     {bulk && (s.step === 'hiring' || s.step === 'done') && <BatchView batch={s.batch} shares={s.shares} phase={s.phase} busy={busy} controller={controller} onClose={onClose}/>}
 
@@ -101,7 +108,7 @@ export function CompanyWizard({ controller, onClose }: { controller: CompanyCont
         {(s.step === 'done' || s.phase === 'stopped') && <button type="button" className={s.step === 'done' ? 'primary' : undefined} disabled={busy} onClick={onClose}>Back to team</button>}
       </div>
     </div>}
-  </section>;
+  </section></dialog>;
 }
 
 /** Ready-made company sizes, in agents (any other number is typed in). */

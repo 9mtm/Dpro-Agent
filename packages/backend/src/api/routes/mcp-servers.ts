@@ -24,11 +24,12 @@ import type { FastifyInstance, FastifyReply, FastifyRequest } from 'fastify';
 import { logAudit } from '../../services/audit-logger.js';
 import {
   createServer, deleteServer, disableServer, enableServer, getServer, listServers, McpConfigError, McpPolicyError,
-  refreshServer, setToolApproval, updateServer, type McpServerView,
+  refreshServer, reconnectServer, connectionState, setToolApproval, updateServer, type McpServerView,
 } from '../../mcp-client/index.js';
 import { handleError } from '../error-handler.js';
 
 const ID = /^[0-9a-f-]{36}$/;
+const liveView=(server:McpServerView)=>({...server,connectionState:connectionState(server.id)});
 
 function ownerOf(request: FastifyRequest, reply: FastifyReply): string | null {
   const user = request.authUser;
@@ -77,7 +78,7 @@ export async function mcpServersRoutes(fastify: FastifyInstance) {
 
   fastify.get('/api/mcp/servers', { config }, async (request, reply) => {
     if (ownerOf(request, reply) === null) return reply;
-    return { servers: await listServers() };
+    return { servers: (await listServers()).map(liveView) };
   });
 
   fastify.post<{ Body: Record<string, unknown> }>('/api/mcp/servers', { config }, async (request, reply) => {
@@ -86,7 +87,7 @@ export async function mcpServersRoutes(fastify: FastifyInstance) {
     try {
       const server = await createServer(request.body || {}, ownerId);
       audit(request, ownerId, 'mcp_server.add', true, server.id, summary(server));
-      return reply.code(201).send(server);
+      return reply.code(201).send(liveView(server));
     } catch (err) {
       return fail(request, reply, ownerId, 'mcp_server.add', undefined, err);
     }
@@ -97,7 +98,7 @@ export async function mcpServersRoutes(fastify: FastifyInstance) {
     if (badId(request.params.id, reply)) return reply;
     const server = await getServer(request.params.id);
     if (!server) return reply.code(404).send({ error: 'MCP server not found' });
-    return server;
+    return liveView(server);
   });
 
   fastify.put<{ Params: { id: string }; Body: Record<string, unknown> }>('/api/mcp/servers/:id', { config }, async (request, reply) => {
@@ -108,7 +109,7 @@ export async function mcpServersRoutes(fastify: FastifyInstance) {
     try {
       const { server, disabled, revokedGrants } = await updateServer(id, request.body || {}, ownerId);
       audit(request, ownerId, 'mcp_server.update', true, id, { ...summary(server), disabledByChange: disabled, revokedGrants: revokedGrants.length });
-      return { ...server, disabledByChange: disabled, revokedGrants };
+      return { ...liveView(server), disabledByChange: disabled, revokedGrants };
     } catch (err) {
       return fail(request, reply, ownerId, 'mcp_server.update', id, err);
     }
@@ -138,7 +139,7 @@ export async function mcpServersRoutes(fastify: FastifyInstance) {
       audit(request, ownerId, 'mcp_server.enable', true, id, {
         ...summary(server), launchApproved: server.transport === 'stdio' ? server.launchHash : null,
       });
-      return server;
+      return liveView(server);
     } catch (err) {
       return fail(request, reply, ownerId, 'mcp_server.enable', id, err);
     }
@@ -152,7 +153,7 @@ export async function mcpServersRoutes(fastify: FastifyInstance) {
     try {
       const server = await disableServer(id);
       audit(request, ownerId, 'mcp_server.disable', true, id, { name: server.name });
-      return server;
+      return liveView(server);
     } catch (err) {
       return fail(request, reply, ownerId, 'mcp_server.disable', id, err);
     }
@@ -168,10 +169,16 @@ export async function mcpServersRoutes(fastify: FastifyInstance) {
       audit(request, ownerId, 'mcp_server.refresh', true, id, {
         name: result.server.name, discovered: result.discovered, skipped: result.skipped.map((s) => s.tool), truncated: result.truncated, revokedGrants: result.revokedGrants.length,
       });
-      return result;
+      return {...result,server:liveView(result.server)};
     } catch (err) {
       return fail(request, reply, ownerId, 'mcp_server.refresh', id, err);
     }
+  });
+
+  fastify.post<{Params:{id:string}}>('/api/mcp/servers/:id/reconnect',{config},async(request,reply)=>{
+    const ownerId=ownerOf(request,reply);if(ownerId===null)return reply;
+    const {id}=request.params;if(badId(id,reply))return reply;
+    try{const result=await reconnectServer(id,ownerId);audit(request,ownerId,'mcp_server.reconnect',true,id,{name:result.server.name,discovered:result.discovered,revokedGrants:result.revokedGrants.length});return {...result,server:liveView(result.server)};}catch(err){return fail(request,reply,ownerId,'mcp_server.reconnect',id,err);}
   });
 
   fastify.put<{ Params: { id: string; tool: string }; Body: { requiresApproval?: unknown } }>('/api/mcp/servers/:id/tools/:tool', { config }, async (request, reply) => {
@@ -183,7 +190,7 @@ export async function mcpServersRoutes(fastify: FastifyInstance) {
       const value = (request.body || {}).requiresApproval;
       const server = await setToolApproval(id, tool, value === undefined ? Symbol('missing') : value);
       audit(request, ownerId, 'mcp_tool.approval_setting', true, id, { name: server.name, tool, requiresApproval: value });
-      return server;
+      return liveView(server);
     } catch (err) {
       return fail(request, reply, ownerId, 'mcp_tool.approval_setting', id, err);
     }

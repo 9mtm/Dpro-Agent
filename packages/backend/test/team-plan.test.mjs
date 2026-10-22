@@ -77,7 +77,7 @@ test('input is validated: size, departments, custom limits, language', () => {
   assert.throws(() => plan.parseDepartments(['x'.repeat(65)]), /64/);
   assert.throws(() => plan.parseDepartments(['c1', 'c2', 'c3', 'c4', 'c5']), /custom/);
   assert.deepEqual(plan.parseDepartments([' Finance ', 'finance', 'Marketing']), ['finance', 'marketing']);
-  assert.throws(() => plan.parseDepartments(Array.from({ length: 13 }, (_, i) => plan.DEPARTMENTS[i % 11].id + i)), /At most 12/);
+  assert.throws(() => plan.parseDepartments(Array.from({ length: 73 }, (_, i) => plan.DEPARTMENTS[i % 11].id + i)), /At most 72/);
 });
 
 test('only the owner may read the catalogue or ask for a plan', async () => {
@@ -118,3 +118,17 @@ test('bad plans get 400 invalid_plan with no backend detail beyond the message',
     assert.equal(res.json().code, 'invalid_plan');
   }
 });
+
+ test('all 72 catalogue departments can be reviewed without creating staff', async () => {
+  assert.equal(plan.DEPARTMENTS.length,72);
+  const before=agentCount();
+  const response=await app.inject({method:'POST',url:'/api/onboarding/team-resources',headers:auth('tp-owner'),payload:{departments:['education','finance'],roles:[]}});
+  assert.equal(response.statusCode,200,response.body);
+  const body=response.json();assert.equal(body.departments.length,2);
+  assert.ok(body.departments.every(d=>d.board.columns.length>0&&Array.isArray(d.pendingRoles)));
+  assert.equal(agentCount(),before);
+  const denied=await app.inject({method:'POST',url:'/api/onboarding/team-resources',headers:auth('tp-user'),payload:{departments:['education']}});
+  assert.equal(denied.statusCode,403);
+  const invalid=await app.inject({method:'POST',url:'/api/onboarding/team-resources',headers:auth('tp-owner'),payload:{departments:['education'],roles:[{department:'finance',name:'Analyst'}]}});
+  assert.equal(invalid.statusCode,400);
+ });

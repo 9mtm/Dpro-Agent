@@ -1,3 +1,7 @@
+import {createPortal} from 'react-dom';
+import {Avatar} from './desktop-ui';
+import {DocumentEditor} from './DocumentEditor';
+import {AgentSpecialties} from './AgentSpecialties';
 import { AgentMcp } from './McpLibrary';
 import { AgentSkills } from './SkillLibrary';
 import { useEffect, useState, useSyncExternalStore } from 'react';
@@ -33,53 +37,43 @@ const DIALECT: Record<string, string> = { 'ar-IQ': 'Arabic (Iraqi)', ar: 'Arabic
  * what it may do (tools, memory drawers, off/ask/allow) and what it can
  * remember (the memories in drawers it may read).
  */
-export function AgentCard({ client, agentId, agents, personality, onBack, onOpenMemory }: {
+export function AgentCard({ client, agentId, agents, personality, onBack, onOpenMemory, sidebarSlot }: {
   client: ConstructorParameters<typeof AgentCardController>[0]; agentId: string; agents: AgentsController; personality: PersonalityController;
-  onBack: () => void; onOpenMemory?: (agentId?: string) => void;
+  onBack: () => void; onOpenMemory?: (agentId?: string) => void; sidebarSlot?:HTMLElement|null;
 }) {
   const [card, setCard] = useState<AgentCardController>();
   useEffect(() => { const c = new AgentCardController(client, agentId); setCard(c); void c.load(); void agents.select(agentId); return () => c.dispose(); }, [client, agentId, agents]);
   if (!card) return null;
-  return <CardView card={card} agents={agents} personality={personality} onBack={onBack} onOpenMemory={onOpenMemory}/>;
+  return <CardView card={card} agents={agents} personality={personality} onBack={onBack} onOpenMemory={onOpenMemory} sidebarSlot={sidebarSlot}/>;
 }
 
-export function CardView({ card, agents, personality, onBack, onOpenMemory }: { card: AgentCardController; agents?: AgentsController; personality?: PersonalityController; onBack: () => void; onOpenMemory?: (agentId?: string) => void }) {
+export function CardView({ card, agents, personality, onBack, onOpenMemory, sidebarSlot }: { card: AgentCardController; agents?: AgentsController; personality?: PersonalityController; onBack: () => void; onOpenMemory?: (agentId?: string) => void;sidebarSlot?:HTMLElement|null }) {
   const s = useSyncExternalStore(card.subscribe, card.getSnapshot, card.getSnapshot);
   const a = s.agent;
   const busy = s.phase === 'saving' || s.phase === 'loading';
+  const navigation=<nav className="agent-profile-sidebar dk-sidebar" aria-label="Agent profile sections"><button className="agent-return" onClick={onBack}><UiIcon name="arrow-left" size={15}/>All staff</button><div className="agent-sidebar-identity"><Avatar name={a?.name??'Agent'} size={40}/><strong><bdi>{a?.name??'Agent'}</bdi></strong><small>{a?.department||'No department'}</small></div><p className="section-label">Agent</p>{TABS.map(t=><button className="nav-item dk-place" title={t.label} type="button" key={t.key} aria-current={s.tab===t.key?'page':undefined} onClick={()=>void card.openTab(t.key)}><UiIcon name={t.key==='profile'?'contact':t.key==='persona'?'sparkle':t.key==='memory'?'brain':t.key==='skills'?'file':t.key==='mcp'?'tool':'shield'} size={16}/><span>{t.label}</span></button>)}<p className="sr-only">Skills and tools</p></nav>;
   return <article className="agent-card" aria-label={a?.name ? `Agent ${a.name}` : 'Agent'}>
-    <header className="agent-card-head">
-      <button type="button" className="back-link" onClick={onBack}><span aria-hidden="true">‹</span> Team</button>
-      <div className="agent-card-id">
-        <span className="team-avatar large" aria-hidden="true">{(a?.name ?? '?').trim().slice(0, 1).toUpperCase()}</span>
-        <div>
-          <h3><bdi>{a?.name ?? (s.phase === 'loading' ? 'Loading…' : 'Agent')}</bdi>{a?.isPrimary && <span className="chip accent">Main</span>}</h3>
-          <p className="agent-card-sub">{[ROLE_LABEL[a?.role ?? ''], a?.department].filter(Boolean).join(' · ')}{s.persona && <> · {s.persona.locked ? 'Persona locked' : `Persona v${s.persona.version}`}</>}</p>
-        </div>
-      </div>
-      {/* Board M28 H4: three views (Profile · Memory · Skills and tools); each keeps its parts as a short second row. */}
-      <div className="seg" role="tablist" aria-label="Agent card">{VIEWS.map(v =>
-        <button key={v.label} type="button" role="tab" aria-selected={v.tabs.includes(s.tab)} onClick={() => void card.openTab(v.tabs[0])}>{v.label}</button>)}</div>
-      {(VIEWS.find(v => v.tabs.includes(s.tab))?.tabs.length ?? 0) > 1 && <div className="seg small" role="tablist" aria-label="Parts">{VIEWS.find(v => v.tabs.includes(s.tab))!.tabs.map(k =>
-        <button key={k} type="button" role="tab" aria-selected={s.tab === k} onClick={() => void card.openTab(k)}>{TABS.find(t => t.key === k)!.label}</button>)}</div>}
-    </header>
+    {sidebarSlot?createPortal(navigation,sidebarSlot):navigation}
+    <header className="agent-card-head"><button type="button" className="back-link" title="Back to staff" aria-label="Back to staff" onClick={onBack}><UiIcon name="arrow-left" size={16}/></button><div><h3>{TABS.find(t=>t.key===s.tab)?.label}</h3><p className="agent-card-sub"><bdi>{a?.name??'Loading agent…'}</bdi> · {ROLE_LABEL[a?.role??'']}{a?.department?` · ${a.department}`:''}</p></div></header>
+    <div className="agent-detail-layout" data-single-sidebar={!!sidebarSlot}><div className="agent-detail-content page-ui">
     {s.notice && <p className="card-notice" role="alert">{s.notice}</p>}
     {s.saved && <p className="card-saved" role="status"><UiIcon name="check" size={12}/>{s.saved}</p>}
     {s.phase === 'error' ? null : <>
-      {s.tab === 'profile' && <ProfileTab card={card} agents={agents} busy={busy}/>}
+      {s.tab === 'profile' && <><AgentSpecialties key={s.agentId} client={card.client} agentId={s.agentId}/><ProfileTab card={card} agents={agents} busy={busy}/></>}
       {s.tab === 'persona' && <PersonaTab card={card} personality={personality} busy={busy}/>}
       {s.tab === 'permissions' && <PermissionsTab card={card} busy={busy} part="access"/>}
       {s.tab === 'mcp' && <><PermissionsTab card={card} busy={busy} part="tools"/><AgentMcp key={s.agentId} client={card.client} agentId={s.agentId}/></>}
       {s.tab === 'skills' && <AgentSkills key={s.agentId} client={card.client} agentId={s.agentId}/>}
       {s.tab === 'memory' && <MemoryTab card={card} onOpenMemory={onOpenMemory}/>}
     </>}
-  </article>;
+  </div></div></article>;
 }
 
 function ProfileTab({ card, agents, busy }: { card: AgentCardController; agents?: AgentsController; busy: boolean }) {
   const s = card.getSnapshot();
   useSyncExternalStore(card.subscribe, card.getSnapshot, card.getSnapshot);
   const n = useSyncExternalStore(agents ? agents.subscribe : noop, agents ? agents.getSnapshot : none, agents ? agents.getSnapshot : none);
+  const [editingDescription,setEditingDescription]=useState(false);
   const nameOk = n ? validatedDisplayName(n.draft) : null;
   const nameBusy = !!n && ['listing', 'reading', 'saving', 'reconciling', 'generating'].includes(n.phase);
   return <div className="card-section">
@@ -98,8 +92,8 @@ function ProfileTab({ card, agents, busy }: { card: AgentCardController; agents?
         <input value={s.profile.department} placeholder="e.g. marketing" maxLength={64} disabled={busy} onChange={e => card.editProfile({ department: e.target.value })}/></label>
     </div>
     <ModelField card={card} busy={busy}/>
-    <label className="field"><span>What this agent does</span>
-      <textarea rows={3} value={s.profile.description} maxLength={1000} disabled={busy} dir="auto" onChange={e => card.editProfile({ description: e.target.value })}/></label>
+    <section className="agent-description"><h4>What this agent does</h4><p dir="auto">{s.profile.description||'Add responsibilities for this agent.'}</p><button disabled={busy} onClick={()=>setEditingDescription(true)}><UiIcon name="pencil" size={14}/>Edit responsibilities</button></section>
+    {editingDescription&&<DocumentEditor title="Agent responsibilities" files={[{id:'responsibilities',name:'responsibilities.md',content:s.profile.description}]} maxLength={1000} onChange={(_,description)=>card.editProfile({description})} onClose={()=>setEditingDescription(false)}/>}
     <p className="fine-print">A role change never changes the persona or the permissions; those are set in their own tabs.</p>
     <div className="card-actions">
       <button type="button" className="primary" disabled={busy || !card.profileChanged()} onClick={() => void card.saveProfile()}>Save profile</button>

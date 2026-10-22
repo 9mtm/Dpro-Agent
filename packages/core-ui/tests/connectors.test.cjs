@@ -61,3 +61,41 @@ test('connectors: add, approve a program launch, discover tools, remove', async 
   await c.remove(ID);
   assert.equal(c.getSnapshot().servers.length, 0);
 });
+
+
+test('editing connection targets is bounded and tool approval responses preserve actual server state',()=>{
+ const path=`/api/mcp/servers/${ID}`;
+ const body={description:'Fictional revised description',url:L,allowRemote:false,headers:{TOKEN:'fictional'}};
+ for(const fn of [allowedConnector,allowed]){assert.equal(fn('PUT',path,body),true);for(const bad of [{...body,enabled:true},{...body,name:'renamed'},{...body,transport:'stdio'},{...body,cwd:'/private'},{...body,headers:{TOKEN:4}}])assert.equal(fn('PUT',path,bad),false);}
+ const raw={id:ID,name:'fixture',transport:'http',url:L,enabled:false,headers:{TOKEN:'do-not-return'},tools:[{name:'read',requiresApproval:true,requiresApprovalOverride:true}]};
+ const response=connectorResponse(path+'/tools/read',200,raw);assert.equal(response.server.tools[0].requiresApproval,true);assert.equal(response.server.tools[0].requiresApprovalOverride,true);assert.deepEqual(response.server.headerNames,['TOKEN']);assert.doesNotMatch(JSON.stringify(response),/do-not-return/);assert.deepEqual(connectorResponse(path+'/tools/read',200,response),response);
+ assert.equal(connectorResponse(path,409,{code:'conflict',error:'Changed'}).code,'conflict');
+});
+
+test('connection edits do not enable or discover; tool approval updates are reflected immediately',async()=>{
+ const base=createLoginMock(),calls=[];let server={id:ID,name:'fixture',transport:'http',url:L,enabled:false,tools:[{name:'read',requiresApproval:false,requiresApprovalOverride:null}]};
+ const live=async r=>{if(!r.path.startsWith('/api/mcp'))return base(r);calls.push(r);if(r.method==='GET')return {status:200,body:{servers:[server]}};if(r.path.endsWith('/tools/read')){server={...server,tools:[{...server.tools[0],requiresApproval:r.body.requiresApproval,requiresApprovalOverride:r.body.requiresApproval}]};return {status:200,body:server};}if(r.method==='PUT'){server={...server,description:r.body.description};return {status:200,body:{...server,disabledByChange:false,revokedGrants:[]}};}throw Error('Unexpected network action');};
+ const client=new SessionClient({live});client.selectMode('live');await client.login('demo@example.invalid','mock-only');const c=new ConnectorsController(client);await c.load();await c.setApproval(ID,'read',true);assert.equal(c.getSnapshot().servers[0].tools[0].requiresApproval,true);assert.equal(await c.update(ID,{description:'Updated description'}),null);assert.equal(c.getSnapshot().servers[0].description,'Updated description');assert.equal(c.getSnapshot().servers[0].enabled,false);assert.ok(calls.every(r=>!r.path.endsWith('/enable')&&!r.path.endsWith('/refresh')));
+});
+
+test('MCP page owns a quiet desktop list and sidebar without nested library tabs',()=>{
+ const {McpLibrary}=require('../src/McpLibrary.tsx'),{McpSection}=require('../src/ToolSections.tsx');
+ const html=renderToStaticMarkup(React.createElement(McpLibrary,{client:{},active:false}));assert.match(html,/Installed MCP connections/);assert.match(html,/Selected MCP connection/);assert.match(html,/Add a connection/);assert.doesNotMatch(html,/<textarea|role="tablist"|connector-list catalogue-grid/);
+ const section=renderToStaticMarkup(React.createElement(McpSection,{client:{},active:false}));for(const label of ['All connections','Enabled','Disabled','Needs attention','Import from apps','Found in folders'])assert.ok(section.includes(label),label);assert.match(section,/MCP connections places/);
+});
+
+
+test('desktop connection commands distinguish enable, reconnect and tool discovery',async()=>{
+ const path=`/api/mcp/servers/${ID}/reconnect`;
+ for(const fn of [allowedConnector,allowed]){assert.equal(fn('POST',path),true);assert.equal(fn('GET',path),false);assert.equal(fn('POST',path,{launchHash:'unreviewed'}),false);}
+ const base=createLoginMock(),calls=[];const server={id:ID,name:'fixture',transport:'http',url:L,enabled:true,active:true,connectionState:'disconnected',tools:[]};
+ const live=async r=>{if(!r.path.startsWith('/api/mcp'))return base(r);calls.push(r);if(r.method==='GET')return {status:200,body:{servers:[server]}};assert.equal(r.path,path);return {status:200,body:{server:{...server,connectionState:'connected'},discovered:0}};};
+ const client=new SessionClient({live});client.selectMode('live');await client.login('demo@example.invalid','mock-only');const c=new ConnectorsController(client);await c.load();await c.reconnect(ID);assert.equal(c.getSnapshot().servers[0].connectionState,'connected');assert.equal(calls.length,2);assert.equal(calls[1].body,undefined);assert.match(c.getSnapshot().notice,/Reconnected/);
+ const {McpLibrary}=require('../src/McpLibrary.tsx');const html=renderToStaticMarkup(React.createElement(McpLibrary,{client:{},active:false}));for(const label of ['Connection controls','Turn on connection','Reconnect connection','Refresh discovered tools','Edit selected connection','Add a connection'])assert.ok(html.includes(label),label);
+});
+
+test('background connection status reads never start a server or overwrite a newer edit',async()=>{
+ const server={id:ID,name:'fixture',transport:'http',url:L,enabled:false,tools:[],description:'Old'};let finishPoll,get=0;const calls=[];
+ const client={request:async r=>{calls.push(r);if(r.method==='GET'){get++;if(get===1)return {status:200,body:{servers:[server]}};return new Promise(resolve=>finishPoll=resolve);}assert.equal(r.method,'PUT');return {status:200,body:{server:{...server,description:'New'}}};}};
+ const c=new ConnectorsController(client);await c.load();const polling=c.refreshStatus();await c.update(ID,{description:'New'});finishPoll({status:200,body:{servers:[server]}});await polling;assert.equal(c.getSnapshot().servers[0].description,'New');assert.ok(calls.every(r=>r.method==='GET'||r.method==='PUT'));
+});

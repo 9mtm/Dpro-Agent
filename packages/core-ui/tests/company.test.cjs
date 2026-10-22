@@ -24,7 +24,7 @@ const creates = calls => calls.filter(c => c.method === 'POST' && c.path === '/a
 test('plan body contract and boundaries', () => {
   assert.equal(validPlanBody({ size: 'small', departments: ['finance', 'podcast studio'] }), true);
   for (const bad of [{ size: 'huge', departments: ['x'] }, { size: 'small', departments: [] }, { size: 'small', departments: ['Finance'] }, { size: 'small', departments: ['a', 'a'] },
-    { size: 'small', departments: ['x'], extra: 1 }, { size: 'small', departments: Array.from({ length: 13 }, (_, i) => `d${i}`) }, { size: 'small', departments: ['x'], language: 'xx' }])
+    { size: 'small', departments: ['x'], extra: 1 }, { size: 'small', departments: Array.from({ length: 73 }, (_, i) => `d${i}`) }, { size: 'small', departments: ['x'], language: 'xx' }])
     assert.equal(validPlanBody(bad), false, JSON.stringify(bad));
   for (const allow of [allowedRequest, allowed]) {
     assert.equal(allow('GET', '/api/onboarding/team-catalogue', undefined), true);

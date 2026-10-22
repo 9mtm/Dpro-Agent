@@ -4,6 +4,7 @@ import type { SessionClient } from './session';
 import { cardChatPath } from './chat-board-contract.js';
 import type { ChatProgress } from './chat-board-contract.js';
 
+export type RelatedTask={cardId:string;boardId:string;boardName:string;title:string;status:string;priority:string;dueDate:string|null};
 export type Priority = 'low' | 'normal' | 'high' | 'urgent';
 /** Board writes (checked against board-contract.js before sending). */
 export type BoardRequest = { method: 'POST' | 'PUT'; path: string; body: Record<string, unknown> };
@@ -23,7 +24,7 @@ export const allCardTypes: readonly CardType[] = ['task', 'idea', 'bug', 'milest
 export type Comment = Readonly<{ id: string; authorKind: 'user' | 'agent'; authorId: string; body: string; createdAt: string }>;
 export type AgentOption = Readonly<{ id: string; name: string }>;
 export type BoardColor = 'blue' | 'green' | 'orange' | 'red' | 'purple' | 'pink' | 'teal' | 'gray';
-export type BoardMeta = Readonly<{ id: string; name: string; description: string; template: string; color: BoardColor; departments: readonly string[]; kind: 'company' | 'department' | 'shared'; archived: boolean; version: number }>;
+export type BoardMeta = Readonly<{ id: string; name: string; description: string; template: string; color: BoardColor; departments: readonly string[]; kind: 'company' | 'department' | 'shared'; managedDepartment?:boolean; departmentActive?:boolean; archived: boolean; version: number }>;
 export type BoardSummary = BoardMeta & Readonly<{ cards: number; open: number }>;
 export type Template = Readonly<{ id: string; name: string; description: string; columns: readonly string[] }>;
 export type NewBoard = { name: string; description?: string; template: string; color: BoardColor; departments: string[] };
@@ -43,6 +44,7 @@ export type BoardState = Readonly<{
   chat?: Readonly<{ conversation: { id: string; title: string | null } | null; progress: ChatProgress }>;
   /** Filters: text search, one agent, one department. */
   filter: Readonly<{ text: string; agent: string; department: string }>;
+  overview?:Readonly<{tasks:RelatedTask[];total:number;limited:boolean}>; overviewError?:boolean;
   notice?: string;
 }>;
 
@@ -83,7 +85,7 @@ export class BoardController {
     if (identity === this.#identity) return;
     this.#identity = identity; this.#ticket++;
     const owner = s.phase === 'authenticated' && s.user?.role === 'owner';
-    this.#publish({ owner, phase: owner ? 'idle' : 'denied', boardId: undefined, name: undefined, columns: [], cards: [], agents: [], boards: [], meta: undefined, templates: [], colors: [], labels: [], checklist: [], open: undefined, draft: undefined, comments: [], commentsPhase: 'idle',
+    this.#publish({ owner, phase: owner ? 'idle' : 'denied', boardId: undefined, name: undefined, columns: [], cards: [], agents: [], boards: [], meta: undefined, templates: [], colors: [], labels: [], checklist: [], overview:undefined,overviewError:false,open: undefined, draft: undefined, comments: [], commentsPhase: 'idle',
       notice: s.phase === 'authenticated' && !owner ? 'Only the owner can use the company board.' : undefined });
   };
   dispose() { this.#disposed = true; this.#ticket++; this.#unsubscribe(); this.#publish({ owner: false, phase: 'denied', cards: [], columns: [], comments: [] }); }
@@ -103,15 +105,20 @@ export class BoardController {
   #replaceCard(card: Card) {
     const exists = this.#state.cards.some(c => c.id === card.id);
     const cards = card.archived ? this.#state.cards.filter(c => c.id !== card.id) : exists ? this.#state.cards.map(c => c.id === card.id ? Object.freeze(card) : c) : [...this.#state.cards, Object.freeze(card)];
-    this.#publish({ cards: Object.freeze(cards) });
+    const last=Math.max(...this.#state.columns.map(c=>c.position));const done=this.#state.columns.find(c=>c.position===last)?.id;
+    const boards=this.#state.boards.map(b=>b.id===this.#state.boardId?Object.freeze({...b,cards:cards.length,open:cards.filter(c=>c.columnId!==done).length}):b);
+    this.#publish({cards:Object.freeze(cards),boards:Object.freeze(boards)});
   }
 
   /** Explicit read: every board (the company board is created on first use), the open board, and the team for assignees. */
   async load(boardId?: string) {
     if (!this.#state.owner || this.#busy() || this.#disposed) return;
     const ticket = ++this.#ticket;
-    this.#publish({ phase: 'loading', notice: undefined });
+    this.#publish({ phase: 'loading', notice: undefined,overview:undefined,overviewError:false });
     try {
+      const provision=await this.client.request({method:'POST',path:BOARDS_PATH+'/sync-departments',body:{}});
+      if(ticket!==this.#ticket)return;if(this.#refused(provision.status,provision.body))return;
+      const syncNotice=provision.status!==200?'Department boards could not be synchronized. Existing boards are shown; reload to try again.':undefined;
       const list = await this.client.request({ method: 'GET', path: BOARDS_PATH });
       if (ticket !== this.#ticket) return;
       if (this.#refused(list.status, list.body)) return;
@@ -132,12 +139,18 @@ export class BoardController {
           ? (team.body.agents as { id: string; name?: string }[]).map(a => Object.freeze({ id: a.id, name: a.name ?? a.id })) : [];
         this.#publish({ agents: Object.freeze(agents) });
       }
-      this.#publish({ phase: 'ready' });
+      this.#publish({ phase: 'ready',notice:syncNotice });
+      await this.readOverview(target,ticket);
     } catch { if (ticket === this.#ticket) this.#publish({ phase: 'error', notice: 'The board could not be read. Try again.' }); }
   }
 
+  private async readOverview(id:string,ticket=this.#ticket){
+    try{const r=await this.client.request({method:'GET',path:`${BOARDS_PATH}/${id}/overview`});if(ticket!==this.#ticket||this.#state.boardId!==id)return;if(r.status!==200)throw Error();this.#publish({overview:r.body as BoardState['overview'],overviewError:false});}catch{if(ticket===this.#ticket&&this.#state.boardId===id)this.#publish({overviewError:true});}
+  }
+  refreshOverview(){return this.#state.boardId?this.readOverview(this.#state.boardId):Promise.resolve();}
   /** Switch to another board. */
   async openBoard(id: string) {
+    if(this.hasUnsavedDraft()){this.#publish({notice:'Save or close the current task draft before switching boards.'});return;}
     if (!this.#state.boards.some(b => b.id === id) || id === this.#state.boardId) return;
     this.closeCard();
     this.#publish({ filter: Object.freeze({ text: '', agent: '', department: '' }) });
@@ -146,6 +159,7 @@ export class BoardController {
 
   /** A new board from a template; opens it. */
   async createBoard(input: NewBoard) {
+    if(this.hasUnsavedDraft()){this.#publish({notice:'Save or close the current task draft before creating a board.'});return false;}
     const body: Record<string, unknown> = { name: input.name.normalize('NFKC').replace(/\s+/g, ' ').trim(), template: input.template, color: input.color, departments: input.departments.map(normDep).filter(Boolean) };
     const description = input.description?.trim(); if (description) body.description = description;
     if (!body.name || !validNewBoard(body)) { this.#publish({ notice: 'A board needs a name (1–80 characters); departments use letters, numbers, spaces, - or _.' }); return false; }
@@ -157,6 +171,7 @@ export class BoardController {
 
   /** Rename, describe, recolour, change departments or archive the open board. */
   async updateBoard(patch: { name?: string; description?: string; color?: BoardColor; departments?: string[]; archived?: boolean }) {
+    if(patch.archived&&this.hasUnsavedDraft()){this.#publish({notice:'Save or close the current task draft before archiving this board.'});return false;}
     const m = this.#state.meta; if (!m) return false;
     const body: Record<string, unknown> = { expectedVersion: m.version };
     if (patch.name !== undefined) { const n = patch.name.normalize('NFKC').replace(/\s+/g, ' ').trim(); if (n !== m.name) body.name = n; }
@@ -176,6 +191,7 @@ export class BoardController {
   }
 
   setFilter(patch: Partial<BoardState['filter']>) { this.#publish({ filter: Object.freeze({ ...this.#state.filter, ...patch }) }); }
+  commentAuthor = (kind:'user'|'agent',id:string) => kind==='agent'?this.agentName(id):id===this.client.getSnapshot().user?.id?'You':'Team member';
   agentName = (id: string) => this.#state.agents.find(a => a.id === id)?.name ?? 'Former agent';
 
   async #write<T>(run: () => Promise<{ status: number; body: unknown }>, onOk: (body: T) => void, what: string, boardLevel = false): Promise<boolean> {
@@ -249,7 +265,10 @@ export class BoardController {
 
   // ---- Card panel ----
 
+  hasUnsavedDraft(){const card=this.#state.cards.find(c=>c.id===this.#state.open);return !!card&&!!this.#state.draft&&JSON.stringify(this.#state.draft)!==JSON.stringify(draftOf(card));}
   async openCard(cardId: string) {
+    if(this.#state.open===cardId)return;
+    if(this.hasUnsavedDraft()){this.#publish({notice:'Save or close the current task draft before opening another task.'});return;}
     const card = this.#state.cards.find(c => c.id === cardId);
     if (!card || !this.#state.owner) return;
     this.#publish({ open: cardId, draft: draftOf(card), comments: [], checklist: [], commentsPhase: 'loading', notice: undefined, chat: undefined });
@@ -279,6 +298,7 @@ export class BoardController {
   refreshChat() { if (this.#state.open) void this.#loadChat(this.#state.open); }
   /** Open a board and one of its cards (from a chat card block). */
   async reveal(boardId: string, cardId: string) {
+    if(this.hasUnsavedDraft()){this.#publish({notice:'Save or close the current task draft before opening a related task.'});return;}
     if (!this.#state.owner) return;
     if (this.#state.boardId !== boardId || !this.#state.cards.some(c => c.id === cardId)) { this.closeCard(); await this.load(boardId); }
     if (this.#state.cards.some(c => c.id === cardId)) await this.openCard(cardId);

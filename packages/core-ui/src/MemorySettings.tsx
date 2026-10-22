@@ -100,10 +100,10 @@ function RulesPane({ client, health, scopes }: { client: SessionClient; health: 
     <label className="settings-row"><span>Forget what is in Trash after<span className="fine-print">Empty Trash is the only action in Memory that asks first, because it cannot be undone.</span></span>
       <select value={trashDays ?? 30} disabled={trashDays === null} onChange={e => void setTrash(Number(e.target.value))}><option value={7}>7 days</option><option value={30}>30 days</option><option value={90}>90 days</option><option value={0}>Never on its own</option></select></label>
     {saved && <p className="fine-print" role="status">{saved}</p>}
-    <h4>What every agent does in a project, without being told</h4>
+    <details className="preference-help"><summary>Default project behaviour</summary><h4>What every agent does in a project, without being told</h4>
     <p className="fine-print">This comes with Dpro’s skill for every agent and coding app. It is on for all projects; you never have to remind it.</p>
     <ul className="mem-standing">{STANDING.map(([a, b]) => <li key={a}><UiIcon name="check" size={13}/><span><b>{a}</b><span className="fine-print">{b}</span></span></li>)}</ul>
-    <p className="fine-print">DESIGN.md is written into each project folder (only between Dpro's markers). Switch it off per project in Memory › the project › Design.</p>
+    <p className="fine-print">DESIGN.md is written into each project folder (only between Dpro's markers). Switch it off per project in Memory › the project › Design.</p></details>
   </div>;
 }
 
