@@ -65,3 +65,9 @@ f49fb6d6ddb1922becc5f7372d2c2679e4422eaf:backend/test/agents/OLLAMA_TESTING_GUID
 2adf090c2ec4cdb5c8a458aa76bf8af405d0752a:docs/api-testing/auth.mdc:generic-api-key:37
 # Abbreviated JWT documentation placeholder with ellipsis, not a valid signed token.
 2adf090c2ec4cdb5c8a458aa76bf8af405d0752a:docs/api-testing/auth.mdc:generic-api-key:38
+
+# Synthetic redaction fixture: alphabet followed by digits, not an issued token.
+5e4b1648e5b0b455e543a3001ba715eb0d68b90f:packages/backend/test/memory-bridge.test.mjs:github-pat:71
+
+# Synthetic redaction fixture: alphabet followed by digits, not an issued token.
+1520ef1deae70797cab0cfbca2589f83232c29de:packages/backend/test/agent-handoff.test.mjs:github-pat:30
