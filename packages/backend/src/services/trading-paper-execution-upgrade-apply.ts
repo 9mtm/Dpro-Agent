@@ -76,10 +76,10 @@ function validate(db:Database.Database,ownerId:string,now:number){
  checkProof(db,e,review);
  if(fingerprintReviewedPaperInstallationInTransaction(db,ownerId,now)!==a.installationFingerprint)fail();
  const bindings=db.prepare('SELECT * FROM main.paper_execution_bindings WHERE owner_id=? ORDER BY consent_id LIMIT 1001').all(ownerId) as Binding[];
- const current=inspectPaperRuntimeStorageInTransaction(db,ownerId,now).filter(c=>c.installationId===o.installation_id).sort((x,y)=>x.consentId.localeCompare(y.consentId));
- if(bindings.length!==a.consents.length||bindings.length!==current.length||bindings.length>1000||bindingsHash(bindings)!==e.bindings_hash)fail();
+ const current=[...inspectPaperRuntimeStorageInTransaction(db,ownerId,now)].sort((x,y)=>x.consentId.localeCompare(y.consentId));
+ if(bindings.length!==a.consents.length||current.length<bindings.length||current.length>1000||bindings.length>1000||bindingsHash(bindings)!==e.bindings_hash)fail();
  for(let i=0;i<bindings.length;i++){
-  const b=bindings[i],original=a.consents[i];if(b.consent_id!==original.consentId||b.consent_id!==current[i].consentId||b.overlay_id!==o.id||b.owner_id!==ownerId||b.definition_id!==original.definitionId||b.definition_digest!==original.definitionDigest||b.created_at!==o.created_at||typeof b.baseline_json!=='string'||Buffer.byteLength(b.baseline_json,'utf8')>8192||sha(b.baseline_json)!==b.baseline_hash)fail();
+  const b=bindings[i],original=a.consents[i];if(b.consent_id!==original.consentId||!current.some(c=>c.consentId===b.consent_id)||b.overlay_id!==o.id||b.owner_id!==ownerId||b.definition_id!==original.definitionId||b.definition_digest!==original.definitionDigest||b.created_at!==o.created_at||typeof b.baseline_json!=='string'||Buffer.byteLength(b.baseline_json,'utf8')>8192||sha(b.baseline_json)!==b.baseline_hash)fail();
   const stored=JSON.parse(b.baseline_json);if(!plain(stored,['version','original','prefix','runtimePreservation'])||stored.version!==1||JSON.stringify(stored)!==b.baseline_json||JSON.stringify(stored.original)!==JSON.stringify(original))fail();
   const proved=d.retained[i];if(!proved||proved.consentId!==b.consent_id||JSON.stringify(stored.prefix)!==JSON.stringify(proved.preservationPrefix)||JSON.stringify(stored.runtimePreservation)!==JSON.stringify(proved.runtimePreservation))fail();
   const runtimePreservation=readPaperRuntimePreservationInTransaction(db,ownerId,b.consent_id,now);
@@ -87,6 +87,9 @@ function validate(db:Database.Database,ownerId:string,now:number){
   const s=readTrustedPaperRuntimeConsentInTransaction(db,b.consent_id,now),p=readPaperDispatchPreservationPrefixInTransaction(db,ownerId,b.definition_id,original.attemptCount,now);
   if(JSON.stringify(p)!==JSON.stringify(stored.prefix)||s.definitionId!==b.definition_id||s.definitionDigest!==b.definition_digest||s.createdAt!==original.createdAt||original.status==='revoked'&&s.status!=='revoked'||s.definition.installationId!==original.installationId||s.definition.installationRevision!==original.installationRevision||s.definition.manifestDigest!==original.manifestDigest||JSON.stringify(s.definition.limits)!==JSON.stringify(original.limits)||s.journal.attemptCount<original.attemptCount)fail();
  }
+ if(current.some(c=>c.installationId!==o.installation_id))fail();
+ const originals=new Set(a.consents.map(c=>c.consentId));
+ for(const extra of current){if(originals.has(extra.consentId))continue;const later=readTrustedPaperRuntimeConsentInTransaction(db,extra.consentId,now);if(later.ownerId!==ownerId||later.definition.installationId!==o.installation_id||later.definition.installationRevision!==o.effective_revision||later.definition.manifestDigest!==o.target_manifest_digest||later.reviewCreatedAt<o.created_at||later.createdAt<o.created_at)fail();}
  return {overlay:o,event:e,review};
 }
 function projection(v:ReturnType<typeof validate>,replayed?:boolean){return Object.freeze({ok:true as const,overlayId:v.overlay.id,reviewId:v.overlay.review_id,installationId:v.overlay.installation_id,baselineRevision:v.overlay.baseline_revision,effectiveRevision:v.overlay.effective_revision,baselineManifestDigest:v.overlay.baseline_manifest_digest,effectiveManifestDigest:v.overlay.target_manifest_digest,capability:'paper.runtime.execute' as const,executionGranted:true as const,runtimeConnected:false as const,...(replayed===undefined?{}:{replayed})});}
@@ -132,8 +135,15 @@ function assertExecutionConsent(db:Database.Database,ownerId:string,consentId:st
  if(dbDriver()!=='sqlite'||getDatabase().getDb()!==db||!db.inTransaction||!uuid(consentId)||!uuid(definitionId)||!hash(definitionDigest))fail();
  human(db,{kind:'user',role:'owner',userId:ownerId},now);
  const effective=validate(db,ownerId,now),bound=effective.review.definition.affected.consents.find(c=>c.consentId===consentId);
- if(!bound||bound.definitionId!==definitionId||bound.definitionDigest!==definitionDigest)fail();
+ const persisted=readTrustedPaperRuntimeConsentInTransaction(db,consentId,now);
+ if(bound?(bound.definitionId!==definitionId||bound.definitionDigest!==definitionDigest):(persisted.definition.installationId!==effective.overlay.installation_id||persisted.definition.installationRevision!==effective.overlay.effective_revision||persisted.definition.manifestDigest!==effective.overlay.target_manifest_digest||persisted.reviewCreatedAt<effective.overlay.created_at||persisted.createdAt<effective.overlay.created_at))fail();
  const current=assertPaperRuntimeEligibilityInTransaction(db,consentId,now,afterSettlement);
  if(current.ownerId!==ownerId||current.definitionId!==definitionId||current.definitionDigest!==definitionDigest)fail();
  return current;
+}
+
+/** Current effective installation binding only; validates original overlay and all historical consent grants without eligibility recursion. */
+export function readEffectiveInstallationInTransaction(db:Database.Database,ownerId:string,now:number){
+ if(dbDriver()!=='sqlite'||getDatabase().getDb()!==db||!db.inTransaction)fail();human(db,{kind:'user',role:'owner',userId:ownerId},now);
+ const v=validate(db,ownerId,now);return Object.freeze({installationId:v.overlay.installation_id,baselineRevision:v.overlay.baseline_revision,effectiveRevision:v.overlay.effective_revision,manifestDigest:v.overlay.target_manifest_digest,createdAt:v.overlay.created_at,runtimeConnected:false as const});
 }

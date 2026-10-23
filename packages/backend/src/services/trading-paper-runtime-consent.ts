@@ -1,4 +1,8 @@
 /** Reviewed deterministic paper dispatch consent only. No worker, timer, provider or trade execution. */
+import {readEffectiveInstallationInTransaction} from './trading-paper-execution-upgrade-apply.js';
+import {assertNoPaperExecutionOverlay} from './trading-paper-execution-overlay-schema.js';
+import {BUNDLED_PAPER_INSTALLATION} from './trading-paper-manifest.js';
+import {PAPER_EXECUTION_UPGRADE_CANDIDATE} from './trading-paper-manifest-catalog.js';
 import Database from 'better-sqlite3';
 import {createHash,randomUUID} from 'node:crypto';
 import {getDatabase} from '../db/index.js';
@@ -62,11 +66,18 @@ function input(value:unknown){
 }
 type Request=ReturnType<typeof input>;
 type Definition={version:1;consentId:string;definitionId:string;runtimePrincipal:typeof principal;currency:string;activationReviewId:string;activationReviewHash:string;activationDefinitionHash:string;dispatch:PaperDispatchDefinition;dispatchDigest:string;runtimeConnected:false};
-function definition(db:Database.Database,ownerId:string,r:Request,consentId:string,definitionId:string,now:number,allowExhausted=false):Definition{
+function definition(db:Database.Database,ownerId:string,r:Request,consentId:string,definitionId:string,now:number,allowExhausted=false,binding:'base'|'effective'='base'):Definition{
  const target=readReviewedPaperBotTarget(db,ownerId,r.botId,now,allowExhausted);if(!target.ok)fail();const d=target.definition;
  if(r.limits.expiresAt> d.expiresAt||r.limits.cadenceMs<Math.max(d.cooldownMs,d.limits.cooldownMs,1000)||!d.limits.symbols.includes(r.strategy.symbol)||d.execution.unitScale!==1||r.strategy.side==='buy'&&r.strategy.amount>d.limits.maxOrder)fail();
- const captured=capturePaperDispatchDefinition({version:1,mode:'paper',ownerId,botId:r.botId,accountId:d.accountId,policyId:d.policyId,policyRevision:d.policyRevision,appRevision:d.appRevision,installationId:target.installationId,installationRevision:target.installationRevision,manifestDigest:target.manifestDigest,policyHash:d.policyHash,profileHash:d.profileHash,quoteSource:'stored-paper-quote',strategy:r.strategy,limits:r.limits},now);if(!captured)fail();
+ const installed=binding==='effective'?readEffectiveInstallationInTransaction(db,ownerId,now):{installationId:target.installationId,effectiveRevision:target.installationRevision,manifestDigest:target.manifestDigest};
+ const captured=capturePaperDispatchDefinition({version:1,mode:'paper',ownerId,botId:r.botId,accountId:d.accountId,policyId:d.policyId,policyRevision:d.policyRevision,appRevision:d.appRevision,installationId:installed.installationId,installationRevision:installed.effectiveRevision,manifestDigest:installed.manifestDigest,policyHash:d.policyHash,profileHash:d.profileHash,quoteSource:'stored-paper-quote',strategy:r.strategy,limits:r.limits},now);if(!captured)fail();
  return {version:1,consentId,definitionId,runtimePrincipal:principal,currency:d.currency,activationReviewId:target.reviewId,activationReviewHash:target.activationReviewHash,activationDefinitionHash:target.activationDefinitionHash,dispatch:captured.definition as PaperDispatchDefinition,dispatchDigest:captured.digest,runtimeConnected:false};
+}
+/** Saved proof-bound metadata chooses the decoder; callers never supply a binding selector. */
+function savedBinding(d:Definition):'base'|'effective'{
+ if(d.dispatch.manifestDigest===BUNDLED_PAPER_INSTALLATION.manifestDigest)return 'base';
+ if(d.dispatch.manifestDigest===PAPER_EXECUTION_UPGRADE_CANDIDATE.manifestDigest)return 'effective';
+ fail();
 }
 type Review={id:string;owner_id:string;session_hash:string;token_version:number;factor_version:number;policy_version:number;definition_json:string;definition_hash:string;review_hash:string;created_at:number;expires_at:number;status:string};
 const reviewHash=(r:Review)=>sha(JSON.stringify(['paper-runtime-review-v1',r.id,r.owner_id,r.session_hash,r.token_version,r.factor_version,r.policy_version,r.definition_hash,r.created_at,r.expires_at]));
@@ -80,7 +91,7 @@ function savedReview(db:Database.Database,ownerId:string,id:string,now:number){
 function currentReview(db:Database.Database,c:OperationContext,actor:Actor,id:string,now:number,historical=false){
  const version=active(db,c,actor,now),saved=savedReview(db,c.userId,id,now),r=saved.row;
  if(r.session_hash!==c.sessionHash||r.token_version!==c.tokenVersion||r.factor_version!==c.factorVersion||r.policy_version!==version)fail();
- if(!historical){if(r.status!=='staged'||r.expires_at<=now)fail();const d=saved.definition,recomputed=definition(db,c.userId,{botId:d.dispatch.botId,strategy:d.dispatch.strategy,limits:d.dispatch.limits},d.consentId,d.definitionId,now);if(JSON.stringify(recomputed)!==r.definition_json)fail();}
+ if(!historical){if(r.status!=='staged'||r.expires_at<=now)fail();const d=saved.definition,binding=savedBinding(d);if(binding==='base')assertNoPaperExecutionOverlay(db,c.userId);const recomputed=definition(db,c.userId,{botId:d.dispatch.botId,strategy:d.dispatch.strategy,limits:d.dispatch.limits},d.consentId,d.definitionId,now,false,binding);if(JSON.stringify(recomputed)!==r.definition_json)fail();}
  return saved;
 }
 const operation=(r:Review):PaperRuntimeConsentOperation=>({kind:'paper_runtime_consent',reviewId:r.id,reviewHash:r.review_hash,reviewExpiresAt:r.expires_at,policyVersion:r.policy_version});
@@ -104,16 +115,17 @@ function history(db:Database.Database,ownerId:string,id:string,now:number,expect
  const revocationFingerprint=revocation?sha(JSON.stringify(['paper-runtime-original-revocation-v1',revocation])):null;
  return {saved,consent,revocation,journal,immutableProvenanceFingerprint,revocationFingerprint,provenanceFingerprint:sha(JSON.stringify(['paper-runtime-preservation-v1',r,consent,e,proof,revocation??null]))};
 }
-function publicReview(s:ReturnType<typeof savedReview>){const d=s.definition;return Object.freeze({ok:true as const,id:s.row.id,consentId:d.consentId,botId:d.dispatch.botId,accountId:d.dispatch.accountId,expiresAt:s.row.expires_at,runtimePrincipal:principal,currency:d.currency,amountUnit:d.dispatch.strategy.side==='buy'?'account_minor_units' as const:'whole_asset_units' as const,engineExecution:false as const,providerAccess:false as const,modelCosts:false as const,strategy:Object.freeze({...d.dispatch.strategy}),limits:Object.freeze({...d.dispatch.limits}),runtimeConnected:false as const,startsWorker:false as const,connectsBroker:false as const});}
-function publicConsent(h:ReturnType<typeof history>,replayed?:boolean){const d=h.saved.definition;return Object.freeze({ok:true as const,consentId:d.consentId,reviewId:h.saved.row.id,botId:d.dispatch.botId,definitionId:d.definitionId,definitionDigest:d.dispatchDigest,status:h.consent.status as 'granted'|'revoked',createdAt:h.consent.created_at as number,revokedAt:h.revocation?.created_at as number|undefined??null,runtimePrincipal:principal,currency:d.currency,amountUnit:d.dispatch.strategy.side==='buy'?'account_minor_units' as const:'whole_asset_units' as const,engineExecution:false as const,providerAccess:false as const,modelCosts:false as const,strategy:Object.freeze({...d.dispatch.strategy}),limits:Object.freeze({...d.dispatch.limits}),attemptCount:h.journal.attemptCount,runtimeConnected:false as const,...(replayed===undefined?{}:{replayed})});}
+function effectiveDisclosure(d:Definition){return savedBinding(d)==='effective'?{installationBinding:Object.freeze({kind:'reviewed_execution_overlay' as const,installationId:d.dispatch.installationId,revision:d.dispatch.installationRevision,manifestDigest:d.dispatch.manifestDigest})}:{};}
+function publicReview(s:ReturnType<typeof savedReview>){const d=s.definition;return Object.freeze({...effectiveDisclosure(d),ok:true as const,id:s.row.id,consentId:d.consentId,botId:d.dispatch.botId,accountId:d.dispatch.accountId,expiresAt:s.row.expires_at,runtimePrincipal:principal,currency:d.currency,amountUnit:d.dispatch.strategy.side==='buy'?'account_minor_units' as const:'whole_asset_units' as const,engineExecution:false as const,providerAccess:false as const,modelCosts:false as const,strategy:Object.freeze({...d.dispatch.strategy}),limits:Object.freeze({...d.dispatch.limits}),runtimeConnected:false as const,startsWorker:false as const,connectsBroker:false as const});}
+function publicConsent(h:ReturnType<typeof history>,replayed?:boolean){const d=h.saved.definition;return Object.freeze({...effectiveDisclosure(d),ok:true as const,consentId:d.consentId,reviewId:h.saved.row.id,botId:d.dispatch.botId,definitionId:d.definitionId,definitionDigest:d.dispatchDigest,status:h.consent.status as 'granted'|'revoked',createdAt:h.consent.created_at as number,revokedAt:h.revocation?.created_at as number|undefined??null,runtimePrincipal:principal,currency:d.currency,amountUnit:d.dispatch.strategy.side==='buy'?'account_minor_units' as const:'whole_asset_units' as const,engineExecution:false as const,providerAccess:false as const,modelCosts:false as const,strategy:Object.freeze({...d.dispatch.strategy}),limits:Object.freeze({...d.dispatch.limits}),attemptCount:h.journal.attemptCount,runtimeConnected:false as const,...(replayed===undefined?{}:{replayed})});}
 /** Explicit four-table consent storage only; dispatch journal and trading schemas remain prerequisites. */
 export function initializePaperRuntimeConsent(db:Database.Database){identity(db);db.transaction(()=>{schema(db,false);db.exec(schemaSQL);schema(db);}).immediate();}
-export async function stagePaperRuntimeConsent(db:Database.Database,context:OperationContext,actor:Actor,value:unknown,now=Date.now()){
+async function stageRuntime(db:Database.Database,context:OperationContext,actor:Actor,value:unknown,now:number,effective:boolean){
  try{identity(db);const c=capture(context,actor,now),request=input(value),id=randomUUID(),consentId=randomUUID(),definitionId=randomUUID();return await sql().tx(function*(){
-  const version=active(db,c,actor,now);if(db.prepare('SELECT 1 FROM main.paper_runtime_consents WHERE owner_id=? AND bot_id=?').get(c.userId,request.botId))fail();
+  const version=active(db,c,actor,now);if(!effective)assertNoPaperExecutionOverlay(db,c.userId);if(db.prepare('SELECT 1 FROM main.paper_runtime_consents WHERE owner_id=? AND bot_id=?').get(c.userId,request.botId))fail();
   // Journal prerequisite is read-only; no authority inferred from this empty schema.
   if(!db.prepare("SELECT 1 FROM main.sqlite_master WHERE type='table' AND name='paper_dispatch_definitions'").get()||!db.prepare("SELECT 1 FROM main.sqlite_master WHERE type='table' AND name='paper_dispatch_attempts'").get())fail();
-  const d=definition(db,c.userId,request,consentId,definitionId,now),json=JSON.stringify(d);if(Buffer.byteLength(json,'utf8')>16384)fail();
+  const d=definition(db,c.userId,request,consentId,definitionId,now,false,effective?'effective':'base'),json=JSON.stringify(d);if(Buffer.byteLength(json,'utf8')>16384)fail();
   if((db.prepare("SELECT count(*) n FROM main.paper_runtime_reviews WHERE owner_id=? AND status='staged' AND expires_at>?").get(c.userId,now) as {n:number}).n>=8)fail();
   const r:Review={id,owner_id:c.userId,session_hash:c.sessionHash,token_version:c.tokenVersion,factor_version:c.factorVersion,policy_version:version,definition_json:json,definition_hash:sha(json),review_hash:'',created_at:now,expires_at:now+300000,status:'staged'};r.review_hash=reviewHash(r);
   db.prepare('INSERT INTO main.paper_runtime_reviews VALUES(?,?,?,?,?,?,?,?,?,?,?,?)').run(r.id,r.owner_id,r.session_hash,r.token_version,r.factor_version,r.policy_version,r.definition_json,r.definition_hash,r.review_hash,r.created_at,r.expires_at,r.status);return publicReview(currentReview(db,c,actor,id,now));
@@ -134,7 +146,8 @@ export async function applyPaperRuntimeConsent(db:Database.Database,context:Oper
   const e={id:randomUUID(),review_id:id,consent_id:d.consentId,owner_id:c.userId,session_hash:c.sessionHash,token_version:c.tokenVersion,factor_version:c.factorVersion,policy_version:r.policy_version,definition_hash:r.definition_hash,review_hash:r.review_hash,receipt_hash:receiptHash,created_at:now};
   db.prepare('INSERT INTO main.paper_runtime_events VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?)').run(...eventFields.map(k=>e[k as keyof typeof e]),eventHash(e));
   if(db.prepare("UPDATE main.paper_runtime_reviews SET status='applied' WHERE id=? AND status='staged'").run(id).changes!==1)fail();
-  if(active(db,c,actor,now)!==r.policy_version||JSON.stringify(definition(db,c.userId,{botId:d.dispatch.botId,strategy:d.dispatch.strategy,limits:d.dispatch.limits},d.consentId,d.definitionId,now))!==r.definition_json)fail();
+  if(savedBinding(d)==='base')assertNoPaperExecutionOverlay(db,c.userId);
+  if(active(db,c,actor,now)!==r.policy_version||JSON.stringify(definition(db,c.userId,{botId:d.dispatch.botId,strategy:d.dispatch.strategy,limits:d.dispatch.limits},d.consentId,d.definitionId,now,false,savedBinding(d)))!==r.definition_json)fail();
   return publicConsent(history(db,c.userId,d.consentId,now,receiptHash),false);
  },{immediate:true});}catch{return deny();}
 }
@@ -196,7 +209,7 @@ export function readTrustedPaperRuntimeConsentInTransaction(db:Database.Database
  const actor:Actor={kind:'user',role:'owner',userId:row.owner_id};
  human(db,actor,now);
  const h=history(db,row.owner_id,consentId,now),d=h.saved.definition;
- return Object.freeze({ownerId:row.owner_id,consentId,definitionId:d.definitionId,definitionDigest:d.dispatchDigest,currency:d.currency,runtimePrincipal:principal,status:h.consent.status as 'granted'|'revoked',createdAt:h.consent.created_at as number,definition:h.journal.definition,journal:h.journal,runtimeConnected:false as const});
+ return Object.freeze({ownerId:row.owner_id,consentId,definitionId:d.definitionId,definitionDigest:d.dispatchDigest,currency:d.currency,runtimePrincipal:principal,status:h.consent.status as 'granted'|'revoked',createdAt:h.consent.created_at as number,reviewCreatedAt:h.saved.row.created_at,definition:h.journal.definition,journal:h.journal,runtimeConnected:false as const});
 }
 /** Trusted current gate, not a public grant. Caller must own BEGIN IMMEDIATE at the actual effects boundary. */
 export function assertPaperRuntimeEligibilityInTransaction(db:Database.Database,consentId:string,now:number,allowExhausted=false){
@@ -204,7 +217,7 @@ export function assertPaperRuntimeEligibilityInTransaction(db:Database.Database,
  const snapshot=readTrustedPaperRuntimeConsentInTransaction(db,consentId,now);
  if(snapshot.status!=='granted')fail();
  const h=history(db,snapshot.ownerId,consentId,now),d=h.saved.definition;
- const current=definition(db,snapshot.ownerId,{botId:d.dispatch.botId,strategy:d.dispatch.strategy,limits:d.dispatch.limits},d.consentId,d.definitionId,now,allowExhausted);
+ const current=definition(db,snapshot.ownerId,{botId:d.dispatch.botId,strategy:d.dispatch.strategy,limits:d.dispatch.limits},d.consentId,d.definitionId,now,allowExhausted,savedBinding(d));
  if(JSON.stringify(current)!==h.saved.row.definition_json)fail();
  return snapshot;
 }
@@ -240,3 +253,8 @@ export function readPaperRuntimePreservationInTransaction(db:Database.Database,o
  if(dbDriver()!=='sqlite'||getDatabase().getDb()!==db||!db.inTransaction||!uint(now,1))fail();schema(db);human(db,{kind:'user',role:'owner',userId:ownerId},now);
  const h=history(db,ownerId,consentId,now);return Object.freeze({immutableProvenanceFingerprint:h.immutableProvenanceFingerprint,revocationFingerprint:h.revocationFingerprint});
 }
+
+/** Original v1 staging remains pre-overlay only, so no late unbound legacy grant is created. */
+export async function stagePaperRuntimeConsent(db:Database.Database,context:OperationContext,actor:Actor,value:unknown,now=Date.now()){return stageRuntime(db,context,actor,value,now,false);}
+/** Separate explicit effective-binding staging. Same runtime proof domain, one-ever bot consent and explicit apply. */
+export async function stageEffectivePaperRuntimeConsent(db:Database.Database,context:OperationContext,actor:Actor,value:unknown,now=Date.now()){return stageRuntime(db,context,actor,value,now,true);}
