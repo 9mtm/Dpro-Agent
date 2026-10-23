@@ -11,7 +11,8 @@ export type ReviewerVoteOperation={kind:'reviewer_vote';policyId:string;policyRe
 export type ScheduleAuthorizationOperation={kind:'schedule_authorization';jobId:string;jobRevision:number;authorizationRevision:number;definitionHash:string;authorizationExpiresAt:number;policyVersion:number};
 export type ScheduleRevocationOperation={kind:'schedule_authorization_revoke';jobId:string;authorizationRevision:number;paramsHash:string;policyVersion:number};
 export type SkillInstallOperation={kind:'skill_install';reviewId:string;reviewHash:string;reviewExpiresAt:number;policyVersion:number};
-export type VerificationOperation=SkillInstallOperation|ApprovalOperation|ReviewerPolicyOperation|ReviewerPolicyRevokeOperation|ReviewerVoteOperation|ScheduleAuthorizationOperation|ScheduleRevocationOperation;
+export type PaperBotActivationOperation={kind:'paper_bot_activation';reviewId:string;reviewHash:string;reviewExpiresAt:number;policyVersion:number};
+export type VerificationOperation=PaperBotActivationOperation|SkillInstallOperation|ApprovalOperation|ReviewerPolicyOperation|ReviewerPolicyRevokeOperation|ReviewerVoteOperation|ScheduleAuthorizationOperation|ScheduleRevocationOperation;
 const hash=(value:string)=>createHash('sha256').update(value).digest('hex');
 /** Server-derived action metadata only; never copy context/policy identity from HTTP input. */
 export function approvalOperationHash(operation:ApprovalOperation):string{
@@ -49,7 +50,17 @@ export function skillInstallOperationHash(operation:SkillInstallOperation):strin
  if(!operation||Object.keys(operation).sort().join(',')!=='kind,policyVersion,reviewExpiresAt,reviewHash,reviewId'||operation.kind!=='skill_install'||typeof operation.reviewId!=='string'||!/^[a-f0-9]{8}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{12}$/.test(operation.reviewId)||typeof operation.reviewHash!=='string'||!/^[a-f0-9]{64}$/.test(operation.reviewHash)||!Number.isSafeInteger(operation.reviewExpiresAt)||operation.reviewExpiresAt<1||!Number.isSafeInteger(operation.policyVersion)||operation.policyVersion<1)throw Error('Invalid skill install operation');
  return hash(JSON.stringify(['reviewed-markdown-install-proof-v1',operation.reviewId,operation.reviewHash,operation.reviewExpiresAt,operation.policyVersion]));
 }
+/** Separate exact domain: this proof cannot authorize skills, schedules, tools or any bot effects by itself. */
+export function paperBotActivationOperationHash(operation:PaperBotActivationOperation):string{
+ const keys=['kind','reviewId','reviewHash','reviewExpiresAt','policyVersion'];
+ if(!operation||typeof operation!=='object'||![Object.prototype,null].includes(Object.getPrototypeOf(operation)))throw Error('Invalid paper bot activation operation');
+ const actual=Reflect.ownKeys(operation);
+ if(actual.length!==keys.length||actual.some(key=>typeof key!=='string'||!keys.includes(key)||!Object.hasOwn(Object.getOwnPropertyDescriptor(operation,key)!,'value')))throw Error('Invalid paper bot activation operation');
+ if(operation.kind!=='paper_bot_activation'||typeof operation.reviewId!=='string'||!/^[a-f0-9]{8}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{12}$/.test(operation.reviewId)||typeof operation.reviewHash!=='string'||!/^[a-f0-9]{64}$/.test(operation.reviewHash)||!Number.isSafeInteger(operation.reviewExpiresAt)||operation.reviewExpiresAt<1||!Number.isSafeInteger(operation.policyVersion)||operation.policyVersion<1)throw Error('Invalid paper bot activation operation');
+ return hash(JSON.stringify(['paper-bot-activation-proof-v1',operation.reviewId,operation.reviewHash,operation.reviewExpiresAt,operation.policyVersion]));
+}
 function operationHash(operation:VerificationOperation):string{
+ if(operation?.kind==='paper_bot_activation')return paperBotActivationOperationHash(operation);
  if(operation?.kind==='skill_install')return skillInstallOperationHash(operation);
  if(operation?.kind==='schedule_authorization_revoke')return scheduleRevocationOperationHash(operation);
  if(operation?.kind==='schedule_authorization')return scheduleAuthorizationOperationHash(operation);
@@ -60,6 +71,7 @@ function operationHash(operation:VerificationOperation):string{
 function binding(context:OperationContext,operation:VerificationOperation,now:number):VerificationBinding{
  if(!context||typeof context.userId!=='string'||!context.userId||context.userId.length>200||typeof context.sessionHash!=='string'||!/^[a-f0-9]{64}$/.test(context.sessionHash)||!Number.isSafeInteger(context.tokenVersion)||context.tokenVersion<1||!Number.isSafeInteger(context.factorVersion)||context.factorVersion<1||!Number.isSafeInteger(now)||now<0||now>Number.MAX_SAFE_INTEGER-300000)throw Error('Invalid operation verification context');
  if(operation?.kind==='schedule_authorization'&&(operation.authorizationExpiresAt<=now||operation.authorizationExpiresAt-now>7776000000))throw Error('Invalid scheduled authorization expiry');
+ if(operation?.kind==='paper_bot_activation'&&(operation.reviewExpiresAt<=now||operation.reviewExpiresAt-now>300000))throw Error('Invalid paper bot review expiry');
  if(operation?.kind==='skill_install'&&(operation.reviewExpiresAt<=now||operation.reviewExpiresAt-now>300000))throw Error('Invalid skill review expiry');
  return {...context,purpose:'reverify',operationHash:operationHash(operation)};
 }
