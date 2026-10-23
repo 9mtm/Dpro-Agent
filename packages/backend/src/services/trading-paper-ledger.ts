@@ -1,4 +1,4 @@
-/** SQLite-only reservation foundation. No fills, broker calls or runtime registration. */
+/** SQLite-only reservations and settlement-aware admission. No broker calls or runtime registration. */
 import type Database from 'better-sqlite3';
 import {createHash, randomUUID} from 'node:crypto';
 import {admitPaperOrder} from './trading-paper-policy.js';
@@ -12,25 +12,36 @@ export interface PaperProposal {
  accountId:string; policyId:string; policyRevision:number; appRevision:number; currency:string;
  symbol:string; side:'buy'|'sell'; notional:number; idempotencyKey:string;
 }
-type Status='pending'|'cancelled';
+type Status='pending'|'cancelled'|'filled';
 type Result={ok:true;reservationId:string;replayed:boolean;notional:number;status:Status}|{ok:false;reason:string};
 const object=(x:unknown):x is Record<string,unknown>=>!!x&&typeof x==='object'&&!Array.isArray(x)&&[Object.prototype,null].includes(Object.getPrototypeOf(x))&&Reflect.ownKeys(x).every(k=>typeof k==='string'&&Object.hasOwn(Object.getOwnPropertyDescriptor(x,k)!,'value'));
 const id=(x:unknown):x is string=>typeof x==='string'&&/^[A-Za-z0-9][A-Za-z0-9_.:-]{0,127}$/.test(x);
 const uint=(x:unknown,min=0):x is number=>typeof x==='number'&&Number.isSafeInteger(x)&&x>=min;
 type Account={owner_id:string;currency:string;mode:string;cash:number;exposure:number;app_enabled:number;app_revision:number;stopped:number};
 const validAccount=(a:Account)=>a.mode==='paper'&&/^[A-Z]{3}$/.test(a.currency)&&uint(a.cash)&&uint(a.exposure)&&uint(a.app_revision,1)&&[0,1].includes(a.app_enabled)&&[0,1].includes(a.stopped);
-function totals(db:Database.Database,accountId:string,policyId='',now=0){
+export function paperLedgerTotals(db:Database.Database,accountId:string,policyId='',now=0,excludeAcceptedId=''){
+ const unfilled=hasPaperTable(db,'paper_fills')?"AND NOT EXISTS(SELECT 1 FROM paper_fills f WHERE f.account_id=paper_reservations.account_id AND f.reservation_id=paper_reservations.reservation_id)":'';
  try{
-  const row=db.prepare(`SELECT COALESCE(SUM(CASE WHEN status='pending' THEN notional ELSE 0 END),0) reserved,
-   COUNT(*) count,COALESCE(SUM(CASE WHEN status='pending' THEN 1 ELSE 0 END),0) pending,
-   COALESCE(SUM(CASE WHEN policy_id=? AND created_at>=? AND created_at<? THEN 1 ELSE 0 END),0) orders,
-   COALESCE(MAX(CASE WHEN policy_id=? THEN created_at ELSE 0 END),0) last,
+  const row=db.prepare(`SELECT COALESCE(SUM(CASE WHEN status='pending' ${unfilled} THEN notional ELSE 0 END),0) reserved,
+   COUNT(*) count,COALESCE(SUM(CASE WHEN status='pending' ${unfilled} THEN 1 ELSE 0 END),0) pending,
+   COALESCE(SUM(CASE WHEN policy_id=? AND reservation_id<>? AND created_at>=? AND created_at<? THEN 1 ELSE 0 END),0) orders,
+   COALESCE(MAX(CASE WHEN policy_id=? AND reservation_id<>? THEN created_at ELSE 0 END),0) last,
    COALESCE(SUM(CASE WHEN status NOT IN ('pending','cancelled') OR typeof(notional)!='integer' OR notional<=0 OR notional>9007199254740991 OR typeof(created_at)!='integer' OR created_at<0 OR created_at>9007199254740991 OR (status='pending' AND cancelled_at IS NOT NULL) OR (status='cancelled' AND (cancelled_at IS NULL OR typeof(cancelled_at)!='integer' OR cancelled_at<created_at OR cancelled_at>9007199254740991)) THEN 1 ELSE 0 END),0) invalid
-   FROM paper_reservations WHERE account_id=?`).safeIntegers(true).get(policyId,Math.floor(now/86400000)*86400000,Math.floor(now/86400000)*86400000+86400000,policyId,accountId) as Record<string,bigint>;
+   FROM paper_reservations WHERE account_id=?`).safeIntegers(true).get(policyId,excludeAcceptedId,Math.floor(now/86400000)*86400000,Math.floor(now/86400000)*86400000+86400000,policyId,excludeAcceptedId,accountId) as Record<string,bigint>;
   if(Object.values(row).some(n=>n<0n||n>BigInt(Number.MAX_SAFE_INTEGER))||row.invalid!==0n)return null;
   return {reserved:Number(row.reserved),count:Number(row.count),pending:Number(row.pending),orders:Number(row.orders),last:Number(row.last)};
  }catch(error){if(error instanceof Error&&error.message==='integer overflow')return null;throw error;}
 }
+
+export function hasPaperTable(db:Database.Database,name:string):boolean{return !!db.prepare("SELECT 1 FROM sqlite_master WHERE type='table' AND name=?").get(name);}
+function paperReservationFilled(db:Database.Database,accountId:string,reservationId:string):boolean{return hasPaperTable(db,'paper_fills')&&!!db.prepare('SELECT 1 FROM paper_fills WHERE account_id=? AND reservation_id=?').get(accountId,reservationId);}
+export function paperFillFeeLoss(db:Database.Database,accountId:string,now:number):number|null{
+ if(!hasPaperTable(db,'paper_fills'))return 0;
+ try{const r=db.prepare(`SELECT COALESCE(sum(CASE WHEN created_at>=? AND created_at<? THEN fee_minor ELSE 0 END),0) loss,
+ COALESCE(sum(CASE WHEN typeof(fee_minor)!='integer' OR fee_minor<0 OR fee_minor>9007199254740991 OR typeof(created_at)!='integer' OR created_at<0 OR created_at>9007199254740991 THEN 1 ELSE 0 END),0) invalid
+ FROM paper_fills WHERE account_id=?`).safeIntegers(true).get(Math.floor(now/86400000)*86400000,Math.floor(now/86400000)*86400000+86400000,accountId) as {loss:bigint;invalid:bigint};return r.invalid===0n&&typeof r.loss==='bigint'&&r.loss>=0n&&r.loss<=BigInt(Number.MAX_SAFE_INTEGER)?Number(r.loss):null;}catch(error){if(error instanceof Error&&error.message==='integer overflow')return null;throw error;}
+}
+
 const fields=['accountId','policyId','policyRevision','appRevision','currency','symbol','side','notional','idempotencyKey'];
 function proposal(x:unknown):x is PaperProposal {
  return object(x)&&Object.keys(x).length===fields.length&&fields.every(k=>Object.hasOwn(x,k))&&['accountId','policyId','symbol','idempotencyKey'].every(k=>id(x[k]))&&uint(x.policyRevision,1)&&uint(x.appRevision,1)&&uint(x.notional,1)&&typeof x.currency==='string'&&/^[A-Z]{3}$/.test(x.currency)&&['buy','sell'].includes(x.side as string);
@@ -44,6 +55,7 @@ export function initializePaperLedger(db:Database.Database):void {
  CREATE TABLE IF NOT EXISTS paper_policies(policy_id TEXT PRIMARY KEY, account_id TEXT NOT NULL, revision INTEGER NOT NULL, policy_json TEXT NOT NULL);
  CREATE TABLE IF NOT EXISTS paper_quotes(account_id TEXT NOT NULL,symbol TEXT NOT NULL,quote_at INTEGER NOT NULL,PRIMARY KEY(account_id,symbol));
  CREATE TABLE IF NOT EXISTS paper_reservations(reservation_id TEXT PRIMARY KEY,account_id TEXT NOT NULL,policy_id TEXT NOT NULL,idempotency_key TEXT NOT NULL,intent_hash TEXT NOT NULL,notional INTEGER NOT NULL CHECK(notional>0),created_at INTEGER NOT NULL,UNIQUE(account_id,idempotency_key));`);
+ db.exec('CREATE TABLE IF NOT EXISTS paper_reservation_intents(reservation_id TEXT PRIMARY KEY,canonical_json TEXT NOT NULL,profile_json TEXT,profile_hash TEXT,quote_json TEXT,quote_hash TEXT)');
  // Explicit caller-owned initialization upgrades the preceding reservation-only schema.
  const columns=(db.prepare('PRAGMA table_info(paper_reservations)').all() as {name:string}[]).map(c=>c.name);
  if(!columns.includes('status'))db.exec("ALTER TABLE paper_reservations ADD COLUMN status TEXT NOT NULL DEFAULT 'pending' CHECK(status IN ('pending','cancelled'))");
@@ -86,19 +98,24 @@ export function reservePaperOrder(db:Database.Database,ownerId:string,input:unkn
   const a=db.prepare('SELECT * FROM paper_accounts WHERE account_id=?').get(intent.accountId) as {owner_id:string;currency:string;mode:string;cash:number;exposure:number;app_enabled:number;app_revision:number;stopped:number}|undefined;
   if(!a||a.owner_id!==ownerId||!validAccount(a))return {ok:false,reason:'unavailable'};
   const old=db.prepare('SELECT reservation_id,intent_hash,notional,status FROM paper_reservations WHERE account_id=? AND idempotency_key=?').get(intent.accountId,intent.idempotencyKey) as {reservation_id:string;intent_hash:string;notional:number;status:Status}|undefined;
-  if(old){if(!['pending','cancelled'].includes(old.status)||!uint(old.notional,1))return {ok:false,reason:'unavailable'};return old.intent_hash===hash?{ok:true,reservationId:old.reservation_id,replayed:true,notional:old.notional,status:old.status}:{ok:false,reason:'idempotency_conflict'};}
+  if(old){if(!['pending','cancelled'].includes(old.status)||!uint(old.notional,1))return {ok:false,reason:'unavailable'};return old.intent_hash===hash?{ok:true,reservationId:old.reservation_id,replayed:true,notional:old.notional,status:paperReservationFilled(db,intent.accountId,old.reservation_id)?'filled':old.status}:{ok:false,reason:'idempotency_conflict'};}
   const row=db.prepare('SELECT * FROM paper_policies WHERE policy_id=? AND account_id=?').get(intent.policyId,intent.accountId) as {revision:number;policy_json:string}|undefined;
   const quote=db.prepare('SELECT quote_at FROM paper_quotes WHERE account_id=? AND symbol=?').get(intent.accountId,intent.symbol) as {quote_at:number}|undefined;
   if(!row||!quote)return {ok:false,reason:'unavailable'};
   const p:unknown=JSON.parse(row.policy_json);if(!policyValid(p)||p.revision!==row.revision)return {ok:false,reason:'unavailable'};
-  const summary=totals(db,intent.accountId,p.id,now);if(!summary)return {ok:false,reason:'limit'};
+  const summary=paperLedgerTotals(db,intent.accountId,p.id,now);if(!summary)return {ok:false,reason:'limit'};
   const {reserved,orders,last:lastOrderAt}=summary;
-  // No fills exist: daily losses are zero. Cancellation never resets accepted-order history.
-  const verdict=admitPaperOrder(p,intent,{accountId:intent.accountId,policyId:p.id,policyRevision:row.revision,appRevision:a.app_revision,currency:a.currency,quoteSymbol:intent.symbol,accountMode:a.mode,ownerId,appEnabled:a.app_enabled===1,stopped:a.stopped!==0,now,quoteAt:quote.quote_at,exposure:a.exposure,reserved,dailyLoss:0,orders,lastOrderAt});
+  const dailyLoss=paperFillFeeLoss(db,intent.accountId,now);if(dailyLoss===null)return {ok:false,reason:'limit'};
+  // Cancellation and settlement never reset accepted-order history.
+  const verdict=admitPaperOrder(p,intent,{accountId:intent.accountId,policyId:p.id,policyRevision:row.revision,appRevision:a.app_revision,currency:a.currency,quoteSymbol:intent.symbol,accountMode:a.mode,ownerId,appEnabled:a.app_enabled===1,stopped:a.stopped!==0,now,quoteAt:quote.quote_at,exposure:a.exposure,reserved,dailyLoss,orders,lastOrderAt});
   if(!verdict.allowed)return {ok:false,reason:verdict.reason};
   if(reserved>a.cash||intent.notional>a.cash-reserved)return {ok:false,reason:'cash'};
   const reservationId=randomUUID();
   db.prepare('INSERT INTO paper_reservations(reservation_id,account_id,policy_id,idempotency_key,intent_hash,notional,created_at) VALUES(?,?,?,?,?,?,?)').run(reservationId,intent.accountId,p.id,intent.idempotencyKey,hash,intent.notional,now);
+  const profile=hasPaperTable(db,'paper_execution_profiles')?db.prepare('SELECT account_id,owner_id,revision,fee_bps,slippage_bps,unit_scale,currency FROM paper_execution_profiles WHERE account_id=?').get(intent.accountId):null;
+  const price=hasPaperTable(db,'paper_execution_quotes')?db.prepare('SELECT account_id,symbol,price_minor,quoted_at,revision,currency,unit_scale FROM paper_execution_quotes WHERE account_id=? AND symbol=?').get(intent.accountId,intent.symbol):null;
+  const profileJson=profile?JSON.stringify(profile):null,quoteJson=price?JSON.stringify(price):null;
+  db.prepare('INSERT INTO paper_reservation_intents VALUES(?,?,?,?,?,?)').run(reservationId,JSON.stringify(intent),profileJson,profileJson?createHash('sha256').update(profileJson).digest('hex'):null,quoteJson,quoteJson?createHash('sha256').update(quoteJson).digest('hex'):null);
   return {ok:true,reservationId,replayed:false,notional:intent.notional,status:'pending'};
  }).immediate();
 }
@@ -123,6 +140,7 @@ export function cancelPaperReservation(db:Database.Database,ownerId:string,accou
   if(account?.owner_id!==ownerId)return {ok:false,reason:'unavailable'};
   const row=db.prepare('SELECT notional,status,created_at FROM paper_reservations WHERE account_id=? AND reservation_id=?').get(accountId,reservationId) as {notional:number;status:Status;created_at:number}|undefined;
   if(!row||!uint(row.notional,1)||!['pending','cancelled'].includes(row.status))return {ok:false,reason:'unavailable'};
+  if(paperReservationFilled(db,accountId,reservationId))return {ok:false,reason:'filled'};
   if(row.status==='cancelled')return {ok:true,reservationId,replayed:true,notional:row.notional,status:'cancelled'};
   if(now<row.created_at)return {ok:false,reason:'invalid_clock'};
   db.prepare("UPDATE paper_reservations SET status='cancelled',cancelled_at=? WHERE account_id=? AND reservation_id=? AND status='pending'").run(now,accountId,reservationId);
@@ -136,7 +154,8 @@ export function readPaperAccount(db:Database.Database,ownerId:string,accountId:s
  return db.transaction(()=>{
   const a=db.prepare('SELECT owner_id,mode,currency,cash,exposure,app_enabled,app_revision,stopped FROM paper_accounts WHERE account_id=?').get(accountId) as {owner_id:string;mode:string;currency:string;cash:number;exposure:number;app_enabled:number;app_revision:number;stopped:number}|undefined;
   if(!a||a.owner_id!==ownerId||!validAccount(a))return {ok:false as const,reason:'unavailable'};
-  const summary=totals(db,accountId);if(!summary)return {ok:false as const,reason:'unavailable'};
+  if(hasPaperTable(db,'paper_fills')&&db.prepare('SELECT 1 FROM paper_fills WHERE account_id=? LIMIT 1').get(accountId))return {ok:false as const,reason:'execution_read_unsupported'};
+  const summary=paperLedgerTotals(db,accountId);if(!summary)return {ok:false as const,reason:'unavailable'};
   const {reserved,pending:pendingCount}=summary;
   const rows=db.prepare('SELECT reservation_id,policy_id,notional,created_at,status,cancelled_at FROM paper_reservations WHERE account_id=? ORDER BY created_at DESC,reservation_id DESC LIMIT 200').all(accountId) as {reservation_id:string;policy_id:string;notional:number;created_at:number;status:Status;cancelled_at:number|null}[];
   if(reserved>a.cash||!Number.isSafeInteger(a.exposure+reserved)||rows.some(r=>!id(r.reservation_id)||!id(r.policy_id)))return {ok:false as const,reason:'unavailable'};
