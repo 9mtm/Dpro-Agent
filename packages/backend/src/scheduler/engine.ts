@@ -25,27 +25,35 @@ import type {
   ApiCallAction,
   RunWorkflowAction,
 } from './types.js';
-import { getJobQueue } from './queue.js';
 import { claimRun, listEnabledJobs, recordRunTimes, saveExecution, tickSlot, type ExecutionRecord } from './store.js';
 
 export type PaperCronStatus=Readonly<{jobId:string;registered:boolean;phase:'unavailable'|'waiting'|'refused'|'pending'|'unknown'|'completed'|'failed'|'stopped';callbackAt:number|null;attemptId:string|null;replayed:boolean|null;historyRecorded:boolean}>;
+type PaperOwnerRegistrationConstraint=Readonly<{ownerId:string;consentId:string;jobRevision:number;authorizationRevision:number;definitionHash:string}>;
+function ownerRegistrationConstraint(value:unknown):PaperOwnerRegistrationConstraint{
+ if(!value||typeof value!=='object'||![Object.prototype,null].includes(Object.getPrototypeOf(value)))throw Error('Paper registration unavailable');
+ const fields=['ownerId','consentId','jobRevision','authorizationRevision','definitionHash'],keys=Reflect.ownKeys(value);
+ if(keys.length!==fields.length||keys.some(k=>typeof k!=='string'||!fields.includes(k)||!Object.hasOwn(Object.getOwnPropertyDescriptor(value,k)!,'value')))throw Error('Paper registration unavailable');
+ const v=value as Record<string,unknown>;
+ if(typeof v.ownerId!=='string'||!v.ownerId||v.ownerId.length>128||/[\x00-\x20\x7f]/.test(v.ownerId)||typeof v.consentId!=='string'||v.consentId.length!==36||!/^[a-f0-9]{8}-(?:[a-f0-9]{4}-){3}[a-f0-9]{12}$/.test(v.consentId)||typeof v.definitionHash!=='string'||v.definitionHash.length!==64||!/^[a-f0-9]{64}$/.test(v.definitionHash)||!Number.isSafeInteger(v.jobRevision)||Number(v.jobRevision)<1||!Number.isSafeInteger(v.authorizationRevision)||Number(v.authorizationRevision)<1)throw Error('Paper registration unavailable');
+ return Object.freeze({...v}) as PaperOwnerRegistrationConstraint;
+}
 type PaperRegistration={generation:number;epoch:number;timeZone:string;fence:PaperScheduleExecutionFence};
 
 export class CronEngine extends EventEmitter implements ICronEngine {
   private jobs: Map<string, CronJob> = new Map();
   private tasks: Map<string, any> = new Map();
   private readonly timerTokens=new Map<string,object>();
-  private queue = getJobQueue();
   private isRunning = false;
 
   readonly #paperLedger: Database.Database|null;
+  readonly #paperOnly:boolean;
   private epoch=0;
   private generation=0;
   private readonly paperRegistrations=new Map<string,PaperRegistration>();
   private readonly paperStatuses=new Map<string,PaperCronStatus>();
 
   /** An explicit instance dependency; the default singleton remains disconnected. */
-  constructor(paperLedger:Database.Database|null=null){super();this.#paperLedger=paperLedger;}
+  constructor(paperLedger:Database.Database|null=null,mode:'all'|'paper-only'='all'){super();if(mode!=='all'&&mode!=='paper-only')throw Error('Invalid cron mode');this.#paperLedger=paperLedger;this.#paperOnly=mode==='paper-only';}
 
   /** Registration is physical timer state; waiting is not an execution-readiness or heartbeat claim. */
   getPaperStatus(jobId:string):PaperCronStatus|undefined{
@@ -62,10 +70,10 @@ export class CronEngine extends EventEmitter implements ICronEngine {
     return this.isRunning&&this.epoch===registration.epoch&&this.paperRegistrations.get(jobId)===registration&&this.paperAvailable()&&Intl.DateTimeFormat().resolvedOptions().timeZone===registration.timeZone;
   }
 
-  private registerPaper(job:CronJob):void{
+  private registerPaper(job:CronJob,expected?:PaperOwnerRegistrationConstraint,replace=false):boolean{
     this.jobs.set(job.id,job);
-    this.paperStatuses.set(job.id,Object.freeze({jobId:job.id,registered:false,phase:'unavailable',callbackAt:null,attemptId:null,replayed:null,historyRecorded:false}));
-    if(!this.isRunning||!job.enabled||!this.paperAvailable())return;
+    if(!this.tasks.has(job.id))this.paperStatuses.set(job.id,Object.freeze({jobId:job.id,registered:false,phase:'unavailable',callbackAt:null,attemptId:null,replayed:null,historyRecorded:false}));
+    if(!this.isRunning||!job.enabled||!this.paperAvailable())return false;
     const db=this.#paperLedger!;
     try{
       const captured=db.transaction(()=>{
@@ -74,8 +82,10 @@ export class CronEngine extends EventEmitter implements ICronEngine {
         const persisted=rowToJob('sqlite',row),now=Date.now();
         const admission=assertScheduledDispatchInTransaction(db,persisted,'scheduled',now);
         const fence=resolvePaperScheduleExecutionInTransaction(db,{jobId:job.id,trigger:'scheduled'},now);
+        if(expected&&Object.keys(expected).some(k=>fence[k as keyof PaperOwnerRegistrationConstraint]!==expected[k as keyof PaperOwnerRegistrationConstraint]))throw Error('Paper registration changed');
         return {persisted,fence,timeZone:admission.definition.timeZone};
       }).deferred();
+      if(replace)this.unscheduleJob(job.id);
       const registration:PaperRegistration=Object.freeze({generation:++this.generation,epoch:this.epoch,timeZone:captured.timeZone,fence:captured.fence});
       this.paperRegistrations.set(job.id,registration);
       const task=cron.schedule(captured.persisted.cronExpression,()=>{
@@ -85,9 +95,29 @@ export class CronEngine extends EventEmitter implements ICronEngine {
       this.tasks.set(job.id,task);
       this.jobs.set(job.id,captured.persisted);
       this.paperStatuses.set(job.id,Object.freeze({jobId:job.id,registered:true,phase:'waiting',callbackAt:null,attemptId:null,replayed:null,historyRecorded:false}));
+      return true;
     }catch{
-      this.paperRegistrations.delete(job.id);
+      if(!this.tasks.has(job.id))this.paperRegistrations.delete(job.id);
+      return false;
     }
+  }
+
+  /** Expected control result is a comparison constraint, never authority to adopt a newer grant. */
+  registerOwnedPaperJob(jobId:string,value:unknown):boolean{
+    try{
+      const expected=ownerRegistrationConstraint(value);
+      if(!this.#paperOnly||typeof jobId!=='string'||jobId.length!==36||!/^[a-f0-9]{8}-(?:[a-f0-9]{4}-){3}[a-f0-9]{12}$/.test(jobId)||!this.isRunning||!this.paperAvailable())return false;
+      const row=this.#paperLedger!.prepare('SELECT * FROM main.cron_jobs WHERE id=?').get(jobId) as CronJobRow|undefined;
+      if(!row||row.action_type!=='paper-runtime-cycle')return false;
+      if(!this.registerPaper(rowToJob('sqlite',row),expected,true))return false;
+      const current=this.paperRegistrations.get(jobId);
+      return !!current&&Object.keys(expected).every(k=>current.fence[k as keyof PaperOwnerRegistrationConstraint]===expected[k as keyof PaperOwnerRegistrationConstraint])&&this.paperCurrent(jobId,current);
+    }catch{return false;}
+  }
+
+  getPaperRegistration(jobId:string){
+    const fence=this.paperRegistrations.get(jobId)?.fence;
+    return fence?Object.freeze({ownerId:fence.ownerId,consentId:fence.consentId,jobRevision:fence.jobRevision,authorizationRevision:fence.authorizationRevision,definitionHash:fence.definitionHash}):null;
   }
 
   private executePaper(jobId:string,trigger:'manual'|'scheduled',registration:PaperRegistration|undefined):JobExecutionResult{
@@ -169,6 +199,7 @@ export class CronEngine extends EventEmitter implements ICronEngine {
    * Schedule a job
    */
   scheduleJob(job: CronJob): void {
+    if(this.#paperOnly&&job.actionType!=='paper-runtime-cycle')return;
     if (!cron.validate(job.cronExpression)) {
       throw new Error(`Invalid cron expression: ${job.cronExpression}`);
     }
@@ -254,6 +285,7 @@ export class CronEngine extends EventEmitter implements ICronEngine {
 
   /** Remember a persisted draft without starting a cron task. */
   rememberPausedJob(job: CronJob): void {
+    if(this.#paperOnly&&job.actionType!=='paper-runtime-cycle')throw Error('Paper job required');
     if (job.enabled) throw new Error('Paused job required');
     this.unscheduleJob(job.id);
     this.jobs.set(job.id, job);
@@ -279,7 +311,7 @@ export class CronEngine extends EventEmitter implements ICronEngine {
   async executeJob(jobId: string, trigger: 'manual' | 'scheduled' = 'manual'): Promise<JobExecutionResult> {
     const job = this.jobs.get(jobId);
 
-    if (!job) {
+    if (!job||this.#paperOnly&&job.actionType!=='paper-runtime-cycle') {
       throw new Error(`Job not found: ${jobId}`);
     }
 
@@ -458,9 +490,15 @@ export class CronEngine extends EventEmitter implements ICronEngine {
    * Load jobs from database (B2.2c: on the process driver, store.ts)
    */
   private async loadJobs(): Promise<void> {
-    for (const job of await listEnabledJobs()) {
-      this.jobs.set(job.id, job);
+    if(this.#paperOnly){
+      const db=this.#paperLedger;
+      if(!db||!db.open||dbDriver()!=='sqlite'||getDatabase().getDb()!==db)return;
+      // Filter in SQL before parsing JSON: unrelated generic data is never adopted by this instance.
+      const rows=db.prepare("SELECT * FROM main.cron_jobs WHERE enabled=1 AND action_type='paper-runtime-cycle'").all() as CronJobRow[];
+      for(const row of rows){try{const job=rowToJob('sqlite',row);this.jobs.set(job.id,job);}catch{/* Malformed paper rows never become timers. */}}
+      return;
     }
+    for (const job of await listEnabledJobs())this.jobs.set(job.id, job);
   }
 
   /**
@@ -476,6 +514,11 @@ export class CronEngine extends EventEmitter implements ICronEngine {
   private async saveExecutionHistory(history: ExecutionRecord): Promise<void> {
     await saveExecution(history);
   }
+}
+
+/** Restrictive per-owner-server lifecycle; generic jobs and the default singleton are never adopted. */
+export class OwnedPaperCronEngine extends CronEngine{
+  constructor(ledger:Database.Database|null){super(ledger,'paper-only');}
 }
 
 // Singleton instance

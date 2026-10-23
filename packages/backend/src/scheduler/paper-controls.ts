@@ -75,12 +75,16 @@ export function disablePaperSchedule(db:Database.Database,context:OperationConte
   }).immediate();
  }catch{return deny();}
 }
+function readControlSnapshot(db:Database.Database,c:Context,r:ReturnType<typeof request>,now:number){
+ const current=owned(db,c,r.jobId,now);let authorization:'authorized'|'unavailable'='unavailable',metadata:Partial<{jobRevision:number;authorizationRevision:number;definitionHash:string}>={};
+ try{const a=inspectPausedPaperScheduleAdmissionInTransaction(db,rowToJob('sqlite',current.row),c.userId,now);authorization='authorized';metadata={jobRevision:a.jobRevision,authorizationRevision:a.authorizationRevision,definitionHash:a.definitionHash};}catch{/* Owned saved state remains observable when execution authority is unavailable. */}
+ return Object.freeze({ok:true as const,jobId:r.jobId,consentId:current.reference.consentId,savedEnabled:current.row.enabled===1,authorization,...metadata,...unobserved});
+}
 /** Read-only saved state. Physical registration/connection belong to a separately owned engine, never inferred here. */
 export function readPaperScheduleControl(db:Database.Database,context:OperationContext,actor:Actor,value:unknown,nowOverride?:number){
- try{const c=captured(context,actor),r=request(value);identity(db,false);
-  return db.transaction(()=>{const now=clock(nowOverride),current=owned(db,c,r.jobId,now);let authorization:'authorized'|'unavailable'='unavailable',metadata:{}={};
-   try{const a=inspectPausedPaperScheduleAdmissionInTransaction(db,rowToJob('sqlite',current.row),c.userId,now);authorization='authorized';metadata={jobRevision:a.jobRevision,authorizationRevision:a.authorizationRevision,definitionHash:a.definitionHash};}catch{/* Owned saved state remains observable when execution authority is unavailable. */}
-   return Object.freeze({ok:true as const,jobId:r.jobId,consentId:current.reference.consentId,savedEnabled:current.row.enabled===1,authorization,...metadata,...unobserved});
-  }).deferred();
- }catch{return deny();}
+ try{const c=captured(context,actor),r=request(value);identity(db,false);return db.transaction(()=>readControlSnapshot(db,c,r,clock(nowOverride))).deferred();}catch{return deny();}
+}
+/** Trusted read composition only; caller owns one snapshot. Same ownership/schema checks as the public read. */
+export function readPaperScheduleControlInTransaction(db:Database.Database,context:OperationContext,actor:Actor,value:unknown,now:number){
+ try{const c=captured(context,actor),r=request(value);if(dbDriver()!=='sqlite'||getDatabase().getDb()!==db||!db.open||!db.inTransaction)fail();return readControlSnapshot(db,c,r,clock(now));}catch{return deny();}
 }

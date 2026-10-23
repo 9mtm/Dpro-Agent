@@ -43,6 +43,7 @@ import { skillsRoutes } from './routes/skills.js';
 import { schedulerDefinitionRoutes } from './routes/scheduler-definitions.js';
 import { schedulerAuthorizationRoutes } from './routes/scheduler-authorization.js';
 import { schedulerRoutes } from './routes/scheduler.js';
+import {schedulerPaperControlRoutes} from './routes/scheduler-paper-control.js';
 import { memoryRoutes } from './routes/memory.js';
 import { memoryFilesRoutes } from './routes/memory-files.js';
 import { memoryLearningRoutes } from './routes/memory-learning.js';
@@ -140,10 +141,13 @@ import { registerLaunchToken } from './launch-token.js';
 export interface BuildServerOptions {
   /** Explicit provisioned ledger dependency; never created from a read request. */
   paperLedger?:()=>PaperDatabase.Database|null;
+  /** Separate immutable opt-in for a server-owned paper-only scheduler; never inferred from paperLedger. */
+  paperScheduleLedger?:PaperDatabase.Database|null;
   logger?: FastifyServerOptions['logger'];
 }
 
 export async function buildServer(options: BuildServerOptions = {}): Promise<FastifyInstance> {
+  const paperScheduleLedger=options.paperScheduleLedger??null;
   const fastify = Fastify({
     logger: options.logger ?? {
       level: process.env.LOG_LEVEL || 'info',
@@ -344,6 +348,7 @@ export async function buildServer(options: BuildServerOptions = {}): Promise<Fas
   await fastify.register(tradingPaperAccountSetupRoutes,{ledger:options.paperLedger??(()=>null)});
   await fastify.register(tradingPaperRuntimeRoutes,{ledger:options.paperLedger??(()=>null)});
   await fastify.register(schedulerAuthorizationRoutes);
+  await fastify.register(schedulerPaperControlRoutes,{ledger:paperScheduleLedger});
   await fastify.register(schedulerRoutes); // ⏰ Scheduler System
   await fastify.register(memoryRoutes); // 🧠 Memory System
   await fastify.register(memoryFilesRoutes); // CORE-04: owner-only memory files + reviewed proposals
