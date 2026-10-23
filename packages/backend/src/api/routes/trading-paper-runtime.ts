@@ -7,7 +7,7 @@ import {isSystemAccount} from '../../auth/default-accounts.js';
 import {AuthTokenError,verifyRequestTokenAsync} from '../../auth/jwt.js';
 import {reviewerRequestIdentity,ReviewerIdentityError} from '../../auth/verification/reviewer-request.js';
 import {changePasswordRateLimit} from '../rate-limit-config.js';
-import {stagePaperRuntimeConsent,readPaperRuntimeReview,issuePaperRuntimeProof,completePaperRuntimeProof,applyPaperRuntimeConsent,readPaperRuntimeConsent,revokePaperRuntimeConsent} from '../../services/trading-paper-runtime-consent.js';
+import {stagePaperRuntimeConsent,readPaperRuntimeReview,issuePaperRuntimeProof,completePaperRuntimeProof,applyPaperRuntimeConsent,readPaperRuntimeConsent,revokePaperRuntimeConsent,readPaperRuntimeConsentReference} from '../../services/trading-paper-runtime-consent.js';
 
 const invalid={code:'invalid_paper_runtime_request'},unavailable={code:'paper_runtime_unavailable'};
 const uint=(value:unknown,min=0,max=Number.MAX_SAFE_INTEGER):value is number=>typeof value==='number'&&Number.isSafeInteger(value)&&value>=min&&value<=max;
@@ -80,6 +80,14 @@ export async function tradingPaperRuntimeRoutes(app:FastifyInstance,options:{led
    if(phase==='challenge'){const result=await issuePaperRuntimeProof(db,context,actor,reviewId,Date.now());return result?{challenge:result.token,expiresAt:result.expiresAt}:reply.code(409).send(unavailable);}
    if(phase==='complete'){const result=await completePaperRuntimeProof(db,context,actor,reviewId,body.challenge,body.code,Date.now());return result?{receipt:result.receipt,expiresAt:result.expiresAt}:reply.code(403).send({code:'verification_refused'});}
    const result=await applyPaperRuntimeConsent(db,context,actor,reviewId,body.receipt,Date.now());return result.ok?result:reply.code(409).send(unavailable);
+  }catch(error){return refuse(reply,error);}
+ });
+ app.get(base+'/bots/:botId/consent-reference',{config:{access:'owner',rateLimit:readLimit}},async(request,reply)=>{
+  try{
+   await human(request);const {botId}=request.params as {botId:string};
+   if(!uuid(botId)||Object.keys(request.query as object).length||request.body!==undefined)return reply.code(400).send(invalid);
+   const result=readPaperRuntimeConsentReference(database(),request.actor!,botId,Date.now());
+   return result.ok?result:reply.code(404).send(unavailable);
   }catch(error){return refuse(reply,error);}
  });
  app.get(base+'/consents/:consentId',{config:{access:'owner',rateLimit:readLimit}},async(request,reply)=>{

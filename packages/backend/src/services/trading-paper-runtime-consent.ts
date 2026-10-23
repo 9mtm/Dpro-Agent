@@ -139,6 +139,23 @@ export async function applyPaperRuntimeConsent(db:Database.Database,context:Oper
 export function readPaperRuntimeConsent(db:Database.Database,actor:Actor,id:string,now=Date.now()){
  try{identity(db);return db.transaction(()=>{const {ownerId}=human(db,actor,now);return publicConsent(history(db,ownerId,id,now));}).deferred();}catch{return deny();}
 }
+/** Minimal persisted reference for emergency revocation. It proves neither execution eligibility nor intact grant history. */
+export function readPaperRuntimeConsentReference(db:Database.Database,actor:Actor,botId:string,now=Date.now()){
+ try{
+  identity(db);
+  return db.transaction(()=>{
+   const {ownerId}=human(db,actor,now);if(!uuid(botId))fail();
+   const rows=db.prepare('SELECT * FROM main.paper_runtime_consents WHERE owner_id=? AND bot_id=? LIMIT 2').all(ownerId,botId) as Record<string,unknown>[];
+   if(rows.length!==1)fail();const consent=rows[0];
+   if(!uuid(consent.id)||consent.owner_id!==ownerId||consent.bot_id!==botId||!uuid(consent.review_id)||!uuid(consent.definition_id)||!hash(consent.definition_digest)||!uint(consent.created_at,1)||consent.created_at>now||!['granted','revoked'].includes(consent.status as string))fail();
+   const revocation=db.prepare('SELECT * FROM main.paper_runtime_revocations WHERE consent_id=?').get(consent.id) as Record<string,unknown>|undefined;
+   if(consent.status==='revoked'){
+    if(!revocation||!uuid(revocation.id)||revocation.consent_id!==consent.id||revocation.owner_id!==ownerId||!uint(revocation.created_at,1)||revocation.created_at<consent.created_at||revocation.created_at>now||revokeHash(revocation)!==revocation.event_hash)fail();
+   }else if(revocation)fail();
+   return Object.freeze({ok:true as const,consentId:consent.id,botId,status:consent.status as 'granted'|'revoked',createdAt:consent.created_at,runtimeConnected:false as const});
+  }).deferred();
+ }catch{return deny();}
+}
 /** Emergency one-way revocation deliberately does not depend on journal or proof integrity. */
 export function revokePaperRuntimeConsent(db:Database.Database,actor:Actor,id:string,now=Date.now()){
  try{
