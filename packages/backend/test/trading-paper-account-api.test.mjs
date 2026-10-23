@@ -26,3 +26,30 @@ test('exact bounds reject owner/account injection and malformed nested policy',a
 test('foreign same-file handle and other owner cannot consume account creation proof',async()=>{const f=await owner(),flow=await proof(f),other=await owner();assert.equal((await call(other,'GET',flow.url)).statusCode,404);const foreign=new Database(process.env.DATABASE_PATH);try{selected=foreign;assert.equal((await call(f,'POST',flow.url+'/apply',{receipt:flow.receipt})).statusCode,503);assert.equal(consumed(flow.receipt),null);}finally{selected=db;foreign.close();}assert.equal((await call(f,'POST',flow.url+'/apply',{receipt:flow.receipt})).statusCode,200);});
 test('factor revocation and installation disable after review prevent account creation',async()=>{const f=await owner(),flow=await proof(f);db.prepare('UPDATE verification_factors SET enabled=0 WHERE user_id=?').run(f.id);assert.equal((await call(f,'POST',flow.url+'/apply',{receipt:flow.receipt})).statusCode,403);assert.equal(consumed(flow.receipt),null);const g=await owner(),other=await proof(g);const registry=await import('../src/services/trading-paper-installation.ts');assert.equal(registry.provisionTrustedPaperInstallation(db,g.id,{action:'disable',expectedRevision:1,idempotencyKey:'disable-fixture',manifestDigest:registry.BUNDLED_PAPER_INSTALLATION.manifestDigest,capabilities:[]}).ok,true);assert.equal((await call(g,'POST',other.url+'/apply',{receipt:other.receipt})).statusCode,409);assert.equal(consumed(other.receipt),null);assert.equal(db.prepare('SELECT count(*) n FROM paper_accounts WHERE owner_id=?').get(g.id).n,0);});
 test('proof rate limiting does not block separate reviewed-account reads',async()=>{const f=await owner(),staged=await call(f,'POST',base+'/reviews',input());assert.equal(staged.statusCode,200,staged.body);for(let i=0;i<4;i++)assert.equal((await call(f,'POST',base+'/reviews',{...input(),ownerId:f.id})).statusCode,400);assert.equal((await call(f,'POST',base+'/reviews',input())).statusCode,429);const read=await call(f,'GET',base+'/reviews/'+staged.json().id);assert.equal(read.statusCode,200,read.body);assert.equal(read.headers['cache-control'],'no-store');assert.equal(db.prepare('SELECT count(*) n FROM paper_accounts WHERE owner_id=?').get(f.id).n,0);});
+
+test('real desktop session/controller creates a paper account only after explicit reviewed apply',async()=>{
+ const {SessionClient}=await import('../../core-ui/src/session.ts');
+ const {TradingAccountSetupController}=await import('../../core-ui/src/trading-account-setup-controller.ts');
+ const f=await owner(),user={id:f.id,email:f.id+'@example.invalid',username:f.id,role:'owner'},calls=[];
+ const client=new SessionClient({live:async request=>{
+  if(request.path==='/api/auth/login')return {status:200,body:{token:f.token,deviceToken:'d'.repeat(43),user}};
+  if(request.path==='/api/auth/me')return {status:200,body:{user}};
+  calls.push(request.method+' '+request.path);
+  const r=await app.inject({method:request.method,url:request.path,headers:{host:'127.0.0.1:42521',origin:'http://127.0.0.1:42522',...request.headers},...(request.body===undefined?{}:{payload:request.body})});return {status:r.statusCode,body:r.json()};
+ }});
+ client.selectMode('live');await client.login(user.email,'Fixture login only');const controller=new TradingAccountSetupController(client);
+ try{
+  const draft=input();await controller.stage(draft);assert.equal(controller.getSnapshot().phase,'review');
+  assert.deepEqual(controller.getSnapshot().review.policy.symbols,['AAA','BBB']);
+  await controller.startVerification();assert.equal(controller.getSnapshot().phase,'code');
+  await controller.verify(f.otp(Date.now()));assert.equal(controller.getSnapshot().phase,'verified');
+  assert.equal(db.prepare('SELECT count(*) n FROM paper_accounts WHERE owner_id=?').get(f.id).n,0);
+  assert.doesNotMatch(JSON.stringify(controller.getSnapshot()),/"receipt"\s*:|"challenge"\s*:|"code"\s*:/);
+  const accountId=controller.getSnapshot().review.accountId;
+  await controller.apply();assert.equal(controller.getSnapshot().phase,'applied');
+  const saved=db.prepare('SELECT * FROM paper_accounts WHERE account_id=?').get(accountId);assert.equal(saved.owner_id,f.id);assert.equal(saved.cash,10000);assert.equal(saved.exposure,0);
+  await controller.load();assert.equal(controller.getSnapshot().phase,'ready');assert.equal(controller.getSnapshot().accounts.some(a=>a.accountId===accountId),true);
+  assert.deepEqual(calls.map(s=>s.replace(/\/reviews\/[a-f0-9-]{36}/,'/reviews/:id')),['POST '+base+'/reviews','POST '+base+'/reviews/:id/challenge','POST '+base+'/reviews/:id/complete','POST '+base+'/reviews/:id/apply','GET /api/trading-paper/accounts']);
+  assert.equal(db.prepare('SELECT count(*) n FROM paper_bots WHERE owner_id=?').get(f.id).n,0);
+ }finally{controller.close();client.cancel();}
+});
