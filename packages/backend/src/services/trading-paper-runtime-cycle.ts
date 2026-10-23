@@ -2,8 +2,7 @@
 import type Database from 'better-sqlite3';
 import {getDatabase} from '../db/index.js';
 import {dbDriver} from '../db/pg/config.js';
-import {derivePaperRuntimeDueAttemptKey} from './trading-paper-dispatch-attempts.js';
-import {readTrustedPaperRuntimeConsentInTransaction} from './trading-paper-runtime-consent.js';
+import {readDuePaperRuntimeAttemptKeyInTransaction} from './trading-paper-runtime-due-plan.js';
 import {dispatchReviewedCanonicalPaperRuntimeAttempt,dispatchCanonicalPaperRuntimeAttempt} from './trading-paper-runtime-dispatch.js';
 const deny=()=>({ok:false as const,reason:'unavailable' as const});
 const uuid=(v:unknown):v is string=>typeof v==='string'&&v.length===36&&/^[a-f0-9]{8}-(?:[a-f0-9]{4}-){3}[a-f0-9]{12}$/.test(v);
@@ -25,16 +24,7 @@ function dispatchDue(db:Database.Database,value:unknown,nowOverride:number|undef
  try{
   if(dbDriver()!=='sqlite'||getDatabase().getDb()!==db||db.inTransaction)fail();
   const consentId=input(value);
-  const attemptKey=db.transaction(()=>{
-   const now=time(nowOverride),s=readTrustedPaperRuntimeConsentInTransaction(db,consentId,now),j=s.journal;
-   if(s.runtimePrincipal!=='bundled.paper.deterministic.v1')fail();
-   for(const a of j.attempts)if(a.attemptKey!==derivePaperRuntimeDueAttemptKey(consentId,s.definitionId,s.definitionDigest,a.sequence))fail();
-   if(j.blockedByUnknown)fail();
-   const pending=j.attempts.find(a=>a.status==='pending');if(pending)return pending.attemptKey;
-   if(s.status!=='granted'||now>=s.definition.limits.expiresAt||j.attemptCount>=s.definition.limits.maxAttempts
-    ||j.lastClaimAt!==null&&BigInt(now)-BigInt(j.lastClaimAt)<BigInt(s.definition.limits.cadenceMs))fail();
-   return derivePaperRuntimeDueAttemptKey(consentId,s.definitionId,s.definitionDigest,j.attemptCount+1);
-  }).deferred();
+  const attemptKey=db.transaction(()=>readDuePaperRuntimeAttemptKeyInTransaction(db,consentId,time(nowOverride))).deferred();
   // The read snapshot is released before either dispatcher write transaction. Default clocks are resampled.
   return reviewedExecution?dispatchReviewedCanonicalPaperRuntimeAttempt(db,{consentId,attemptKey},nowOverride):dispatchCanonicalPaperRuntimeAttempt(db,{consentId,attemptKey},nowOverride);
  }catch{return deny();}

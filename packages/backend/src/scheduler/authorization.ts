@@ -1,4 +1,4 @@
-import {inspectPaperScheduleInTransaction} from './paper-authorization.js';
+import {assertPaperScheduleOwnerInTransaction,inspectPaperScheduleInTransaction} from './paper-authorization.js';
 import type Database from 'better-sqlite3';
 import {getDatabase} from '../db/index.js';
 import {dbDriver} from '../db/pg/config.js';
@@ -91,7 +91,7 @@ export function assertScheduledDispatchStep(job:import('./types.js').CronJob,tri
  const identity=Object.freeze({id:snapshot.definition.id});
  return scheduledDispatchStep(identity,snapshot,trigger,now,requireEnabled);
 }
-function* scheduledDispatchStep(job:Readonly<{id:string}>,snapshot:ReturnType<typeof captureScheduledDefinition>,trigger:'manual'|'scheduled',now:number,requireEnabled:boolean,paperInspection=false):Step<ScheduledDispatchAdmission>{
+function* scheduledDispatchStep(job:Readonly<{id:string}>,snapshot:ReturnType<typeof captureScheduledDefinition>,trigger:'manual'|'scheduled',now:number,requireEnabled:boolean,paperInspection=false,paperAuthorityOnly=false):Step<ScheduledDispatchAdmission>{
   if(!Number.isSafeInteger(now)||now<1||(trigger!=='manual'&&trigger!=='scheduled')||typeof requireEnabled!=='boolean')throw new ScheduleAuthorizationError('invalid');
   yield* lockName('scheduled-job:'+job.id);const d=yield* dialect();
   const consent=yield* one<{status:string;version:number;job_revision:number;definition_hash:string;owner_id:string;token_version:number;factor_version:number;policy_version:number;authorized_at:number;expires_at:number;receipt_hash:string;session_hash:string}>(`SELECT * FROM scheduled_job_authorizations WHERE job_id=?${forUpdate(d)}`,job.id);
@@ -115,7 +115,7 @@ function* scheduledDispatchStep(job:Readonly<{id:string}>,snapshot:ReturnType<ty
   if(Number(current.enabled)!==0&&Number(current.enabled)!==1)throw new ScheduleAuthorizationError('changed');
   const persisted=rowToJob(d,current);
   if(((requireEnabled||trigger==='scheduled'||persisted.actionType==='paper-runtime-cycle'&&!paperInspection)&&!persisted.enabled)||snapshot.definitionHash!==consent.definition_hash||captureScheduledDefinition(persisted).definitionHash!==snapshot.definitionHash)throw new ScheduleAuthorizationError('changed');
- if(persisted.actionType==='paper-runtime-cycle'){if(d!=='sqlite')throw new ScheduleAuthorizationError('forbidden');inspectPaperScheduleInTransaction(getDatabase().getDb(),consent.owner_id,persisted.actionData,now,Number(consent.expires_at));}
+ if(persisted.actionType==='paper-runtime-cycle'){if(d!=='sqlite')throw new ScheduleAuthorizationError('forbidden');if(paperAuthorityOnly){const bound=assertPaperScheduleOwnerInTransaction(getDatabase().getDb(),consent.owner_id,persisted.actionData,now);if(Number(consent.expires_at)>bound.definition.limits.expiresAt)throw new ScheduleAuthorizationError('changed');}else inspectPaperScheduleInTransaction(getDatabase().getDb(),consent.owner_id,persisted.actionData,now,Number(consent.expires_at));}
  return Object.freeze({definition:snapshot.definition,ownerId:consent.owner_id,jobRevision:Number(consent.job_revision),authorizationRevision:Number(consent.version),definitionHash:consent.definition_hash,expiresAt:Number(consent.expires_at)});
 }
 
@@ -142,6 +142,11 @@ const admissionColumns=Object.freeze({
  * No transaction, initialization, proof consumption, or runtime connection is performed here.
  */
 export function assertScheduledDispatchInTransaction(db:Database.Database,job:import('./types.js').CronJob,trigger:'manual'|'scheduled',now=Date.now(),requireEnabled=true):ScheduledDispatchAdmission{
+ assertScheduleSqliteTransaction(db,requireEnabled);
+ return sqliteSync(assertScheduledDispatchStep(job,trigger,now,requireEnabled));
+}
+
+function assertScheduleSqliteTransaction(db:Database.Database,requireEnabled:boolean){
  if(dbDriver()!=='sqlite'||getDatabase().getDb()!==db||!db.inTransaction||typeof requireEnabled!=='boolean'||db.pragma('query_only',{simple:true})!==0)throw new ScheduleAuthorizationError('forbidden');
  for(const [name,columns] of Object.entries(admissionColumns)){
   if(db.prepare('SELECT 1 FROM sqlite_temp_master WHERE name=? COLLATE NOCASE OR tbl_name=? COLLATE NOCASE LIMIT 1').get(name,name)||!db.prepare("SELECT 1 FROM main.sqlite_master WHERE type='table' AND name=?").get(name)||db.prepare("SELECT 1 FROM main.sqlite_master WHERE type='trigger' AND tbl_name=? COLLATE NOCASE LIMIT 1").get(name))throw new ScheduleAuthorizationError('forbidden');
@@ -150,7 +155,11 @@ export function assertScheduledDispatchInTransaction(db:Database.Database,job:im
   const expected=admissionPrimaryKeys[name as keyof typeof admissionPrimaryKeys];
   if(primary.length!==expected.length||primary.some((column,index)=>column.name!==expected[index]||column.pk!==index+1))throw new ScheduleAuthorizationError('forbidden');
  }
- return sqliteSync(assertScheduledDispatchStep(job,trigger,now,requireEnabled));
+}
+/** Schedule proof/current job authority ONLY. Caller separately enforces runtime POST eligibility after settlement. */
+export function assertPaperScheduleAuthorityInTransaction(db:Database.Database,job:import('./types.js').CronJob,trigger:'manual'|'scheduled',now:number):ScheduledDispatchAdmission{
+ assertScheduleSqliteTransaction(db,true);const snapshot=captureScheduledDefinition(job);if(snapshot.definition.actionType!=='paper-runtime-cycle')throw new ScheduleAuthorizationError('invalid');
+ return sqliteSync(scheduledDispatchStep({id:snapshot.definition.id},snapshot,trigger,now,true,false,true));
 }
 
 function* revocationTarget(context:OperationContext,actor:Actor,id:string,expected:ScheduleRevocationOperation|undefined,now:number):Step<ScheduleRevocationOperation>{

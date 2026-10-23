@@ -1,11 +1,13 @@
 /** Internal deterministic PAPER dispatch only. No timer, provider, HTTP or caller-selected trading authority. */
+import {capturePaperScheduleExecutionRequest,resolvePaperScheduleExecutionInTransaction,assertPaperScheduleExecutionFenceInTransaction,assertPaperScheduleExecutionFencePostSettlementInTransaction,type PaperScheduleExecutionFence} from '../scheduler/paper-execution-admission.js';
+import {readDuePaperRuntimeAttemptKeyInTransaction} from './trading-paper-runtime-due-plan.js';
 import {assertReviewedPaperExecutionConsentInTransaction,assertReviewedPaperExecutionConsentPostSettlementInTransaction} from './trading-paper-execution-upgrade-apply.js';
 import type Database from 'better-sqlite3';
 import {createHash} from 'node:crypto';
 import {getDatabase} from '../db/index.js';
 import {dbDriver} from '../db/pg/config.js';
 import {readTrustedPaperRuntimeConsentInTransaction,assertPaperRuntimeEligibilityInTransaction} from './trading-paper-runtime-consent.js';
-import {derivePaperRuntimeDueAttemptKey,claimReviewedCanonicalPaperDispatchAttempt,claimCanonicalPaperDispatchAttempt,claimPaperDispatchAttempt,finishPaperDispatchAttemptInTransaction} from './trading-paper-dispatch-attempts.js';
+import {derivePaperRuntimeDueAttemptKey,claimScheduledCanonicalPaperDispatchAttempt,claimReviewedCanonicalPaperDispatchAttempt,claimCanonicalPaperDispatchAttempt,claimPaperDispatchAttempt,finishPaperDispatchAttemptInTransaction} from './trading-paper-dispatch-attempts.js';
 import {reservePaperOrder} from './trading-paper-ledger.js';
 import {reservePaperSell} from './trading-paper-sells.js';
 import {runPaperBotTickInTransaction,isPaperBotTickRefusal} from './trading-paper-bots.js';
@@ -63,7 +65,7 @@ export function dispatchPaperRuntimeAttempt(db:Database.Database,value:unknown,n
 /** Canonical due-cycle admission; hashes still supply no consent or execution authority. */
 export function dispatchCanonicalPaperRuntimeAttempt(db:Database.Database,value:unknown,nowOverride?:number){return dispatchAttempt(db,value,nowOverride,true);}
 function canonicalHistory(s:Snapshot){for(const a of s.journal.attempts)if(a.attemptKey!==derivePaperRuntimeDueAttemptKey(s.consentId,s.definitionId,s.definitionDigest,a.sequence))fail();}
-function dispatchAttempt(db:Database.Database,value:unknown,nowOverride:number|undefined,canonical:boolean,reviewedExecution=false){
+function dispatchAttempt(db:Database.Database,value:unknown,nowOverride:number|undefined,canonical:boolean,reviewedExecution=false,scheduleFence?:PaperScheduleExecutionFence){
  try{
   if(dbDriver()!=='sqlite'||getDatabase().getDb()!==db||db.inTransaction)fail();const r=request(value);
   const initial=db.transaction(()=>{
@@ -76,7 +78,7 @@ function dispatchAttempt(db:Database.Database,value:unknown,nowOverride:number|u
   }).deferred();
   if(initial.terminal)return initial.terminal;
   const s=initial.snapshot,claimInput={definitionId:s.definitionId,definitionDigest:s.definitionDigest,attemptKey:r.attemptKey,leaseMs:60000};
-  const claim=reviewedExecution?claimReviewedCanonicalPaperDispatchAttempt(db,s.ownerId,claimInput,s.consentId,nowOverride):canonical?claimCanonicalPaperDispatchAttempt(db,s.ownerId,claimInput,s.consentId,nowOverride):claimPaperDispatchAttempt(db,s.ownerId,claimInput,nowOverride);
+  const claim=scheduleFence?claimScheduledCanonicalPaperDispatchAttempt(db,s.ownerId,claimInput,s.consentId,scheduleFence,nowOverride):reviewedExecution?claimReviewedCanonicalPaperDispatchAttempt(db,s.ownerId,claimInput,s.consentId,nowOverride):canonical?claimCanonicalPaperDispatchAttempt(db,s.ownerId,claimInput,s.consentId,nowOverride):claimPaperDispatchAttempt(db,s.ownerId,claimInput,nowOverride);
   if(!claim.ok)return deny();
   if(claim.replayed){
    return db.transaction(()=>{
@@ -91,7 +93,7 @@ function dispatchAttempt(db:Database.Database,value:unknown,nowOverride:number|u
    noEffects(db,current,a);
    try{
     return db.transaction(()=>{
-     let eligible:Snapshot;try{eligible=reviewedExecution?assertReviewedPaperExecutionConsentInTransaction(db,current.ownerId,r.consentId,current.definitionId,current.definitionDigest,now):assertPaperRuntimeEligibilityInTransaction(db,r.consentId,now);}catch{throw business;}
+     let eligible:Snapshot;try{if(scheduleFence)assertPaperScheduleExecutionFenceInTransaction(db,scheduleFence,current.ownerId,r.consentId,current.definitionId,current.definitionDigest,now);eligible=reviewedExecution?assertReviewedPaperExecutionConsentInTransaction(db,current.ownerId,r.consentId,current.definitionId,current.definitionDigest,now):assertPaperRuntimeEligibilityInTransaction(db,r.consentId,now);}catch{throw business;}
      const d=eligible.definition,k=key(eligible,a),p=proposal(eligible,k);
      const reserved=d.strategy.side==='buy'?reservePaperOrder(db,eligible.ownerId,p,()=>now):reservePaperSell(db,eligible.ownerId,p,()=>now);
      if(!reserved.ok)throw business;if(reserved.replayed)fail();
@@ -99,12 +101,12 @@ function dispatchAttempt(db:Database.Database,value:unknown,nowOverride:number|u
      if(!('ok' in result)||result.ok!==true||result.replayed!==false)fail();
      // Final successful bot tick may exactly reach the cap; only this postcheck permits equality.
      const completedAt=clock(nowOverride);if(completedAt<now||completedAt>=a.leaseUntil)throw business;
-     try{if(reviewedExecution)assertReviewedPaperExecutionConsentPostSettlementInTransaction(db,eligible.ownerId,r.consentId,eligible.definitionId,eligible.definitionDigest,completedAt);else assertPaperRuntimeEligibilityInTransaction(db,r.consentId,completedAt,true);}catch{throw business;}
+     try{if(scheduleFence)assertPaperScheduleExecutionFencePostSettlementInTransaction(db,scheduleFence,eligible.ownerId,r.consentId,eligible.definitionId,eligible.definitionDigest,completedAt);if(reviewedExecution)assertReviewedPaperExecutionConsentPostSettlementInTransaction(db,eligible.ownerId,r.consentId,eligible.definitionId,eligible.definitionDigest,completedAt);else assertPaperRuntimeEligibilityInTransaction(db,r.consentId,completedAt,true);}catch{throw business;}
      const finished=finishPaperDispatchAttemptInTransaction(db,eligible.ownerId,{definitionId:eligible.definitionId,definitionDigest:eligible.definitionDigest,attemptKey:r.attemptKey,fenceToken:claim.fenceToken,outcome:'completed'},completedAt);
      if(!finished.ok||finished.replayed||finished.status!=='completed')fail();
      const after=readTrustedPaperRuntimeConsentInTransaction(db,r.consentId,completedAt),saved=after.journal.attempts.find(x=>x.attemptId===a.attemptId);if(!saved)fail();
      const ack=replayCompleted(db,after,saved,completedAt);
-     if(reviewedExecution){const finalNow=clock(nowOverride);if(finalNow<completedAt||finalNow>=a.leaseUntil)fail();assertReviewedPaperExecutionConsentPostSettlementInTransaction(db,after.ownerId,r.consentId,after.definitionId,after.definitionDigest,finalNow);}
+     if(reviewedExecution){const finalNow=clock(nowOverride);if(finalNow<completedAt||finalNow>=a.leaseUntil)fail();assertReviewedPaperExecutionConsentPostSettlementInTransaction(db,after.ownerId,r.consentId,after.definitionId,after.definitionDigest,finalNow);if(scheduleFence)assertPaperScheduleExecutionFencePostSettlementInTransaction(db,scheduleFence,after.ownerId,r.consentId,after.definitionId,after.definitionDigest,finalNow);}
      return Object.freeze({...ack,replayed:false});
     })();
    }catch(error){
@@ -121,3 +123,12 @@ function dispatchAttempt(db:Database.Database,value:unknown,nowOverride:number|u
 
 /** Strict reviewed execution-capability path. Historical terminal acknowledgement creates no new effects. */
 export function dispatchReviewedCanonicalPaperRuntimeAttempt(db:Database.Database,value:unknown,nowOverride?:number){return dispatchAttempt(db,value,nowOverride,true,true);}
+
+/** Explicit internal one-attempt schedule invocation only. No engine, timer, worker, API or default connection. */
+export function dispatchDueScheduledPaperRuntime(db:Database.Database,value:unknown,nowOverride?:number){
+ try{
+  if(dbDriver()!=='sqlite'||getDatabase().getDb()!==db||db.inTransaction)fail();const request=capturePaperScheduleExecutionRequest(value);
+  const plan=db.transaction(()=>{const now=clock(nowOverride),fence=resolvePaperScheduleExecutionInTransaction(db,request,now),attemptKey=readDuePaperRuntimeAttemptKeyInTransaction(db,fence.consentId,now);return {fence,attemptKey};}).deferred();
+  return dispatchAttempt(db,{consentId:plan.fence.consentId,attemptKey:plan.attemptKey},nowOverride,true,true,plan.fence);
+ }catch{return deny();}
+}

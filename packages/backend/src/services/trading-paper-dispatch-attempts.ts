@@ -1,4 +1,5 @@
 /** Internal provider-free bookkeeping only. No consent, runtime activation, scheduler or trade effect. */
+import {capturePaperScheduleExecutionFence,assertPaperScheduleExecutionFenceInTransaction,type PaperScheduleExecutionFence} from '../scheduler/paper-execution-admission.js';
 import {assertReviewedPaperExecutionConsentInTransaction} from './trading-paper-execution-upgrade-apply.js';
 import Database from 'better-sqlite3';
 import {createHash,randomBytes,randomUUID} from 'node:crypto';
@@ -127,7 +128,7 @@ export function claimCanonicalPaperDispatchAttempt(db:Database.Database,ownerId:
  if(!uuid(consentId))return deny();
  return claimAttempt(db,ownerId,input,nowOverride,consentId);
 }
-function claimAttempt(db:Database.Database,ownerId:string,input:unknown,nowOverride?:number,canonicalConsentId?:string,reviewedExecution=false){
+function claimAttempt(db:Database.Database,ownerId:string,input:unknown,nowOverride?:number,canonicalConsentId?:string,reviewedExecution=false,scheduleFence?:PaperScheduleExecutionFence){
 
  try{
   identity(db);const request=claimInput(input);
@@ -149,12 +150,14 @@ function claimAttempt(db:Database.Database,ownerId:string,input:unknown,nowOverr
    if(journal.unknown)return deny('unknown');if(journal.pending)return deny('pending');
    if(now>=journal.definition.limits.expiresAt||journal.row.attempt_count>=journal.definition.limits.maxAttempts)return deny('limit');
    if(journal.row.last_claim_at!==null&&now-journal.row.last_claim_at<journal.definition.limits.cadenceMs)return deny('cadence');
+   if(scheduleFence){if(!canonicalConsentId)fail();assertPaperScheduleExecutionFenceInTransaction(db,scheduleFence,ownerId,canonicalConsentId,request.definitionId,request.definitionDigest,now);}
    if(reviewedExecution){if(!canonicalConsentId)fail();assertReviewedPaperExecutionConsentInTransaction(db,ownerId,canonicalConsentId,request.definitionId,request.definitionDigest,now);}
    const json=claimJSON(ownerId,request),a:Omit<Attempt,'event_hash'>={id:randomUUID(),definition_id:request.definitionId,owner_id:ownerId,attempt_key:request.attemptKey,sequence:journal.row.attempt_count+1,lease_ms:request.leaseMs,request_json:json,request_hash:sha(json),fence_token:randomBytes(32).toString('base64url'),claimed_at:now,lease_until:leaseEnd(now,request.leaseMs,journal.definition.limits.expiresAt),status:'pending',finished_at:null};
    if(db.prepare('UPDATE main.paper_dispatch_definitions SET attempt_count=?,last_claim_at=? WHERE id=? AND attempt_count=?').run(a.sequence,now,request.definitionId,journal.row.attempt_count).changes!==1)fail();
    db.prepare('INSERT INTO main.paper_dispatch_attempts VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?)').run(a.id,a.definition_id,a.owner_id,a.attempt_key,a.sequence,a.lease_ms,a.request_json,a.request_hash,a.fence_token,a.claimed_at,a.lease_until,a.status,a.finished_at,eventHash(a));
    const checked=load(db,ownerId,request.definitionId,now),saved=checked.attempts.find(row=>row.id===a.id);if(!saved||saved.fence_token!==a.fence_token)fail();
    if(reviewedExecution){if(!canonicalConsentId)fail();assertReviewedPaperExecutionConsentInTransaction(db,ownerId,canonicalConsentId,request.definitionId,request.definitionDigest,time(nowOverride));}
+   if(scheduleFence){if(!canonicalConsentId)fail();const checkedAt=time(nowOverride);if(checkedAt<now||checkedAt>=saved.lease_until)fail();assertPaperScheduleExecutionFenceInTransaction(db,scheduleFence,ownerId,canonicalConsentId,request.definitionId,request.definitionDigest,checkedAt);}
    return acknowledgment(saved,now,false,true);
   }).immediate();
  }catch{return deny();}
@@ -216,4 +219,9 @@ export function readPaperDispatchPreservationPrefixInTransaction(db:Database.Dat
 /** Separately selected strict execute-capability path; no caller callback or boolean supplies authority. */
 export function claimReviewedCanonicalPaperDispatchAttempt(db:Database.Database,ownerId:string,input:unknown,consentId:string,nowOverride?:number){
  if(!uuid(consentId))return deny();return claimAttempt(db,ownerId,input,nowOverride,consentId,true);
+}
+
+/** Trusted schedule composition only. Fence comparisons never replace current persisted proof and owner checks. */
+export function claimScheduledCanonicalPaperDispatchAttempt(db:Database.Database,ownerId:string,input:unknown,consentId:string,fence:PaperScheduleExecutionFence,nowOverride?:number){
+ try{if(!uuid(consentId))return deny();const captured=capturePaperScheduleExecutionFence(fence);return claimAttempt(db,ownerId,input,nowOverride,consentId,true,captured);}catch{return deny();}
 }
