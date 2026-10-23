@@ -119,3 +119,21 @@ export async function applyPaperExecutionUpgrade(db:Database.Database,context:Op
 export function readEffectivePaperExecutionAccess(db:Database.Database,actor:Actor,now=Date.now()){
  try{identity(db);return db.transaction(()=>{const ownerId=human(db,actor,now);return projection(validate(db,ownerId,now));}).deferred();}catch{return deny();}
 }
+
+/** Actual strict-path admission only. Caller must own BEGIN IMMEDIATE; returned snapshots are not bearer grants. */
+export function assertReviewedPaperExecutionConsentInTransaction(db:Database.Database,ownerId:string,consentId:string,definitionId:string,definitionDigest:string,now:number){
+ return assertExecutionConsent(db,ownerId,consentId,definitionId,definitionDigest,now,false);
+}
+/** Strict-path postcondition only: permits the just-settled bot to reach its existing finite successful-tick cap. */
+export function assertReviewedPaperExecutionConsentPostSettlementInTransaction(db:Database.Database,ownerId:string,consentId:string,definitionId:string,definitionDigest:string,now:number){
+ return assertExecutionConsent(db,ownerId,consentId,definitionId,definitionDigest,now,true);
+}
+function assertExecutionConsent(db:Database.Database,ownerId:string,consentId:string,definitionId:string,definitionDigest:string,now:number,afterSettlement:boolean){
+ if(dbDriver()!=='sqlite'||getDatabase().getDb()!==db||!db.inTransaction||!uuid(consentId)||!uuid(definitionId)||!hash(definitionDigest))fail();
+ human(db,{kind:'user',role:'owner',userId:ownerId},now);
+ const effective=validate(db,ownerId,now),bound=effective.review.definition.affected.consents.find(c=>c.consentId===consentId);
+ if(!bound||bound.definitionId!==definitionId||bound.definitionDigest!==definitionDigest)fail();
+ const current=assertPaperRuntimeEligibilityInTransaction(db,consentId,now,afterSettlement);
+ if(current.ownerId!==ownerId||current.definitionId!==definitionId||current.definitionDigest!==definitionDigest)fail();
+ return current;
+}

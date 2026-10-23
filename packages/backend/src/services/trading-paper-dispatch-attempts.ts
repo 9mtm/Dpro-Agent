@@ -1,4 +1,5 @@
 /** Internal provider-free bookkeeping only. No consent, runtime activation, scheduler or trade effect. */
+import {assertReviewedPaperExecutionConsentInTransaction} from './trading-paper-execution-upgrade-apply.js';
 import Database from 'better-sqlite3';
 import {createHash,randomBytes,randomUUID} from 'node:crypto';
 import {getDatabase} from '../db/index.js';
@@ -126,7 +127,7 @@ export function claimCanonicalPaperDispatchAttempt(db:Database.Database,ownerId:
  if(!uuid(consentId))return deny();
  return claimAttempt(db,ownerId,input,nowOverride,consentId);
 }
-function claimAttempt(db:Database.Database,ownerId:string,input:unknown,nowOverride?:number,canonicalConsentId?:string){
+function claimAttempt(db:Database.Database,ownerId:string,input:unknown,nowOverride?:number,canonicalConsentId?:string,reviewedExecution=false){
 
  try{
   identity(db);const request=claimInput(input);
@@ -148,10 +149,13 @@ function claimAttempt(db:Database.Database,ownerId:string,input:unknown,nowOverr
    if(journal.unknown)return deny('unknown');if(journal.pending)return deny('pending');
    if(now>=journal.definition.limits.expiresAt||journal.row.attempt_count>=journal.definition.limits.maxAttempts)return deny('limit');
    if(journal.row.last_claim_at!==null&&now-journal.row.last_claim_at<journal.definition.limits.cadenceMs)return deny('cadence');
+   if(reviewedExecution){if(!canonicalConsentId)fail();assertReviewedPaperExecutionConsentInTransaction(db,ownerId,canonicalConsentId,request.definitionId,request.definitionDigest,now);}
    const json=claimJSON(ownerId,request),a:Omit<Attempt,'event_hash'>={id:randomUUID(),definition_id:request.definitionId,owner_id:ownerId,attempt_key:request.attemptKey,sequence:journal.row.attempt_count+1,lease_ms:request.leaseMs,request_json:json,request_hash:sha(json),fence_token:randomBytes(32).toString('base64url'),claimed_at:now,lease_until:leaseEnd(now,request.leaseMs,journal.definition.limits.expiresAt),status:'pending',finished_at:null};
    if(db.prepare('UPDATE main.paper_dispatch_definitions SET attempt_count=?,last_claim_at=? WHERE id=? AND attempt_count=?').run(a.sequence,now,request.definitionId,journal.row.attempt_count).changes!==1)fail();
    db.prepare('INSERT INTO main.paper_dispatch_attempts VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?)').run(a.id,a.definition_id,a.owner_id,a.attempt_key,a.sequence,a.lease_ms,a.request_json,a.request_hash,a.fence_token,a.claimed_at,a.lease_until,a.status,a.finished_at,eventHash(a));
-   const checked=load(db,ownerId,request.definitionId,now),saved=checked.attempts.find(row=>row.id===a.id);if(!saved||saved.fence_token!==a.fence_token)fail();return acknowledgment(saved,now,false,true);
+   const checked=load(db,ownerId,request.definitionId,now),saved=checked.attempts.find(row=>row.id===a.id);if(!saved||saved.fence_token!==a.fence_token)fail();
+   if(reviewedExecution){if(!canonicalConsentId)fail();assertReviewedPaperExecutionConsentInTransaction(db,ownerId,canonicalConsentId,request.definitionId,request.definitionDigest,time(nowOverride));}
+   return acknowledgment(saved,now,false,true);
   }).immediate();
  }catch{return deny();}
 }
@@ -207,4 +211,9 @@ export function readPaperDispatchPreservationPrefixInTransaction(db:Database.Dat
  if(prefix.some(a=>a.status!=='completed'&&a.status!=='failed'))fail();
  const fingerprint=sha(JSON.stringify(['paper-dispatch-terminal-prefix-v1',j.row.id,j.row.owner_id,j.row.digest,j.row.canonical_json,j.row.created_at,prefix]));
  return Object.freeze({count,lastClaimAt:prefix.at(-1)?.claimed_at??null,fingerprint});
+}
+
+/** Separately selected strict execute-capability path; no caller callback or boolean supplies authority. */
+export function claimReviewedCanonicalPaperDispatchAttempt(db:Database.Database,ownerId:string,input:unknown,consentId:string,nowOverride?:number){
+ if(!uuid(consentId))return deny();return claimAttempt(db,ownerId,input,nowOverride,consentId,true);
 }

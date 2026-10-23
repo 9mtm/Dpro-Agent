@@ -4,7 +4,7 @@ import {getDatabase} from '../db/index.js';
 import {dbDriver} from '../db/pg/config.js';
 import {derivePaperRuntimeDueAttemptKey} from './trading-paper-dispatch-attempts.js';
 import {readTrustedPaperRuntimeConsentInTransaction} from './trading-paper-runtime-consent.js';
-import {dispatchCanonicalPaperRuntimeAttempt} from './trading-paper-runtime-dispatch.js';
+import {dispatchReviewedCanonicalPaperRuntimeAttempt,dispatchCanonicalPaperRuntimeAttempt} from './trading-paper-runtime-dispatch.js';
 const deny=()=>({ok:false as const,reason:'unavailable' as const});
 const uuid=(v:unknown):v is string=>typeof v==='string'&&v.length===36&&/^[a-f0-9]{8}-(?:[a-f0-9]{4}-){3}[a-f0-9]{12}$/.test(v);
 function fail():never{throw Error('paper runtime cycle unavailable');}
@@ -21,7 +21,7 @@ function time(value?:number){const now=value===undefined?Date.now():value;if(!Nu
  * The downstream dispatcher independently rechecks current consent/owner/install/policy/risk before claiming
  * and atomically at settlement. A snapshot or deterministic key is not a grant to bypass those checks.
  */
-export function dispatchDuePaperRuntimeConsent(db:Database.Database,value:unknown,nowOverride?:number){
+function dispatchDue(db:Database.Database,value:unknown,nowOverride:number|undefined,reviewedExecution:boolean){
  try{
   if(dbDriver()!=='sqlite'||getDatabase().getDb()!==db||db.inTransaction)fail();
   const consentId=input(value);
@@ -36,6 +36,11 @@ export function dispatchDuePaperRuntimeConsent(db:Database.Database,value:unknow
    return derivePaperRuntimeDueAttemptKey(consentId,s.definitionId,s.definitionDigest,j.attemptCount+1);
   }).deferred();
   // The read snapshot is released before either dispatcher write transaction. Default clocks are resampled.
-  return dispatchCanonicalPaperRuntimeAttempt(db,{consentId,attemptKey},nowOverride);
+  return reviewedExecution?dispatchReviewedCanonicalPaperRuntimeAttempt(db,{consentId,attemptKey},nowOverride):dispatchCanonicalPaperRuntimeAttempt(db,{consentId,attemptKey},nowOverride);
  }catch{return deny();}
 }
+
+/** Existing trusted internal due path remains compatible and does not assert execution capability. */
+export function dispatchDuePaperRuntimeConsent(db:Database.Database,value:unknown,nowOverride?:number){return dispatchDue(db,value,nowOverride,false);}
+/** New strict path; actual claim and settlement each validate the reviewed overlay inside their write transaction. */
+export function dispatchDueReviewedPaperRuntimeConsent(db:Database.Database,value:unknown,nowOverride?:number){return dispatchDue(db,value,nowOverride,true);}
