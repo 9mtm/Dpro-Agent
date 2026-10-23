@@ -118,13 +118,13 @@ export async function deleteJob(id: string): Promise<void> {
   await sql().tx(function*(){yield* lockName('scheduled-job:'+id);const changed=yield* run('DELETE FROM cron_jobs WHERE id = ?', id);if(changed.changes===1)yield* advanceSecurityRevision(id);});
 }
 
-/** The engine's after-run update of last_run / next_run. */
+/** Generic runtime projection cannot become a heartbeat for a later typed paper definition. */
 export async function recordRunTimes(job: CronJob): Promise<void> {
   await sql().read(run(`
     UPDATE cron_jobs
     SET last_run = ?, next_run = ?, updated_at = ?
-    WHERE id = ?`,
-  job.lastRun?.toISOString() || null, job.nextRun?.toISOString() || null, new Date().toISOString(), job.id));
+    WHERE id = ? AND action_type = ? AND action_type <> 'paper-runtime-cycle'`,
+  job.lastRun?.toISOString() || null, job.nextRun?.toISOString() || null, new Date().toISOString(), job.id, job.actionType));
 }
 
 export interface ExecutionRecord {

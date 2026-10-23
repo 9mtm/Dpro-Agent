@@ -1,5 +1,5 @@
 /** Internal deterministic PAPER dispatch only. No timer, provider, HTTP or caller-selected trading authority. */
-import {capturePaperScheduleExecutionRequest,resolvePaperScheduleExecutionInTransaction,assertPaperScheduleExecutionFenceInTransaction,assertPaperScheduleExecutionFencePostSettlementInTransaction,type PaperScheduleExecutionFence} from '../scheduler/paper-execution-admission.js';
+import {capturePaperScheduleExecutionFence,capturePaperScheduleExecutionRequest,resolvePaperScheduleExecutionInTransaction,assertPaperScheduleExecutionFenceInTransaction,assertPaperScheduleExecutionFencePostSettlementInTransaction,type PaperScheduleExecutionFence} from '../scheduler/paper-execution-admission.js';
 import {readDuePaperRuntimeAttemptKeyInTransaction} from './trading-paper-runtime-due-plan.js';
 import {assertReviewedPaperExecutionConsentInTransaction,assertReviewedPaperExecutionConsentPostSettlementInTransaction} from './trading-paper-execution-upgrade-apply.js';
 import type Database from 'better-sqlite3';
@@ -130,5 +130,20 @@ export function dispatchDueScheduledPaperRuntime(db:Database.Database,value:unkn
   if(dbDriver()!=='sqlite'||getDatabase().getDb()!==db||db.inTransaction)fail();const request=capturePaperScheduleExecutionRequest(value);
   const plan=db.transaction(()=>{const now=clock(nowOverride),fence=resolvePaperScheduleExecutionInTransaction(db,request,now),attemptKey=readDuePaperRuntimeAttemptKeyInTransaction(db,fence.consentId,now);return {fence,attemptKey};}).deferred();
   return dispatchAttempt(db,{consentId:plan.fence.consentId,attemptKey:plan.attemptKey},nowOverride,true,true,plan.fence);
+ }catch{return deny();}
+}
+
+/** Registered timer constraint only; current authority is still resolved under every actual write lock. */
+export function dispatchRegisteredScheduledPaperRuntime(db:Database.Database,value:unknown,registration:unknown,nowOverride?:number){
+ try{
+  if(dbDriver()!=='sqlite'||getDatabase().getDb()!==db||db.inTransaction)fail();
+  const request=capturePaperScheduleExecutionRequest(value),fence=capturePaperScheduleExecutionFence(registration);
+  if(request.jobId!==fence.jobId||request.trigger!==fence.trigger)fail();
+  const attemptKey=db.transaction(()=>{
+   const now=clock(nowOverride);
+   assertPaperScheduleExecutionFenceInTransaction(db,fence,fence.ownerId,fence.consentId,fence.definitionId,fence.definitionDigest,now);
+   return readDuePaperRuntimeAttemptKeyInTransaction(db,fence.consentId,now);
+  }).deferred();
+  return dispatchAttempt(db,{consentId:fence.consentId,attemptKey},nowOverride,true,true,fence);
  }catch{return deny();}
 }

@@ -4,6 +4,13 @@ import { safeConsole } from '../services/safe-error-log.js';
  * Manages scheduled jobs using node-cron
  */
 
+import type Database from 'better-sqlite3';
+import {getDatabase} from '../db/index.js';
+import {dbDriver} from '../db/pg/config.js';
+import {rowToJob,type CronJobRow} from './store.js';
+import {resolvePaperScheduleExecutionInTransaction,type PaperScheduleExecutionFence} from './paper-execution-admission.js';
+import {assertScheduledDispatchInTransaction} from './authorization.js';
+import {dispatchRegisteredScheduledPaperRuntime} from '../services/trading-paper-runtime-dispatch.js';
 import { assertScheduledDispatch } from './authorization.js';
 import { backgroundEnabled } from '../config/background.js';
 import { isPaidProviderUrl } from '../llm/model-call.js';
@@ -21,11 +28,85 @@ import type {
 import { getJobQueue } from './queue.js';
 import { claimRun, listEnabledJobs, recordRunTimes, saveExecution, tickSlot, type ExecutionRecord } from './store.js';
 
+export type PaperCronStatus=Readonly<{jobId:string;registered:boolean;phase:'unavailable'|'waiting'|'refused'|'pending'|'unknown'|'completed'|'failed'|'stopped';callbackAt:number|null;attemptId:string|null;replayed:boolean|null;historyRecorded:boolean}>;
+type PaperRegistration={generation:number;epoch:number;timeZone:string;fence:PaperScheduleExecutionFence};
+
 export class CronEngine extends EventEmitter implements ICronEngine {
   private jobs: Map<string, CronJob> = new Map();
   private tasks: Map<string, any> = new Map();
+  private readonly timerTokens=new Map<string,object>();
   private queue = getJobQueue();
   private isRunning = false;
+
+  readonly #paperLedger: Database.Database|null;
+  private epoch=0;
+  private generation=0;
+  private readonly paperRegistrations=new Map<string,PaperRegistration>();
+  private readonly paperStatuses=new Map<string,PaperCronStatus>();
+
+  /** An explicit instance dependency; the default singleton remains disconnected. */
+  constructor(paperLedger:Database.Database|null=null){super();this.#paperLedger=paperLedger;}
+
+  /** Registration is physical timer state; waiting is not an execution-readiness or heartbeat claim. */
+  getPaperStatus(jobId:string):PaperCronStatus|undefined{
+    const status=this.paperStatuses.get(jobId),registration=this.paperRegistrations.get(jobId);
+    if(status?.registered&&registration&&!this.paperCurrent(jobId,registration))return Object.freeze({...status,phase:'unavailable'});
+    return status;
+  }
+
+  private paperAvailable():boolean{
+    try{return this.#paperLedger!==null&&this.#paperLedger.open&&dbDriver()==='sqlite'&&getDatabase().getDb()===this.#paperLedger&&backgroundEnabled();}catch{return false;}
+  }
+
+  private paperCurrent(jobId:string,registration:PaperRegistration):boolean{
+    return this.isRunning&&this.epoch===registration.epoch&&this.paperRegistrations.get(jobId)===registration&&this.paperAvailable()&&Intl.DateTimeFormat().resolvedOptions().timeZone===registration.timeZone;
+  }
+
+  private registerPaper(job:CronJob):void{
+    this.jobs.set(job.id,job);
+    this.paperStatuses.set(job.id,Object.freeze({jobId:job.id,registered:false,phase:'unavailable',callbackAt:null,attemptId:null,replayed:null,historyRecorded:false}));
+    if(!this.isRunning||!job.enabled||!this.paperAvailable())return;
+    const db=this.#paperLedger!;
+    try{
+      const captured=db.transaction(()=>{
+        const row=db.prepare('SELECT * FROM main.cron_jobs WHERE id=?').get(job.id) as CronJobRow|undefined;
+        if(!row||row.action_type!=='paper-runtime-cycle')throw Error('unavailable');
+        const persisted=rowToJob('sqlite',row),now=Date.now();
+        const admission=assertScheduledDispatchInTransaction(db,persisted,'scheduled',now);
+        const fence=resolvePaperScheduleExecutionInTransaction(db,{jobId:job.id,trigger:'scheduled'},now);
+        return {persisted,fence,timeZone:admission.definition.timeZone};
+      }).deferred();
+      const registration:PaperRegistration=Object.freeze({generation:++this.generation,epoch:this.epoch,timeZone:captured.timeZone,fence:captured.fence});
+      this.paperRegistrations.set(job.id,registration);
+      const task=cron.schedule(captured.persisted.cronExpression,()=>{
+        if(!this.paperCurrent(job.id,registration))return;
+        return this.executePaper(job.id,'scheduled',registration);
+      },{timezone:registration.timeZone});
+      this.tasks.set(job.id,task);
+      this.jobs.set(job.id,captured.persisted);
+      this.paperStatuses.set(job.id,Object.freeze({jobId:job.id,registered:true,phase:'waiting',callbackAt:null,attemptId:null,replayed:null,historyRecorded:false}));
+    }catch{
+      this.paperRegistrations.delete(job.id);
+    }
+  }
+
+  private executePaper(jobId:string,trigger:'manual'|'scheduled',registration:PaperRegistration|undefined):JobExecutionResult{
+    const startTime=Date.now();
+    if(!registration||!this.paperCurrent(jobId,registration))return {jobId,success:false,error:'Paper cron unavailable',executedAt:new Date(),duration:0};
+    const fence=Object.freeze({...registration.fence,trigger});
+    const output=dispatchRegisteredScheduledPaperRuntime(this.#paperLedger!,{jobId,trigger},fence);
+    const phase=output.ok?output.status:'refused',success=output.ok&&output.status==='completed';
+    let historyRecorded=false;
+    // This summary is the actual dispatch acknowledgement, never an enabled flag or a fill estimate.
+    try{
+      this.#paperLedger!.prepare('INSERT INTO main.job_executions(job_id,success,output,error,executed_at,duration) VALUES(?,?,?,?,?,?)').run(jobId,success?1:0,JSON.stringify(output),success?null:'Paper cron '+phase,new Date(startTime).toISOString(),Math.max(0,Date.now()-startTime));
+      historyRecorded=true;
+    }catch{/* A failed history write cannot undo or misrepresent an already committed paper attempt. */}
+    if(this.paperCurrent(jobId,registration))this.paperStatuses.set(jobId,Object.freeze({jobId,registered:true,phase,callbackAt:startTime,attemptId:output.ok?output.attemptId:null,replayed:output.ok?output.replayed:null,historyRecorded}));
+    const result={jobId,success,output,executedAt:new Date(startTime),duration:Math.max(0,Date.now()-startTime),...(success?{}:{error:'Paper cron '+phase})};
+    this.emit('job:executed',result);
+    return result;
+  }
 
   /**
    * Start cron engine
@@ -38,8 +119,11 @@ export class CronEngine extends EventEmitter implements ICronEngine {
 
     console.log('[CronEngine] 🚀 Starting cron engine...');
 
+    const epoch=++this.epoch;
     // Load jobs from database
     await this.loadJobs();
+    if(epoch!==this.epoch)return;
+    this.isRunning=true;
 
     // Schedule all enabled jobs
     for (const job of this.jobs.values()) {
@@ -63,9 +147,16 @@ export class CronEngine extends EventEmitter implements ICronEngine {
   async stop(): Promise<void> {
     console.log('[CronEngine] 🛑 Stopping cron engine...');
 
+    // Invalidate retained callbacks before stopping any owned timers.
+    ++this.epoch;
+    this.isRunning=false;
+    this.paperRegistrations.clear();
+    this.timerTokens.clear();
+    for(const [id,status] of this.paperStatuses)this.paperStatuses.set(id,Object.freeze({...status,registered:false,phase:'stopped'}));
     // Stop all scheduled tasks
     for (const task of this.tasks.values()) {
       task.stop();
+      task.destroy?.();
     }
 
     this.tasks.clear();
@@ -88,15 +179,21 @@ export class CronEngine extends EventEmitter implements ICronEngine {
     }
 
     // RUN-ISO F2: with AGENT_PLAYER_BACKGROUND=off the job is known but never runs.
-    if (job.actionType === 'paper-runtime-cycle' || !backgroundEnabled()) {
+    if(job.actionType==='paper-runtime-cycle'){this.registerPaper(job);return;}
+    if (!backgroundEnabled()) {
       this.jobs.set(job.id, job);
       return;
     }
 
+    // Identity also prevents a retained generic closure from adopting a later paper job at this ID.
+    const token=Object.freeze({}),epoch=this.epoch;
+    this.timerTokens.set(job.id,token);
+    const current=()=>this.epoch===epoch&&this.timerTokens.get(job.id)===token&&this.jobs.get(job.id)?.actionType!=='paper-runtime-cycle';
     // Create scheduled task
     const task = cron.schedule(
       job.cronExpression,
       async () => {
+        if(!current())return;
         // B2.2c: on PostgreSQL several processes fire the same tick; only the
         // one that claims its slot runs it (store.ts claimRun). SQLite: always.
         try {
@@ -106,6 +203,7 @@ export class CronEngine extends EventEmitter implements ICronEngine {
           return;
         }
 
+        if(!current())return;
         safeConsole.log(`[CronEngine] ⏰ Executing job: ${job.name}`);
 
         try {
@@ -123,6 +221,7 @@ export class CronEngine extends EventEmitter implements ICronEngine {
           this.emit('job:error', { jobId: job.id, error: error.message });
         }
 
+        if(!current())return;
         // Update last run time
         job.lastRun = new Date();
         await this.updateJob(job);
@@ -139,10 +238,15 @@ export class CronEngine extends EventEmitter implements ICronEngine {
    * Unschedule a job
    */
   unscheduleJob(jobId: string): void {
+    this.paperRegistrations.delete(jobId);
+    this.timerTokens.delete(jobId);
+    const status=this.paperStatuses.get(jobId);
+    if(status)this.paperStatuses.set(jobId,Object.freeze({...status,registered:false,phase:'stopped'}));
     const task = this.tasks.get(jobId);
 
     if (task) {
       task.stop();
+      task.destroy?.();
       this.tasks.delete(jobId);
       safeConsole.log(`[CronEngine] ⏹️  Unscheduled job: ${jobId}`);
     }
@@ -179,10 +283,10 @@ export class CronEngine extends EventEmitter implements ICronEngine {
       throw new Error(`Job not found: ${jobId}`);
     }
 
+    if(job.actionType==='paper-runtime-cycle')return this.executePaper(jobId,trigger,this.paperRegistrations.get(jobId));
     const startTime = Date.now();
 
     try {
-      if(job.actionType==='paper-runtime-cycle')throw new Error('Paper schedule execution unavailable');
       const admitted = job.actionType === 'send-message' || job.actionType === 'api-call' ? await assertScheduledDispatch(job, trigger) : undefined;
       let output: any;
 
