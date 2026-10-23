@@ -258,3 +258,15 @@ export function readPaperRuntimePreservationInTransaction(db:Database.Database,o
 export async function stagePaperRuntimeConsent(db:Database.Database,context:OperationContext,actor:Actor,value:unknown,now=Date.now()){return stageRuntime(db,context,actor,value,now,false);}
 /** Separate explicit effective-binding staging. Same runtime proof domain, one-ever bot consent and explicit apply. */
 export async function stageEffectivePaperRuntimeConsent(db:Database.Database,context:OperationContext,actor:Actor,value:unknown,now=Date.now()){return stageRuntime(db,context,actor,value,now,true);}
+
+/** Minimal ownership only for risk-reducing controls. No proof, journal, factor or execution eligibility claim. */
+export function readPaperRuntimeOwnerReferenceInTransaction(db:Database.Database,ownerId:string,id:string,now:number){
+ if(dbDriver()!=='sqlite'||getDatabase().getDb()!==db||!db.inTransaction||!uuid(id)||typeof ownerId!=='string'||!ownerId||ownerId.length>128||/[\x00-\x20\x7f]/.test(ownerId)||isSystemAccount(ownerId)||!uint(now,1))fail();
+ const table='paper_runtime_consents',reference=expected.filter(r=>r.tbl_name===table),objectNames=new Set(reference.map(r=>r.name.toLowerCase()));
+ const related=(r:ObjectRow)=>r.tbl_name.toLowerCase()===table||objectNames.has(r.name.toLowerCase());
+ const actual=objects(db).filter(related);
+ if(objects(db,true).some(related)||actual.length!==reference.length||actual.some(r=>JSON.stringify(r)!==JSON.stringify(reference.find(e=>e.name===r.name))))fail();
+ const row=db.prepare('SELECT * FROM main.paper_runtime_consents WHERE id=? AND owner_id=?').get(id,ownerId) as Record<string,unknown>|undefined;
+ if(!row||row.id!==id||row.owner_id!==ownerId||!uuid(row.review_id)||!uuid(row.bot_id)||!uuid(row.definition_id)||!hash(row.definition_digest)||!uint(row.created_at,1)||row.created_at>now||!['granted','revoked'].includes(row.status as string))fail();
+ return Object.freeze({consentId:id,ownerId,botId:row.bot_id,createdAt:row.created_at,status:row.status as 'granted'|'revoked'});
+}

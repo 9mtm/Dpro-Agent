@@ -146,8 +146,8 @@ export function assertScheduledDispatchInTransaction(db:Database.Database,job:im
  return sqliteSync(assertScheduledDispatchStep(job,trigger,now,requireEnabled));
 }
 
-function assertScheduleSqliteTransaction(db:Database.Database,requireEnabled:boolean){
- if(dbDriver()!=='sqlite'||getDatabase().getDb()!==db||!db.inTransaction||typeof requireEnabled!=='boolean'||db.pragma('query_only',{simple:true})!==0)throw new ScheduleAuthorizationError('forbidden');
+function assertScheduleSqliteTransaction(db:Database.Database,requireEnabled:boolean,writable=true){
+ if(dbDriver()!=='sqlite'||getDatabase().getDb()!==db||!db.inTransaction||typeof requireEnabled!=='boolean'||writable&&db.pragma('query_only',{simple:true})!==0)throw new ScheduleAuthorizationError('forbidden');
  for(const [name,columns] of Object.entries(admissionColumns)){
   if(db.prepare('SELECT 1 FROM sqlite_temp_master WHERE name=? COLLATE NOCASE OR tbl_name=? COLLATE NOCASE LIMIT 1').get(name,name)||!db.prepare("SELECT 1 FROM main.sqlite_master WHERE type='table' AND name=?").get(name)||db.prepare("SELECT 1 FROM main.sqlite_master WHERE type='trigger' AND tbl_name=? COLLATE NOCASE LIMIT 1").get(name))throw new ScheduleAuthorizationError('forbidden');
   db.prepare(`SELECT ${columns} FROM main.${name} LIMIT 0`).all();
@@ -208,4 +208,12 @@ export async function revokeScheduledAuthorization(receipt:unknown,context:Opera
 export async function inspectPausedPaperScheduleAuthorization(job:import('./types.js').CronJob,ownerId:string,now=Date.now()){
  const snapshot=captureScheduledDefinition(job);if(snapshot.definition.actionType!=='paper-runtime-cycle')throw new ScheduleAuthorizationError('invalid');
  return sql().tx(function*(){const inspected=yield* scheduledDispatchStep({id:snapshot.definition.id},snapshot,'manual',now,false,true);if(inspected.ownerId!==ownerId)throw new ScheduleAuthorizationError('forbidden');return Object.freeze({status:'authorized' as const,executionAvailable:false as const});});
+}
+
+/** Full shared paper admission inspection, including paused jobs. No proof consumption or enabling. */
+export function inspectPausedPaperScheduleAdmissionInTransaction(db:Database.Database,job:import('./types.js').CronJob,ownerId:string,now:number):ScheduledDispatchAdmission{
+ assertScheduleSqliteTransaction(db,false,false);
+ const snapshot=captureScheduledDefinition(job);if(snapshot.definition.actionType!=='paper-runtime-cycle')throw new ScheduleAuthorizationError('invalid');
+ const admission=sqliteSync(scheduledDispatchStep({id:snapshot.definition.id},snapshot,'manual',now,false,true));
+ if(admission.ownerId!==ownerId)throw new ScheduleAuthorizationError('forbidden');return admission;
 }
