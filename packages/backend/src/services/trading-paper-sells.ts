@@ -365,6 +365,20 @@ function validHistoricalReceipt(fill: SellFill, reservation: Reservation, owner:
         && f.net === BigInt(fill.net_minor) && f.removed === BigInt(fill.removed_cost_minor)
         && f.pnl === BigInt(fill.realized_pnl_minor) && f.marketLoss === BigInt(fill.market_loss_minor);
 }
+/** Read-only integrity inspection. Does not grant execution authority or consult current policy. */
+export function inspectPaperSellHistory(reservation: unknown, fill: unknown, owner: string) {
+    if (!object(reservation)) return null;
+    const row = reservation as unknown as Reservation;
+    const intent = savedIntent(row, Number.MAX_SAFE_INTEGER);
+    if (!intent) return null;
+    if (fill === null) return row.status === 'filled' || !historicalFigures(row, intent, owner) ? null : { intent, fill: null };
+    if (!object(fill) || !validHistoricalReceipt(fill as unknown as SellFill, row, owner, Number.MAX_SAFE_INTEGER)) return null;
+    const f = fill as unknown as SellFill;
+    return { intent, fill: { id: f.id, reservationId: f.reservation_id, symbol: intent.symbol, side: 'sell' as const,
+        quantityUnits: f.quantity_units, priceMinor: f.price_minor, grossMinor: f.gross_minor, feeMinor: f.fee_minor,
+        netMinor: f.net_minor, removedCostMinor: f.removed_cost_minor, realizedPnLMinor: f.realized_pnl_minor,
+        marketLossMinor: f.market_loss_minor, createdAt: f.created_at } };
+}
 export function executePaperSell(db: Database.Database, owner: string, input: unknown, clock: () => number = Date.now) {
     if (!id(owner) || !object(input) || Object.keys(input).length !== 3 || !['accountId', 'reservationId', 'executionKey'].every(k => id(input[k])))
         return no('invalid');

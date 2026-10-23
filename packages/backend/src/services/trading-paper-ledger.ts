@@ -2,6 +2,7 @@
 import type Database from 'better-sqlite3';
 import {createHash, randomUUID} from 'node:crypto';
 import {admitPaperOrder} from './trading-paper-policy.js';
+import {readPaperExecutionV2} from './trading-paper-read-v2.js';
 
 export interface PaperPolicy {
  id:string; revision:number; appRevision:number; currency:string; ownerId:string; accountId:string;
@@ -202,9 +203,10 @@ export function readPaperAccount(db:Database.Database,ownerId:string,accountId:s
  return db.transaction(()=>{
   const a=db.prepare('SELECT owner_id,mode,currency,cash,exposure,app_enabled,app_revision,stopped FROM paper_accounts WHERE account_id=?').get(accountId) as {owner_id:string;mode:string;currency:string;cash:number;exposure:number;app_enabled:number;app_revision:number;stopped:number}|undefined;
   if(!a||a.owner_id!==ownerId||!validAccount(a))return {ok:false as const,reason:'unavailable'};
-  if(hasPaperTable(db,'paper_sell_reservations')&&db.prepare('SELECT 1 FROM paper_sell_reservations WHERE account_id=? LIMIT 1').get(accountId))return {ok:false as const,reason:'sell_read_unsupported'};
-  if(hasPaperTable(db,'paper_sell_fills')&&db.prepare('SELECT 1 FROM paper_sell_fills WHERE account_id=? LIMIT 1').get(accountId))return {ok:false as const,reason:'sell_read_unsupported'};
-  let execution;try{execution=executionSnapshot(db,accountId,a.currency,a.exposure);}catch{return {ok:false as const,reason:'unavailable'};}if(execution===false)return {ok:false as const,reason:'unavailable'};
+  const hasSells=(hasPaperTable(db,'paper_sell_reservations')&&!!db.prepare('SELECT 1 FROM paper_sell_reservations WHERE account_id=? LIMIT 1').get(accountId))||(hasPaperTable(db,'paper_sell_fills')&&!!db.prepare('SELECT 1 FROM paper_sell_fills WHERE account_id=? LIMIT 1').get(accountId));
+  const sellProjection=hasSells?readPaperExecutionV2(db,ownerId,accountId,a.currency,a.exposure):undefined;
+  if(hasSells&&!sellProjection)return {ok:false as const,reason:'unavailable'};
+  let execution;try{execution=sellProjection?sellProjection.execution:executionSnapshot(db,accountId,a.currency,a.exposure);}catch{return {ok:false as const,reason:'unavailable'};}if(execution===false)return {ok:false as const,reason:'unavailable'};
   const summary=paperLedgerTotals(db,accountId);if(!summary)return {ok:false as const,reason:'unavailable'};
   const {reserved,pending:pendingCount}=summary;
   const filledColumns=execution?',f.fill_id,f.created_at filled_at':'';const filledJoin=execution?' LEFT JOIN paper_fills f ON f.reservation_id=r.reservation_id AND f.account_id=r.account_id':'';
@@ -214,6 +216,6 @@ export function readPaperAccount(db:Database.Database,ownerId:string,accountId:s
   if(policies.length>100)return {ok:false as const,reason:'unavailable'};
   const safePolicies=[];
   for(const row of policies){let p:unknown;try{p=JSON.parse(row.policy_json);}catch{return {ok:false as const,reason:'unavailable'};}if(!policyValid(p)||p.id!==row.policy_id||p.accountId!==accountId||p.ownerId!==ownerId||p.revision!==row.revision)return {ok:false as const,reason:'unavailable'};safePolicies.push({id:row.policy_id,revision:row.revision,enabled:p.enabled,expiresAt:p.expiresAt});}
-  return {ok:true as const,accountId,mode:a.mode,currency:a.currency,cash:a.cash,availableCash:a.cash-reserved,exposure:a.exposure,pendingExposure:reserved,totalExposure:a.exposure+reserved,pendingCount,appEnabled:a.app_enabled===1,appRevision:a.app_revision,stopped:a.stopped!==0,policies:safePolicies,reservationCount:summary.count,reservations:rows.reverse().map(r=>({id:r.reservation_id,policyId:r.policy_id,notional:r.notional,createdAt:r.created_at,status:r.fill_id?'filled' as const:r.status,cancelledAt:r.cancelled_at,...(r.fill_id?{fillId:r.fill_id,filledAt:r.filled_at}:{} )})),...(execution?{execution}:{})};
+  return {ok:true as const,accountId,mode:a.mode,currency:a.currency,cash:a.cash,availableCash:a.cash-reserved,exposure:a.exposure,pendingExposure:reserved,totalExposure:a.exposure+reserved,pendingCount,appEnabled:a.app_enabled===1,appRevision:a.app_revision,stopped:a.stopped!==0,policies:safePolicies,reservationCount:summary.count,reservations:rows.reverse().map(r=>({id:r.reservation_id,policyId:r.policy_id,notional:r.notional,createdAt:r.created_at,status:r.fill_id?'filled' as const:r.status,cancelledAt:r.cancelled_at,...(r.fill_id?{fillId:r.fill_id,filledAt:r.filled_at}:{} )})),...(execution?{execution}:{}),...(sellProjection?{sellHistory:sellProjection.sellHistory}:{})};
  }).deferred();
 }

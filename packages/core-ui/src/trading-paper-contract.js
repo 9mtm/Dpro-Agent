@@ -1,3 +1,4 @@
+import {projectSellSnapshot} from './trading-paper-sell-contract.js';
 const base='/api/trading-paper/accounts/';
 const id=x=>typeof x==='string'&&/^[A-Za-z0-9][A-Za-z0-9_.:-]{0,127}$/.test(x);
 const record=x=>x!==null&&typeof x==='object'&&!Array.isArray(x)&&[Object.prototype,null].includes(Object.getPrototypeOf(x))&&Reflect.ownKeys(x).every(k=>typeof k==='string'&&Object.hasOwn(Object.getOwnPropertyDescriptor(x,k),'value'));
@@ -26,6 +27,8 @@ export function tradingPaperResponse(path,status,body){
  if(new Set(policies.map(p=>p.id)).size!==policies.length||new Set(reservations.map(r=>r.id)).size!==reservations.length)return fail();
  const visiblePending=reservations.filter(r=>r.status==='pending'),visibleTotal=visiblePending.reduce((sum,r)=>sum+r.notional,0);
  if(!Number.isSafeInteger(visibleTotal)||visiblePending.length>body.pendingCount||visibleTotal>body.pendingExposure||(body.reservationCount===reservations.length&&(visiblePending.length!==body.pendingCount||visibleTotal!==body.pendingExposure)))return fail();
+ if(record(body.execution)&&body.execution.version===2){const mixed=projectSellSnapshot(body,reservations);return {ok:true,accountId:route.accountId,mode:'paper',currency:body.currency,...Object.fromEntries(numbers.map(k=>[k,body[k]])),appEnabled:body.appEnabled,stopped:body.stopped,policies,reservations,...mixed};}
+ if(body.sellHistory!==undefined)return fail();
  let execution;
  const filled=reservations.filter(r=>r.status==='filled');
  if(body.execution!==undefined){
