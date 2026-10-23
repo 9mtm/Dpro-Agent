@@ -2,7 +2,7 @@
 import type Database from 'better-sqlite3';
 import {createHash,randomUUID} from 'node:crypto';
 import {admitPaperOrder} from './trading-paper-policy.js';
-import {paperLedgerTotals,paperFillFeeLoss} from './trading-paper-ledger.js';
+import {paperLedgerTotals,paperFillFeeLoss,hasPaperTable} from './trading-paper-ledger.js';
 const id=(v:unknown):v is string=>typeof v==='string'&&/^[A-Za-z0-9][A-Za-z0-9_.:-]{0,127}$/.test(v);
 const uint=(v:unknown,min=0):v is number=>typeof v==='number'&&Number.isSafeInteger(v)&&v>=min;
 const record=(v:unknown):v is Record<string,unknown>=>!!v&&typeof v==='object'&&!Array.isArray(v)&&[Object.prototype,null].includes(Object.getPrototypeOf(v))&&Reflect.ownKeys(v).every(k=>typeof k==='string'&&Object.hasOwn(Object.getOwnPropertyDescriptor(v,k)!,'value'));
@@ -49,6 +49,7 @@ export function executePaperBuy(db:Database.Database,ownerId:string,input:unknow
   const now=clock();if(!uint(now))return deny('invalid_clock');
   const a=db.prepare('SELECT * FROM paper_accounts WHERE account_id=?').get(accountId) as {owner_id:string;mode:string;currency:string;cash:number;exposure:number;app_enabled:number;app_revision:number;stopped:number}|undefined;
   if(!a||a.owner_id!==ownerId||a.mode!=='paper'||!uint(a.cash)||!uint(a.exposure)||!uint(a.app_revision,1)||![0,1].includes(a.app_enabled)||![0,1].includes(a.stopped))return deny('unavailable');
+  if(hasPaperTable(db,'paper_sell_fills')&&db.prepare('SELECT 1 FROM paper_sell_fills WHERE account_id=? AND execution_key=?').get(accountId,executionKey))return deny('idempotency_conflict');
   const old=db.prepare('SELECT * FROM paper_fills WHERE account_id=? AND execution_key=?').get(accountId,executionKey) as Fill|undefined;
   if(old){
    if(old.request_hash!==requestHash||old.reservation_id!==reservationId||!id(old.fill_id)||![old.quantity_units,old.price_minor,old.total_minor].every(v=>uint(v,1))||!uint(old.fee_minor)||!uint(old.created_at)||typeof old.intent_hash!=='string'||!/^[a-f0-9]{64}$/.test(old.intent_hash)||BigInt(old.quantity_units)*BigInt(old.price_minor)+BigInt(old.fee_minor)!==BigInt(old.total_minor))return deny('idempotency_conflict');

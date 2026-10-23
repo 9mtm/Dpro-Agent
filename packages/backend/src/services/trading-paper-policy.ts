@@ -17,7 +17,10 @@ export function admitPaperOrder(policy:unknown,order:unknown,state:unknown):Verd
  if(policy.mode!=='paper'||!policy.enabled||!state.appEnabled||state.stopped||policy.ownerId!==state.ownerId||policy.accountId!==order.accountId||Number(policy.expiresAt)<=Number(state.now))return deny('unavailable');
  if(!policy.symbols.includes(order.symbol)||Number(state.quoteAt)>Number(state.now)||Number(state.now)-Number(state.quoteAt)>Number(policy.maxQuoteAgeMs))return deny('quote');
  // Sells are conservatively counted as exposure until an authoritative position ledger proves reduction.
- const exposure=Number(state.exposure)+Number(state.reserved)+order.notional;
+ const reduction=state.verifiedReduction!==undefined||state.exposureReductionMinor!==undefined;
+ if(reduction&&(state.verifiedReduction!==true||order.side!=='sell'||!integer(state.exposureReductionMinor)||Number(state.exposureReductionMinor)>Number(state.exposure)))return deny('invalid');
+ const projected=reduction?BigInt(state.exposure as number)+BigInt(state.reserved as number)-BigInt(state.exposureReductionMinor as number):BigInt(state.exposure as number)+BigInt(state.reserved as number)+BigInt(order.notional);
+ const exposure=projected<=BigInt(Number.MAX_SAFE_INTEGER)?Number(projected):NaN;
  if(!Number.isSafeInteger(exposure)||exposure>Number(policy.maxExposure)||order.notional>Number(policy.maxOrder)||Number(state.dailyLoss)>=Number(policy.maxDailyLoss)||Number(state.orders)>=Number(policy.maxOrders)||Number(state.lastOrderAt)>Number(state.now)||Number(state.now)-Number(state.lastOrderAt)<Number(policy.cooldownMs))return deny('limit');
  return Object.freeze({allowed:true});
 }
