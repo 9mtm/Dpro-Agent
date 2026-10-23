@@ -60,10 +60,10 @@ export async function tradingPaperInstallRoutes(app:FastifyInstance,options:{led
     const registryPresent=!!db.prepare("SELECT 1 FROM main.sqlite_master WHERE name IN ('paper_installations','paper_install_grants','paper_install_operations','paper_schema_journal') COLLATE NOCASE LIMIT 1").get();
     if(!registryPresent){
      if(access.state!=='not_provisioned'||!inspectPaperBundlePreparation(db).ok)throw Error('Unavailable');
-     return {appId:'trading',version:BUNDLED_PAPER_INSTALLATION.version,mode:'paper',state:'not_provisioned',revision:0,installationId:null,capabilities:[],access,runtimeConnected:false,createsAccounts:false,retainsData:true};
+     return {appId:'trading',version:BUNDLED_PAPER_INSTALLATION.version,manifestDigest:BUNDLED_PAPER_INSTALLATION.manifestDigest,mode:'paper',state:'not_provisioned',revision:0,installationId:null,capabilities:[],access,runtimeConnected:false,createsAccounts:false,retainsData:true};
     }
     const installation=readPaperInstallation(db,owner,()=>now);if(!installation.ok)throw Error('Unavailable');
-    return {appId:'trading',version:BUNDLED_PAPER_INSTALLATION.version,mode:'paper',state:installation.state,revision:'revision' in installation?installation.revision:0,installationId:'installationId' in installation?installation.installationId:null,capabilities:'capabilities' in installation?installation.capabilities:[],access,runtimeConnected:false,createsAccounts:false,retainsData:true};
+    return {appId:'trading',version:BUNDLED_PAPER_INSTALLATION.version,manifestDigest:BUNDLED_PAPER_INSTALLATION.manifestDigest,mode:'paper',state:installation.state,revision:'revision' in installation?installation.revision:0,installationId:'installationId' in installation?installation.installationId:null,capabilities:'capabilities' in installation?installation.capabilities:[],access,runtimeConnected:false,createsAccounts:false,retainsData:true};
    }).deferred();
   }catch(error){return refuse(reply,error);}
  });

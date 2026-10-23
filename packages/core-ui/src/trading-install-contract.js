@@ -33,14 +33,14 @@ function access(value){
  return {state:value.state,readAccounts:value.readAccounts,readBots:value.readBots,manageBots:value.manageBots,executeOrders:false};
 }
 function status(value){
- if(!record(value)||value.appId!=='trading'||value.version!=='1.0.0'||value.mode!=='paper'||value.runtimeConnected!==false||value.createsAccounts!==false||value.retainsData!==true||!caps(value.capabilities))return fail();
+ if(!record(value)||value.appId!=='trading'||value.version!=='1.0.0'||!hash(value.manifestDigest)||value.mode!=='paper'||value.runtimeConnected!==false||value.createsAccounts!==false||value.retainsData!==true||!caps(value.capabilities))return fail();
  const grant=access(value.access),absent=value.state==='not_provisioned',removed=value.state==='removed_retained';
  if(absent?value.revision!==0||value.installationId!==null||value.capabilities.length||grant.state!=='not_provisioned':!uuid(value.installationId)||!uint(value.revision,1,3))return fail();
  if(!['not_provisioned','provisioned','disabled','removed_retained'].includes(value.state))return fail();
  if(value.state==='provisioned'&&(value.revision!==1||grant.state!=='ready'||!value.capabilities.includes('paper.account.read')||grant.readBots!==value.capabilities.includes('paper.bot.manage')||grant.manageBots!==grant.readBots))return fail();
  if(value.state==='disabled'&&(value.revision!==2||value.capabilities.length||grant.state!=='disabled'))return fail();
  if(removed&&(value.revision<2||value.capabilities.length||grant.state!=='not_provisioned'))return fail();
- return {appId:'trading',version:'1.0.0',mode:'paper',state:value.state,revision:value.revision,installationId:value.installationId,capabilities:[...value.capabilities],access:grant,runtimeConnected:false,createsAccounts:false,retainsData:true};
+ return {appId:'trading',version:'1.0.0',manifestDigest:value.manifestDigest,mode:'paper',state:value.state,revision:value.revision,installationId:value.installationId,capabilities:[...value.capabilities],access:grant,runtimeConnected:false,createsAccounts:false,retainsData:true};
 }
 function review(value,route){
  if(!record(value)||value.ok!==true||!uuid(value.id)||route.reviewId!==undefined&&route.reviewId!==value.id||!uint(value.expiresAt,1)||value.appId!=='trading'||value.version!=='1.0.0'||value.mode!=='paper'
