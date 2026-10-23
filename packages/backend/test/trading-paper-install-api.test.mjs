@@ -25,3 +25,29 @@ test('other owner and foreign same-file handle cannot use prepared installation 
 test('current factor revocation denies apply without installation effects',async()=>{const f=await owner(),flow=await proof(f);db.prepare('UPDATE verification_factors SET enabled=0 WHERE user_id=?').run(f.id);assert.equal((await call(f,'POST',flow.url+'/apply',{receipt:flow.receipt})).statusCode,403);assert.equal(db.prepare('SELECT count(*) n FROM paper_installations WHERE owner_id=?').get(f.id).n,0);});
 
 test('corrupt current grant refuses status safely and proof rate bucket is separate from status reads',async()=>{const f=await owner(),flow=await proof(f);assert.equal((await call(f,'POST',flow.url+'/apply',{receipt:flow.receipt})).statusCode,200);db.prepare('UPDATE paper_install_grants SET revoked_at=1 WHERE owner_id=?').run(f.id);const denied=await call(f,'GET',base);assert.equal(denied.statusCode,503,denied.body);assert.equal(denied.headers['cache-control'],'no-store');const other=await owner();for(let i=0;i<5;i++)assert.equal((await call(other,'POST',base+'/reviews',{...input(),ownerId:other.id})).statusCode,400);assert.equal((await call(other,'POST',base+'/reviews',input())).statusCode,429);assert.equal((await call(other,'GET',base)).statusCode,200);});
+
+test('real desktop SessionClient and installation controller require proof then explicit apply',async()=>{
+ const {SessionClient}=await import('../../core-ui/src/session.ts');
+ const {TradingInstallController}=await import('../../core-ui/src/trading-install-controller.ts');
+ const f=await owner(),user={id:f.id,email:f.id+'@example.invalid',username:f.id,role:'owner'},calls=[];
+ const client=new SessionClient({live:async request=>{
+  if(request.path==='/api/auth/login')return {status:200,body:{token:f.token,deviceToken:'d'.repeat(43),user}};
+  if(request.path==='/api/auth/me')return {status:200,body:{user}};
+  calls.push(request.method+' '+request.path);
+  const r=await app.inject({method:request.method,url:request.path,headers:{host:'127.0.0.1:42521',origin:'http://127.0.0.1:42522',...request.headers},...(request.body===undefined?{}:{payload:request.body})});return {status:r.statusCode,body:r.json()};
+ }});
+ client.selectMode('live');await client.login(user.email,'Fixture login only');const controller=new TradingInstallController(client);
+ try{
+  await controller.load();assert.equal(controller.getSnapshot().phase,'ready');
+  await controller.stage({...input(),capabilities:['paper.bot.manage','paper.account.read']});assert.equal(controller.getSnapshot().phase,'review');
+  await controller.startVerification();assert.equal(controller.getSnapshot().phase,'code');
+  await controller.verify(f.otp(Date.now()));assert.equal(controller.getSnapshot().phase,'verified');
+  assert.equal(db.prepare('SELECT count(*) n FROM paper_installations WHERE owner_id=?').get(f.id).n,0);
+  assert.doesNotMatch(JSON.stringify(controller.getSnapshot()),/"receipt"\s*:|"challenge"\s*:|"code"\s*:/);
+  await controller.apply();assert.equal(controller.getSnapshot().phase,'applied');
+  assert.equal(db.prepare('SELECT status FROM paper_installations WHERE owner_id=?').get(f.id).status,'provisioned');
+  await controller.load();assert.equal(controller.getSnapshot().phase,'ready');
+  assert.equal(db.prepare('SELECT count(*) n FROM paper_accounts WHERE owner_id=?').get(f.id).n,0);
+  assert.deepEqual(calls.map(s=>s.replace(/\/reviews\/[a-f0-9-]{36}/,'/reviews/:id')),['GET '+base,'POST '+base+'/reviews','POST '+base+'/reviews/:id/challenge','POST '+base+'/reviews/:id/complete','POST '+base+'/reviews/:id/apply','GET '+base]);
+ }finally{controller.close();client.cancel();}
+});

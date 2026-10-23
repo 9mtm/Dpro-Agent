@@ -1,3 +1,4 @@
+const {tradingInstallRoute,allowedTradingInstall,tradingInstallResponse}=require('../src/trading-install-contract.js');
 const {tradingBotRoute,allowedTradingBot,tradingBotResponse}=require('../src/trading-bot-contract.js');
 const {tradingPaperRoute,allowedTradingPaper,tradingPaperResponse}=require('../src/trading-paper-contract.js');
 const {skillInstallRoute,allowedSkillInstall,skillInstallResponse}=require('../src/skill-install-contract.js');
@@ -75,6 +76,7 @@ const agent = x => {
     : { id: x.id, version: x.version, nameUnavailable: true, ...profile(x) };
 };
 function allowed(method, target, body) {
+  if(tradingInstallRoute(target))return allowedTradingInstall(method,target,body);
   if(tradingBotRoute(target))return allowedTradingBot(method,target,body);
   if(scheduleDefinitionRoute(target))return allowedScheduleDefinition(method,target,body);
   if(skillInstallRoute(target))return allowedSkillInstall(method,target,body);
@@ -136,6 +138,7 @@ function stage1Route(method, target) {
   return read && allowed('GET', target, undefined);
 }
 function project(target, status, body) {
+  if(tradingInstallRoute(target))return tradingInstallResponse(target,status,body);
   if(tradingBotRoute(target))return tradingBotResponse(target,status,body);
   if(scheduleDefinitionRoute(target))return scheduleDefinitionResponse(target,status,body);
   if(skillInstallRoute(target))return skillInstallResponse(target,status,body);
