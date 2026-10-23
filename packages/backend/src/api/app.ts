@@ -1,3 +1,4 @@
+import {tradingPaperRuntimeRoutes} from './routes/trading-paper-runtime.js';
 import {tradingPaperAccountSetupRoutes} from './routes/trading-paper-account-setup.js';
 import {tradingPaperInstallRoutes} from './routes/trading-paper-install.js';
 import type PaperDatabase from 'better-sqlite3';
@@ -341,6 +342,7 @@ export async function buildServer(options: BuildServerOptions = {}): Promise<Fas
   await fastify.register(tradingPaperBotRoutes,{ledger:options.paperLedger??(()=>null)});
   await fastify.register(tradingPaperInstallRoutes,{ledger:options.paperLedger??(()=>null)});
   await fastify.register(tradingPaperAccountSetupRoutes,{ledger:options.paperLedger??(()=>null)});
+  await fastify.register(tradingPaperRuntimeRoutes,{ledger:options.paperLedger??(()=>null)});
   await fastify.register(schedulerAuthorizationRoutes);
   await fastify.register(schedulerRoutes); // ⏰ Scheduler System
   await fastify.register(memoryRoutes); // 🧠 Memory System
