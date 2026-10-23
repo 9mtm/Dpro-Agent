@@ -25,7 +25,7 @@ const objects=(db:Database.Database,temp=false)=>db.prepare(`SELECT type,name,tb
 const reference=new Database(':memory:');let expected:readonly ObjectRow[];
 try{reference.exec(schemaSQL);expected=Object.freeze(objects(reference).map(row=>Object.freeze({...row})));}finally{reference.close();}
 const names=new Set(expected.map(row=>row.name.toLowerCase())),tables=new Set(['paper_dispatch_definitions','paper_dispatch_attempts']);
-function identity(db:Database.Database){if(dbDriver()!=='sqlite'||getDatabase().getDb()!==db||db.inTransaction)fail();}
+function identity(db:Database.Database,allowTransaction=false){if(dbDriver()!=='sqlite'||getDatabase().getDb()!==db||!allowTransaction&&db.inTransaction)fail();}
 function schema(db:Database.Database,complete=true){
  const related=(row:ObjectRow)=>names.has(row.name.toLowerCase())||tables.has(row.tbl_name.toLowerCase());
  if(objects(db,true).some(row=>related(row)||row.name.toLowerCase()==='users'||row.tbl_name.toLowerCase()==='users'))fail();
@@ -89,18 +89,28 @@ function acknowledgment(a:Attempt,now:number,replayed:boolean,includeFence=false
 export function initializePaperDispatchAttempts(db:Database.Database){identity(db);db.transaction(()=>{schema(db,false);db.exec(schemaSQL);schema(db);}).immediate();}
 /** Trusted definition capture only; hash/owner metadata is not human approval or dispatch authority. */
 export function provisionTrustedPaperDispatchDefinition(db:Database.Database,ownerId:string,input:unknown,nowOverride?:number){
- try{
-  identity(db);if(!plain(input,['definitionId','definition'])||!uuid(input.definitionId))fail();const definitionId=input.definitionId,raw=input.definition;
-  return db.transaction(()=>{
-   const now=time(nowOverride);schema(db);owner(db,ownerId);
-   const existing=db.prepare('SELECT * FROM main.paper_dispatch_definitions WHERE id=?').get(definitionId) as DefinitionRow|undefined;
-   if(existing){const journal=load(db,ownerId,definitionId,now),captured=capturePaperDispatchDefinition(raw,journal.row.created_at);if(!captured||captured.canonical!==journal.row.canonical_json)fail();return {...projection(journal,now),replayed:true};}
-   const captured=capturePaperDispatchDefinition(raw,now);if(!captured||captured.definition.ownerId!==ownerId||Buffer.byteLength(captured.canonical,'utf8')>8192)fail();
-   if(db.prepare('SELECT 1 FROM main.paper_dispatch_definitions WHERE owner_id=? AND digest=?').get(ownerId,captured.digest)||db.prepare('SELECT 1 FROM main.paper_dispatch_attempts WHERE definition_id=?').get(definitionId))fail();
-   db.prepare('INSERT INTO main.paper_dispatch_definitions VALUES(?,?,?,?,?,?,?)').run(definitionId,ownerId,captured.digest,captured.canonical,now,0,null);
-   return {...projection(load(db,ownerId,definitionId,now),now),replayed:false};
-  }).immediate();
- }catch{return deny();}
+ try{identity(db);return db.transaction(()=>provisionTrustedPaperDispatchDefinitionInTransaction(db,ownerId,input,time(nowOverride))).immediate();}catch{return deny();}
+}
+/**
+ * Trusted composition only. Caller owns an IMMEDIATE transaction and must roll back on every throw.
+ * inTransaction cannot prove lock mode, consent or caller trust. This helper supplies none of those rights.
+ */
+export function provisionTrustedPaperDispatchDefinitionInTransaction(db:Database.Database,ownerId:string,input:unknown,now:number){
+ identity(db,true);if(!db.inTransaction)fail();time(now);
+ if(!plain(input,['definitionId','definition'])||!uuid(input.definitionId))fail();const definitionId=input.definitionId,raw=input.definition;
+ schema(db);owner(db,ownerId);
+ const existing=db.prepare('SELECT * FROM main.paper_dispatch_definitions WHERE id=?').get(definitionId) as DefinitionRow|undefined;
+ if(existing){const journal=load(db,ownerId,definitionId,now),captured=capturePaperDispatchDefinition(raw,journal.row.created_at);if(!captured||captured.canonical!==journal.row.canonical_json)fail();return {...projection(journal,now),replayed:true};}
+ const captured=capturePaperDispatchDefinition(raw,now);if(!captured||captured.definition.ownerId!==ownerId||Buffer.byteLength(captured.canonical,'utf8')>8192)fail();
+ if(db.prepare('SELECT 1 FROM main.paper_dispatch_definitions WHERE owner_id=? AND digest=?').get(ownerId,captured.digest)||db.prepare('SELECT 1 FROM main.paper_dispatch_attempts WHERE definition_id=?').get(definitionId))fail();
+ db.prepare('INSERT INTO main.paper_dispatch_definitions VALUES(?,?,?,?,?,?,?)').run(definitionId,ownerId,captured.digest,captured.canonical,now,0,null);
+ return {...projection(load(db,ownerId,definitionId,now),now),replayed:false};
+}
+/** Internal validated journal read for an existing caller snapshot; never initializes or repairs anything. */
+export function readTrustedPaperDispatchDefinitionInTransaction(db:Database.Database,ownerId:string,definitionId:string,now:number){
+ identity(db,true);if(!db.inTransaction)fail();time(now);
+ const journal=load(db,ownerId,definitionId,now);
+ return Object.freeze({...projection(journal,now),definition:journal.definition});
 }
 /** Attempt claims consume finite budget even when they later fail. No work is dispatched here. */
 export function claimPaperDispatchAttempt(db:Database.Database,ownerId:string,input:unknown,nowOverride?:number){

@@ -89,3 +89,18 @@ test('actual child SIGKILL after journal INSERT restores the claim budget and al
  await new Promise((resolve,reject)=>{const timer=setTimeout(()=>{child.kill('SIGKILL');reject(Error('Owned crash fixture timed out'));},10000);child.once('error',error=>{clearTimeout(timer);reject(error);});child.once('close',(code,signal)=>{clearTimeout(timer);try{assert.equal(signal,'SIGKILL');resolve();}catch(error){reject(error);}});});
  assert.deepEqual(read(f),before);const committed=journal.claimPaperDispatchAttempt(db,f.ownerId,request,now);assert.equal(committed.ok,true);assert.equal(committed.replayed,false);assert.equal(read(f).attemptCount,1);assert.equal(read(f).attempts.length,1);
 });
+
+test('trusted caller transaction helpers roll back definition writes and read historical state without repair',()=>{
+ const ownerId=owner(),input={definitionId:randomUUID(),definition:definition(ownerId)};
+ assert.throws(()=>journal.provisionTrustedPaperDispatchDefinitionInTransaction(db,ownerId,input,now));
+ assert.throws(()=>journal.readTrustedPaperDispatchDefinitionInTransaction(db,ownerId,input.definitionId,now));
+ assert.throws(()=>db.transaction(()=>{const saved=journal.provisionTrustedPaperDispatchDefinitionInTransaction(db,ownerId,input,now);assert.equal(saved.replayed,false);assert.equal(journal.readTrustedPaperDispatchDefinitionInTransaction(db,ownerId,input.definitionId,now).definition.ownerId,ownerId);throw Error('Owned outer write failure');}).immediate());
+ assert.equal(db.prepare('SELECT count(*) n FROM paper_dispatch_definitions WHERE id=?').get(input.definitionId).n,0);
+ assert.throws(()=>db.transaction(()=>journal.readTrustedPaperDispatchDefinitionInTransaction(db,ownerId,input.definitionId,now)).deferred());
+ assert.equal(db.prepare('SELECT count(*) n FROM paper_dispatch_definitions WHERE id=?').get(input.definitionId).n,0);
+ db.transaction(()=>assert.equal(journal.provisionTrustedPaperDispatchDefinitionInTransaction(db,ownerId,input,now).replayed,false)).immediate();
+ const f={ownerId,input,result:db.transaction(()=>journal.readTrustedPaperDispatchDefinitionInTransaction(db,ownerId,input.definitionId,now)).deferred()};
+ const first=journal.claimPaperDispatchAttempt(db,ownerId,claim(f),now);assert.equal(first.ok,true);const before=read(f,now+86400000);
+ db.pragma('query_only=ON');try{db.transaction(()=>{const saved=journal.readTrustedPaperDispatchDefinitionInTransaction(db,ownerId,input.definitionId,now+86400000);assert.equal(saved.attemptCount,1);assert.equal(saved.createdAt,now);assert.equal(saved.definition.limits.expiresAt,now+60000);assert.equal(JSON.stringify(saved).includes(first.fenceToken),false);}).deferred();}finally{db.pragma('query_only=OFF');}
+ assert.deepEqual(read(f,now+86400000),before);
+});
