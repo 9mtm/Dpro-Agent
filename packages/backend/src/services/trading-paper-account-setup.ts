@@ -109,20 +109,9 @@ function apply(db:Database.Database,ownerId:string,input:PaperAccountSetupInput,
  if(!installation.ok||!('installationId' in installation)||installation.installationId!==input.installationId||installation.revision<input.expectedInstallationRevision||access.state==='incompatible')fail();
  const old=db.prepare('SELECT * FROM main.paper_account_setups WHERE owner_id=? AND idempotency_key=?').get(ownerId,input.idempotencyKey) as Event|undefined;
  if(old){validateEvent(old,ownerId,input,now);persistedAccount(db,ownerId,input);return {ok:true as const,replayed:true,setupId:old.id,result:result(input)};}
- if(access.state!=='ready'||!access.readAccounts||installation.state!=='provisioned'||installation.revision!==input.expectedInstallationRevision||input.policy.expiresAt<=now||input.policy.expiresAt-now>30*DAY)fail();
+ reviewNewAccount(db,ownerId,input,now);
  // Separate initial account lifecycle; do not substitute the installation revision.
  const p:PaperPolicy={id:input.policyId,revision:1,appRevision:1,currency:input.currency,ownerId,accountId:input.accountId,enabled:true,mode:'paper',...input.policy};
- const policyTables=new Set(['paper_reservations','paper_sell_reservations','paper_bots','paper_bot_ticks']);
- for(const table of ['paper_accounts','paper_quotes','paper_reservations','paper_execution_profiles','paper_execution_quotes','paper_fills','paper_positions','paper_sell_reservations','paper_sell_fills','paper_bots','paper_bot_ticks']){
-  const query=policyTables.has(table)?`SELECT 1 FROM main.${table} WHERE account_id=? OR policy_id=? LIMIT 1`:`SELECT 1 FROM main.${table} WHERE account_id=? LIMIT 1`;
-  if(db.prepare(query).get(...(policyTables.has(table)?[input.accountId,input.policyId]:[input.accountId])))fail();
- }
- if(db.prepare('SELECT 1 FROM main.paper_policies WHERE policy_id=? OR account_id=?').get(input.policyId,input.accountId)||db.prepare('SELECT 1 FROM main.paper_account_setups WHERE account_id=? OR policy_id=?').get(input.accountId,input.policyId))fail();
- // Detached canonical intent/review rows carry their account bindings only in JSON. Refuse
- // malformed persisted JSON rather than overlook a hidden collision; fixed JSON paths only.
- for(const [table,column] of [['paper_reservation_intents','canonical_json'],['paper_bot_activation_reviews','definition_json']] as const){
-  if(db.prepare(`SELECT 1 FROM main.${table} WHERE NOT json_valid(${column}) OR json_extract(${column},'$.accountId')=? OR json_extract(${column},'$.policyId')=? LIMIT 1`).get(input.accountId,input.policyId))fail();
- }
  const requestJson=canonical(ownerId,input);if(Buffer.byteLength(requestJson,'utf8')>16384)fail();
  db.prepare('INSERT INTO main.paper_accounts VALUES(?,?,?,?,?,?,?,?,?)').run(input.accountId,ownerId,'paper',input.currency,input.initialCashMinor,0,1,1,0);
  db.prepare('INSERT INTO main.paper_policies VALUES(?,?,?,?)').run(input.policyId,input.accountId,1,JSON.stringify(p));
@@ -139,4 +128,30 @@ function apply(db:Database.Database,ownerId:string,input:PaperAccountSetupInput,
  const saved=db.prepare('SELECT * FROM main.paper_account_setups WHERE owner_id=? AND idempotency_key=?').get(ownerId,input.idempotencyKey) as Event|undefined;
  if(!saved||saved.id!==row.id)fail();validateEvent(saved,ownerId,input,now);persistedAccount(db,ownerId,input);
  return {ok:true as const,replayed:false,setupId:row.id,result:result(input)};
+}
+
+/** Read-only preflight for a future reviewed creation. Requires caller-owned transaction;
+ * does not initialize storage, consume a proof, reserve IDs or authorize a person. */
+export function reviewTrustedPaperAccountInTransaction(db:Database.Database,ownerId:string,input:unknown,now:number){
+ identity(db);if(!db.inTransaction)fail();const captured=normalize(input);reviewNewAccount(db,ownerId,captured,now);
+ if(Buffer.byteLength(canonical(ownerId,captured),'utf8')>16384)fail();
+ return Object.freeze({...captured,policy:Object.freeze({...captured.policy,symbols:Object.freeze([...captured.policy.symbols])}),execution:Object.freeze({...captured.execution})});
+}
+function reviewNewAccount(db:Database.Database,ownerId:string,input:PaperAccountSetupInput,now:number){
+ if(!uint(now,1))fail();owner(db,ownerId);schema(db);if(!inspectPaperBundleSchema(db).ok)fail();
+ const installation=readPaperInstallation(db,ownerId,()=>now),access=readReviewedPaperInstallationAccess(db,ownerId,()=>now);
+ if(!installation.ok||!('installationId' in installation)||installation.installationId!==input.installationId||installation.revision!==input.expectedInstallationRevision)fail();
+ if(db.prepare('SELECT 1 FROM main.paper_account_setups WHERE owner_id=? AND idempotency_key=?').get(ownerId,input.idempotencyKey))fail();
+ if(access.state!=='ready'||!access.readAccounts||installation.state!=='provisioned'||installation.revision!==input.expectedInstallationRevision||input.policy.expiresAt<=now||input.policy.expiresAt-now>30*DAY)fail();
+ const policyTables=new Set(['paper_reservations','paper_sell_reservations','paper_bots','paper_bot_ticks']);
+ for(const table of ['paper_accounts','paper_quotes','paper_reservations','paper_execution_profiles','paper_execution_quotes','paper_fills','paper_positions','paper_sell_reservations','paper_sell_fills','paper_bots','paper_bot_ticks']){
+  const query=policyTables.has(table)?`SELECT 1 FROM main.${table} WHERE account_id=? OR policy_id=? LIMIT 1`:`SELECT 1 FROM main.${table} WHERE account_id=? LIMIT 1`;
+  if(db.prepare(query).get(...(policyTables.has(table)?[input.accountId,input.policyId]:[input.accountId])))fail();
+ }
+ if(db.prepare('SELECT 1 FROM main.paper_policies WHERE policy_id=? OR account_id=?').get(input.policyId,input.accountId)||db.prepare('SELECT 1 FROM main.paper_account_setups WHERE account_id=? OR policy_id=?').get(input.accountId,input.policyId))fail();
+ // Detached canonical intent/review rows carry their account bindings only in JSON. Refuse
+ // malformed persisted JSON rather than overlook a hidden collision; fixed JSON paths only.
+ for(const [table,column] of [['paper_reservation_intents','canonical_json'],['paper_bot_activation_reviews','definition_json']] as const){
+  if(db.prepare(`SELECT 1 FROM main.${table} WHERE NOT json_valid(${column}) OR json_extract(${column},'$.accountId')=? OR json_extract(${column},'$.policyId')=? LIMIT 1`).get(input.accountId,input.policyId))fail();
+ }
 }

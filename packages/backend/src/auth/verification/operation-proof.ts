@@ -13,7 +13,8 @@ export type ScheduleRevocationOperation={kind:'schedule_authorization_revoke';jo
 export type SkillInstallOperation={kind:'skill_install';reviewId:string;reviewHash:string;reviewExpiresAt:number;policyVersion:number};
 export type PaperBotActivationOperation={kind:'paper_bot_activation';reviewId:string;reviewHash:string;reviewExpiresAt:number;policyVersion:number};
 export type PaperAppInstallOperation={kind:'paper_app_install';reviewId:string;reviewHash:string;reviewExpiresAt:number;policyVersion:number};
-export type VerificationOperation=PaperAppInstallOperation|PaperBotActivationOperation|SkillInstallOperation|ApprovalOperation|ReviewerPolicyOperation|ReviewerPolicyRevokeOperation|ReviewerVoteOperation|ScheduleAuthorizationOperation|ScheduleRevocationOperation;
+export type PaperAccountSetupOperation={kind:'paper_account_setup';reviewId:string;reviewHash:string;reviewExpiresAt:number;policyVersion:number};
+export type VerificationOperation=PaperAccountSetupOperation|PaperAppInstallOperation|PaperBotActivationOperation|SkillInstallOperation|ApprovalOperation|ReviewerPolicyOperation|ReviewerPolicyRevokeOperation|ReviewerVoteOperation|ScheduleAuthorizationOperation|ScheduleRevocationOperation;
 const hash=(value:string)=>createHash('sha256').update(value).digest('hex');
 /** Server-derived action metadata only; never copy context/policy identity from HTTP input. */
 export function approvalOperationHash(operation:ApprovalOperation):string{
@@ -69,7 +70,17 @@ export function paperAppInstallOperationHash(operation:PaperAppInstallOperation)
  if(operation.kind!=='paper_app_install'||typeof operation.reviewId!=='string'||operation.reviewId.length!==36||!/^[a-f0-9]{8}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{12}$/.test(operation.reviewId)||typeof operation.reviewHash!=='string'||operation.reviewHash.length!==64||!/^[a-f0-9]{64}$/.test(operation.reviewHash)||!Number.isSafeInteger(operation.reviewExpiresAt)||operation.reviewExpiresAt<1||!Number.isSafeInteger(operation.policyVersion)||operation.policyVersion<1)throw Error('Invalid paper app install operation');
  return hash(JSON.stringify(['paper-app-install-proof-v1',operation.reviewId,operation.reviewHash,operation.reviewExpiresAt,operation.policyVersion]));
 }
+/** Separate account creation consent; no account effects occur on proof completion. */
+export function paperAccountSetupOperationHash(operation:PaperAccountSetupOperation):string{
+ const keys=['kind','reviewId','reviewHash','reviewExpiresAt','policyVersion'];
+ if(!operation||typeof operation!=='object'||![Object.prototype,null].includes(Object.getPrototypeOf(operation)))throw Error('Invalid paper account setup operation');
+ const actual=Reflect.ownKeys(operation);
+ if(actual.length!==keys.length||actual.some(key=>typeof key!=='string'||!keys.includes(key)||!Object.hasOwn(Object.getOwnPropertyDescriptor(operation,key)!,'value')))throw Error('Invalid paper account setup operation');
+ if(operation.kind!=='paper_account_setup'||typeof operation.reviewId!=='string'||operation.reviewId.length!==36||!/^[a-f0-9]{8}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{12}$/.test(operation.reviewId)||typeof operation.reviewHash!=='string'||operation.reviewHash.length!==64||!/^[a-f0-9]{64}$/.test(operation.reviewHash)||!Number.isSafeInteger(operation.reviewExpiresAt)||operation.reviewExpiresAt<1||!Number.isSafeInteger(operation.policyVersion)||operation.policyVersion<1)throw Error('Invalid paper account setup operation');
+ return hash(JSON.stringify(['paper-account-setup-proof-v1',operation.reviewId,operation.reviewHash,operation.reviewExpiresAt,operation.policyVersion]));
+}
 function operationHash(operation:VerificationOperation):string{
+ if(operation?.kind==='paper_account_setup')return paperAccountSetupOperationHash(operation);
  if(operation?.kind==='paper_app_install')return paperAppInstallOperationHash(operation);
  if(operation?.kind==='paper_bot_activation')return paperBotActivationOperationHash(operation);
  if(operation?.kind==='skill_install')return skillInstallOperationHash(operation);
@@ -82,6 +93,7 @@ function operationHash(operation:VerificationOperation):string{
 function binding(context:OperationContext,operation:VerificationOperation,now:number):VerificationBinding{
  if(!context||typeof context.userId!=='string'||!context.userId||context.userId.length>200||typeof context.sessionHash!=='string'||!/^[a-f0-9]{64}$/.test(context.sessionHash)||!Number.isSafeInteger(context.tokenVersion)||context.tokenVersion<1||!Number.isSafeInteger(context.factorVersion)||context.factorVersion<1||!Number.isSafeInteger(now)||now<0||now>Number.MAX_SAFE_INTEGER-300000)throw Error('Invalid operation verification context');
  if(operation?.kind==='schedule_authorization'&&(operation.authorizationExpiresAt<=now||operation.authorizationExpiresAt-now>7776000000))throw Error('Invalid scheduled authorization expiry');
+ if(operation?.kind==='paper_account_setup'){paperAccountSetupOperationHash(operation);if(operation.reviewExpiresAt<=now||operation.reviewExpiresAt-now>300000)throw Error('Invalid paper account setup review expiry');}
  if(operation?.kind==='paper_app_install'){paperAppInstallOperationHash(operation);if(operation.reviewExpiresAt<=now||operation.reviewExpiresAt-now>300000)throw Error('Invalid paper app install review expiry');}
  if(operation?.kind==='paper_bot_activation'&&(operation.reviewExpiresAt<=now||operation.reviewExpiresAt-now>300000))throw Error('Invalid paper bot review expiry');
  if(operation?.kind==='skill_install'&&(operation.reviewExpiresAt<=now||operation.reviewExpiresAt-now>300000))throw Error('Invalid skill review expiry');
