@@ -9,6 +9,8 @@ import {sql} from '../repositories/sql-steps.js';
 import {issueOperationChallenge, completeOperationChallenge, consumeOperationReceiptStep, paperBotActivationOperationHash,
   type OperationContext, type PaperBotActivationOperation} from '../auth/verification/operation-proof.js';
 import {readPaperRisk} from './trading-paper-risk.js';
+import {readPaperAvailability} from './trading-paper-availability.js';
+import {readPaperBotAvailability} from './trading-paper-bot-availability.js';
 
 const fail = () => { throw Error('Paper activation unavailable'); };
 const deny = () => ({ok: false as const, reason: 'unavailable' as const});
@@ -26,6 +28,11 @@ function plain(value: unknown, allowed: string[]): value is Record<string,unknow
 function handle(db: Database.Database) {
   // Identity, not filename equivalence. This check precedes every SQL runner/receipt call or local SQL statement.
   if (dbDriver() !== 'sqlite' || getDatabase().getDb() !== db || db.inTransaction) fail();
+}
+/** Server-owned opt-in for management HTTP. Trusted internal callers default to no installation gate. */
+function managed(db:Database.Database,owner:string,required:boolean){
+  if(typeof required!=='boolean')fail();
+  if(required&&(readPaperAvailability(db,owner).state!=='ready'||readPaperBotAvailability(db,owner).state!=='ready'))fail();
 }
 function capture(context: OperationContext, actor: Actor, now: number): OperationContext {
   if (!context || !actor || actor.kind !== 'user' || actor.role !== 'owner' || actor.agentId !== undefined
@@ -92,9 +99,10 @@ export function initializePaperBotActivation(db: Database.Database) {
     CREATE TABLE IF NOT EXISTS paper_bot_activation_events(id TEXT PRIMARY KEY,review_id TEXT NOT NULL UNIQUE,bot_id TEXT NOT NULL UNIQUE,owner_id TEXT NOT NULL,session_hash TEXT NOT NULL,token_version INTEGER NOT NULL,factor_version INTEGER NOT NULL,policy_version INTEGER NOT NULL,definition_hash TEXT NOT NULL,review_hash TEXT NOT NULL,receipt_hash TEXT NOT NULL,created_at INTEGER NOT NULL,event_hash TEXT NOT NULL);
   `)).immediate();
 }
-export async function stagePaperBotActivation(db: Database.Database,context: OperationContext,actor: Actor,input: unknown,now=Date.now()) {
+export async function stagePaperBotActivation(db: Database.Database,context: OperationContext,actor: Actor,input: unknown,now=Date.now(),requireInstalledManagement=false) {
   try {handle(db);const owner=capture(context,actor,now),request=inputDefinition(input);
     return await sql().tx(function*(){
+      managed(db,owner.userId,requireInstalledManagement);
       const version=active(db,owner),id=randomUUID(),botId=randomUUID(),{json}=target(db,owner.userId,request,botId,now);
       const count=db.prepare("SELECT count(*) n FROM paper_bot_activation_reviews WHERE owner_id=? AND status='staged' AND expires_at>?").get(owner.userId,now) as {n:number};if(count.n>=8)fail();
       const row:Review={id,bot_id:botId,owner_id:owner.userId,session_hash:owner.sessionHash,token_version:owner.tokenVersion,factor_version:owner.factorVersion,policy_version:version,definition_json:json,definition_hash:sha(json),review_hash:'',created_at:now,expires_at:now+300000,status:'staged'};row.review_hash=reviewHash(row);
@@ -103,22 +111,30 @@ export async function stagePaperBotActivation(db: Database.Database,context: Ope
     },{immediate:true});
   }catch{return deny();}
 }
-export async function readPaperBotActivation(db: Database.Database,context: OperationContext,actor: Actor,id: string,now=Date.now()) {
-  try{handle(db);const owner=capture(context,actor,now);return await sql().tx(function*(){return publicReview(readRow(db,owner,id,active(db,owner),now));},{immediate:true});}catch{return deny();}
+export async function readPaperBotActivation(db: Database.Database,context: OperationContext,actor: Actor,id: string,now=Date.now(),requireInstalledManagement=false) {
+  try{handle(db);const owner=capture(context,actor,now);return await sql().tx(function*(){managed(db,owner.userId,requireInstalledManagement);return publicReview(readRow(db,owner,id,active(db,owner),now));},{immediate:true});}catch{return deny();}
 }
-async function proofOperation(db:Database.Database,context:OperationContext,actor:Actor,id:string,now:number) {
+async function proofOperation(db:Database.Database,context:OperationContext,actor:Actor,id:string,now:number,required:boolean) {
   handle(db);const owner=capture(context,actor,now);
-  return sql().tx(function*(){return {owner,operation:operation(readRow(db,owner,id,active(db,owner),now).row)};},{immediate:true});
+  return sql().tx(function*(){managed(db,owner.userId,required);return {owner,operation:operation(readRow(db,owner,id,active(db,owner),now).row)};},{immediate:true});
 }
-export async function issuePaperBotActivationProof(db:Database.Database,context:OperationContext,actor:Actor,id:string,now=Date.now()) {
-  try{const current=await proofOperation(db,context,actor,id,now);return await issueOperationChallenge(current.owner,current.operation,now);}catch{return null;}
+/** Proof uses the shared verification pipeline in separate transactions and never grants activation authority. */
+export async function issuePaperBotActivationProof(db:Database.Database,context:OperationContext,actor:Actor,id:string,now=Date.now(),requireInstalledManagement=false) {
+  try{const current=await proofOperation(db,context,actor,id,now,requireInstalledManagement);
+    const result=await issueOperationChallenge(current.owner,current.operation,now);
+    await proofOperation(db,current.owner,actor,id,now,requireInstalledManagement);return result;
+  }catch{return null;}
 }
-export async function completePaperBotActivationProof(db:Database.Database,context:OperationContext,actor:Actor,id:string,token:unknown,code:unknown,now=Date.now()) {
-  try{const current=await proofOperation(db,context,actor,id,now);return await completeOperationChallenge(token,current.owner,current.operation,code,now);}catch{return null;}
+export async function completePaperBotActivationProof(db:Database.Database,context:OperationContext,actor:Actor,id:string,token:unknown,code:unknown,now=Date.now(),requireInstalledManagement=false) {
+  try{const current=await proofOperation(db,context,actor,id,now,requireInstalledManagement);
+    const result=await completeOperationChallenge(token,current.owner,current.operation,code,now);
+    await proofOperation(db,current.owner,actor,id,now,requireInstalledManagement);return result;
+  }catch{return null;}
 }
-export async function applyPaperBotActivation(db:Database.Database,context:OperationContext,actor:Actor,id:string,receipt:unknown,now=Date.now()) {
+export async function applyPaperBotActivation(db:Database.Database,context:OperationContext,actor:Actor,id:string,receipt:unknown,now=Date.now(),requireInstalledManagement=false) {
   try{handle(db);const owner=capture(context,actor,now);if(typeof receipt!=='string'||!/^[A-Za-z0-9_-]{43}$/.test(receipt))fail();const receiptHash=sha(receipt as string);
     return await sql().tx(function*(){
+      managed(db,owner.userId,requireInstalledManagement);
       const version=active(db,owner),current=readRow(db,owner,id,version,now,true),{row,input}=current;
       const event=db.prepare('SELECT * FROM paper_bot_activation_events WHERE review_id=?').get(id) as Record<string,unknown>|undefined;
       if(event){
@@ -143,6 +159,7 @@ export async function applyPaperBotActivation(db:Database.Database,context:Opera
       const eventRecord={id:randomUUID(),review_id:row.id,bot_id:row.bot_id,owner_id:owner.userId,session_hash:owner.sessionHash,token_version:owner.tokenVersion,factor_version:owner.factorVersion,policy_version:version,definition_hash:row.definition_hash,review_hash:row.review_hash,receipt_hash:receiptHash,created_at:now};
       db.prepare('INSERT INTO paper_bot_activation_events VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?)').run(eventRecord.id,row.id,row.bot_id,owner.userId,owner.sessionHash,owner.tokenVersion,owner.factorVersion,version,row.definition_hash,row.review_hash,receiptHash,now,eventHash(eventRecord));
       if(db.prepare("UPDATE paper_bot_activation_reviews SET status='applied' WHERE id=? AND status='staged'").run(row.id).changes!==1)fail();
+      managed(db,owner.userId,requireInstalledManagement);
       return {ok:true as const,botId:row.bot_id,reviewId:row.id,replayed:false};
     },{immediate:true});
   }catch{return deny();}
