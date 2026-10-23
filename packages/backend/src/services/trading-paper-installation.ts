@@ -4,7 +4,7 @@ import {createHash,randomUUID} from 'node:crypto';
 import {getDatabase} from '../db/index.js';
 import {dbDriver} from '../db/pg/config.js';
 import {isSystemAccount} from '../auth/default-accounts.js';
-import {PAPER_BUNDLE_SCHEMA,preparePaperBundleSchemaInTransaction,inspectPaperBundleSchema} from './trading-paper-bundle-schema.js';
+import {PAPER_BUNDLE_SCHEMA,preparePaperBundleSchemaInTransaction,inspectPaperBundleSchema,inspectPaperBundlePreparation} from './trading-paper-bundle-schema.js';
 const sha=(s:string)=>createHash('sha256').update(s).digest('hex');
 const id=(v:unknown):v is string=>typeof v==='string'&&!/[\x00-\x20\x7f]/.test(v)&&/^[A-Za-z0-9][A-Za-z0-9_.:-]{0,127}$/.test(v);
 const uint=(v:unknown,min=0):v is number=>typeof v==='number'&&Number.isSafeInteger(v)&&v>=min;
@@ -84,8 +84,14 @@ export function readPaperInstallation(db:Database.Database,userId:string,clock:(
  * No public caller, compatibility ready rows, account seeds, network effects, reenable or reinstall are implemented.
  */
 export function provisionTrustedPaperInstallation(db:Database.Database,userId:string,input:unknown,clock:()=>number=Date.now){
- try{identity(db);if(db.inTransaction)fail();const request=normalize(input);return db.transaction(()=>{
-  owner(db,userId);const now=clock();if(!uint(now))fail();schema(db,false);const registryExists=objects(db).some(o=>tables.has(o.name.toLowerCase()));
+ try{identity(db);if(db.inTransaction)fail();const request=normalize(input);return db.transaction(()=>applyTrustedRegistry(db,userId,request,clock())).immediate();}catch{return deny();}
+}
+/** Trusted same-handle composition; caller must own IMMEDIATE and roll back on every thrown error. */
+export function provisionTrustedPaperInstallationInTransaction(db:Database.Database,userId:string,input:unknown,now:number){
+ identity(db);if(!db.inTransaction)fail();return applyTrustedRegistry(db,userId,normalize(input),now);
+}
+function applyTrustedRegistry(db:Database.Database,userId:string,request:Request,now:number){
+  owner(db,userId);if(!uint(now))fail();schema(db,false);const registryExists=objects(db).some(o=>tables.has(o.name.toLowerCase()));
   if(registryExists){schema(db,true);}else{if(request.action!=='install')fail();db.exec(registrySQL);schema(db,true);preparePaperBundleSchemaInTransaction(db);}
   const prior=db.prepare('SELECT * FROM main.paper_install_operations WHERE owner_id=? AND idempotency_key=?').get(userId,request.idempotencyKey) as Operation|undefined;
   const current=read(db,userId,now);if(prior){const checked=operation(prior);if(prior.request_json!==canonical(userId,request)||!current||!current.history.some(h=>h.row.id===prior.id))fail();return {ok:true as const,replayed:true,operationId:prior.id,result:checked.result};}
@@ -106,5 +112,14 @@ export function provisionTrustedPaperInstallation(db:Database.Database,userId:st
    db.prepare("UPDATE main.paper_bots SET status=? WHERE owner_id=? AND (status='active' OR (?='revoked' AND status='stopped'))").run(request.action==='remove_retained'?'revoked':'stopped',userId,request.action==='remove_retained'?'revoked':'stopped');
   }
   owner(db,userId);const verified=read(db,userId,now);if(!verified||verified.row.last_operation_id!==operationId||verified.row.revision!==result.revision||verified.row.status!==result.status)fail();return {ok:true as const,replayed:false,operationId,result};
- }).immediate();}catch{return deny();}
+}
+
+/** Trusted read-only review in caller transaction. No schema initialization or grants. */
+export function reviewPaperInstallationInTransaction(db:Database.Database,userId:string,input:unknown,now:number){
+ identity(db);if(!db.inTransaction||!uint(now))fail();owner(db,userId);const request=normalize(input);schema(db,false);
+ const registryExists=objects(db).some(o=>tables.has(o.name.toLowerCase()));let current:ReturnType<typeof read>=null;
+ if(registryExists){schema(db,true);current=read(db,userId,now);if(db.prepare('SELECT 1 FROM main.paper_install_operations WHERE owner_id=? AND idempotency_key=?').get(userId,request.idempotencyKey))fail();}
+ else if(!inspectPaperBundlePreparation(db).ok)fail();
+ if(request.action==='install'?!!current:!current||current.row.revision!==request.expectedRevision||current.row.status==='removed_retained'||request.action==='disable'&&current.row.status!=='provisioned')fail();
+ return Object.freeze({request:Object.freeze({...request,capabilities:Object.freeze([...request.capabilities])}),current:Object.freeze(current?{state:current.row.status,revision:current.row.revision,installationId:current.row.installation_id}:{state:'not_provisioned',revision:0,installationId:null})});
 }

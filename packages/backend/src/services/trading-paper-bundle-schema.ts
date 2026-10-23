@@ -43,3 +43,8 @@ export function preparePaperBundleSchemaInTransaction(db:Database.Database){
 export function preparePaperBundleSchema(db:Database.Database){
  try{identity(db);if(db.inTransaction)fail();return db.transaction(()=>({ok:true as const,...preparePaperBundleSchemaInTransaction(db)})).immediate();}catch{return unavailable();}
 }
+
+/** Read-only preflight for current supported schema subsets. Missing tables are permitted, unknown definitions are not. */
+export function inspectPaperBundlePreparation(db:Database.Database){
+ try{identity(db);existing(db,false);return {ok:true as const,schemaDigest:PAPER_BUNDLE_SCHEMA.digest};}catch{return unavailable();}
+}
