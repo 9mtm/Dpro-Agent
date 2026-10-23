@@ -16,6 +16,8 @@ const strategy=s=>({kind:s.kind,version:s.version,symbol:s.symbol,side:s.side,am
 const limits=l=>({expiresAt:l.expiresAt,maxAttempts:l.maxAttempts,cadenceMs:l.cadenceMs});
 export function tradingRuntimeRoute(path){
  if(typeof path!=='string'||/[\x00-\x20\x7f]/.test(path))return null;
+ const reference=path.match(/^\/api\/trading-paper\/runtime\/bots\/([^/]+)\/consent-reference$/);
+ if(reference&&uuid(reference[1]))return {kind:'reference',botId:reference[1]};
  if(path===base+'/reviews')return {kind:'stage'};
  const review=path.match(/^\/api\/trading-paper\/runtime\/reviews\/([^/]+)(?:\/(challenge|complete|apply))?$/);
  if(review&&uuid(review[1]))return {kind:review[2]??'review',reviewId:review[1]};
@@ -24,7 +26,7 @@ export function tradingRuntimeRoute(path){
 }
 export function allowedTradingRuntime(method,path,body){
  const r=tradingRuntimeRoute(path);if(!r)return false;
- if(['review','consent'].includes(r.kind))return method==='GET'&&body===undefined;
+ if(['review','consent','reference'].includes(r.kind))return method==='GET'&&body===undefined;
  if(method!=='POST')return false;
  if(r.kind==='stage')return exact(body,['botId','strategy','limits'])&&uuid(body.botId)&&validStrategy(body.strategy)&&validLimits(body.limits)&&bytes(body,4096);
  if(['challenge','revoke'].includes(r.kind))return exact(body,[]);
@@ -39,6 +41,10 @@ function common(b){
 export function tradingRuntimeResponse(path,status,body){
  const r=tradingRuntimeRoute(path);if(!r||!uint(status,100,599))return fail();
  if(status!==200){const known=['unauthenticated','forbidden','owner_verification_required','rate_limited','verification_refused','invalid_paper_runtime_request','paper_runtime_unavailable','origin_not_allowed','inactive_user'];return {code:record(body)&&known.includes(body.code)?body.code:'paper_runtime_unavailable'};}
+ if(r.kind==='reference'){
+  if(!record(body)||body.ok!==true||!uuid(body.consentId)||body.botId!==r.botId||!['granted','revoked'].includes(body.status)||!uint(body.createdAt,1)||body.runtimeConnected!==false)return fail();
+  return {ok:true,consentId:body.consentId,botId:r.botId,status:body.status,createdAt:body.createdAt,runtimeConnected:false};
+ }
  if(['stage','review'].includes(r.kind)){
   const c=common(body);if(!uuid(body.id)||r.reviewId!==undefined&&body.id!==r.reviewId||!uuid(body.consentId)||!uuid(body.botId)||!id(body.accountId)||!uint(body.expiresAt,1)||body.startsWorker!==false||body.connectsBroker!==false)return fail();
   const result={ok:true,id:body.id,consentId:body.consentId,botId:body.botId,accountId:body.accountId,expiresAt:body.expiresAt,...c,startsWorker:false,connectsBroker:false};return bytes(result,4096)?result:fail();

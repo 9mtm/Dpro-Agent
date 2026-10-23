@@ -112,3 +112,21 @@ test('owner per-bot emergency reference survives damaged proof journal factor an
  assert.equal((await call(f,'GET',base+'/consents/'+g.result.consentId)).statusCode,404);assert.equal((await call(f,'POST',base+'/consents/'+g.result.consentId+'/revoke',{})).statusCode,200);assert.equal((await call(f,'GET',url)).json().status,'revoked');assert.equal(db.prepare('SELECT count(*) n FROM paper_dispatch_definitions WHERE id=?').get(g.result.definitionId).n,0);
  const other=await owner({bot:false});assert.equal((await call(other,'GET',url)).statusCode,404);assert.equal((await call(f,'GET',base+'/bots/'+randomUUID()+'/consent-reference')).statusCode,404);assert.equal((await call(f,'GET',url+'?owner=other')).statusCode,400);assert.equal((await call(f,'GET',base+'/bots/'+f.botId+'%0A/consent-reference')).statusCode,400);assert.equal((await call(f,'GET',url,undefined,{'x-fixture-actor':'agent'})).statusCode,403);assert.equal((await call(null,'GET',url)).statusCode,401);assert.doesNotMatch(read.body,/hash|definition|strategy|receipt|factor|session|fence/);
 });
+
+test('new desktop client discovers saved bot consent and revokes despite unreadable detailed history',async()=>{
+ const {SessionClient}=await import('../../core-ui/src/session.ts');const {TradingRuntimeController}=await import('../../core-ui/src/trading-runtime-controller.ts');
+ const f=await owner(),saved=await grant(f),user={id:f.id,email:f.id+'@example.invalid',username:f.id,role:'owner'};
+ const client=new SessionClient({live:async request=>{
+  if(request.path==='/api/auth/login')return {status:200,body:{token:f.token,deviceToken:'d'.repeat(43),user}};
+  if(request.path==='/api/auth/me')return {status:200,body:{user}};
+  const r=await app.inject({method:request.method,url:request.path,headers:{host:'127.0.0.1:42521',origin:'http://127.0.0.1:42522',...request.headers},...(request.body===undefined?{}:{payload:request.body})});return {status:r.statusCode,body:r.json()};
+ }});client.selectMode('live');await client.login(user.email,'Fixture login only');const controller=new TradingRuntimeController(client);
+ try{
+  await controller.discoverConsent(f.botId);assert.equal(controller.getSnapshot().reference.consentId,saved.result.consentId);assert.equal(controller.getSnapshot().consent,null);assert.equal(controller.acknowledgeUnknown(),false);
+  await controller.loadConsent(saved.result.consentId);assert.equal(controller.getSnapshot().consent.botId,f.botId);
+  db.prepare('DELETE FROM paper_dispatch_definitions WHERE id=?').run(saved.result.definitionId);db.prepare('UPDATE verification_factors SET enabled=0 WHERE user_id=?').run(f.id);
+  await controller.discoverConsent(f.botId);await controller.loadConsent(saved.result.consentId);assert.equal(controller.getSnapshot().consent,null);assert.equal(controller.getSnapshot().reference.consentId,saved.result.consentId);
+  await controller.revoke(saved.result.consentId);assert.equal(controller.getSnapshot().phase,'revoked');assert.equal(db.prepare('SELECT status FROM paper_runtime_consents WHERE id=?').get(saved.result.consentId).status,'revoked');
+  await controller.discoverConsent(f.botId);assert.equal(controller.getSnapshot().reference.status,'revoked');assert.equal(db.prepare('SELECT count(*) n FROM paper_dispatch_definitions WHERE id=?').get(saved.result.definitionId).n,0);assert.equal(db.prepare('SELECT count(*) n FROM paper_bot_ticks WHERE bot_id=?').get(f.botId).n,0);
+ }finally{controller.close();client.cancel();}
+});
