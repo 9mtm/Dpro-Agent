@@ -31,8 +31,26 @@ export function executeRiskCheckedPaperOrder(
 ) {
   try {
     if (!id(ownerId) || !request(input) || db.inTransaction) return deny();
-    return db.transaction(() => {
-      const now = clock();
+    const normalized = {side: input.side, accountId: input.accountId, reservationId: input.reservationId, executionKey: input.executionKey};
+    return db.transaction(() => settlePaperRiskInTransaction(db, ownerId, normalized, clock(), 'auto')).immediate();
+
+  } catch {
+    return deny();
+  }
+}
+
+/**
+ * Trusted internal composition only. Caller must own an IMMEDIATE transaction and roll back on ANY throw.
+ * inTransaction cannot prove SQLite lock mode or caller trust. This is not an authorization/OS isolation boundary.
+ * new_only refuses adopting historical fills; historical_only refuses creating effects.
+ */
+export function settlePaperRiskInTransaction(
+  db: Database.Database, ownerId: string, input: unknown, now: number,
+  mode: 'auto' | 'new_only' | 'historical_only',
+) {
+  if (!db.inTransaction || !id(ownerId) || !request(input)
+    || !['auto', 'new_only', 'historical_only'].includes(mode)) throw rollback;
+
       if (!Number.isSafeInteger(now) || now < 0) throw rollback;
       const {accountId, reservationId, executionKey, side} = input;
       const account = db.prepare('SELECT owner_id FROM paper_accounts WHERE account_id=?').get(accountId) as {owner_id: string} | undefined;
@@ -45,11 +63,13 @@ export function executeRiskCheckedPaperOrder(
       const execute = side === 'buy' ? executePaperBuy : executePaperSell;
       const identity = {accountId, reservationId, executionKey};
       if (historical) {
+        if (mode === 'new_only') throw rollback;
         if (historical.reservation_id !== reservationId) throw rollback;
         const result = execute(db, ownerId, identity, () => now);
         if (!result.ok || !result.replayed) throw rollback;
         return result;
       }
+      if (mode === 'historical_only') throw rollback;
       // A different execution key cannot reuse any settled reservation.
       if (db.prepare(`SELECT 1 FROM ${ownTable} WHERE account_id=? AND reservation_id=?`).get(accountId, reservationId)) throw rollback;
       const reservationTable = side === 'buy' ? 'paper_reservations' : 'paper_sell_reservations';
@@ -64,8 +84,5 @@ export function executeRiskCheckedPaperOrder(
       const after = readPaperRisk(db, ownerId, accountId, reservation.policy_id, () => now);
       if (!after.ok || !after.allowed) throw rollback;
       return result;
-    }).immediate();
-  } catch {
-    return deny();
-  }
+
 }
