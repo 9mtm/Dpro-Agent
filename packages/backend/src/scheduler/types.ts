@@ -7,6 +7,7 @@
  * Cron job action types
  */
 export type CronActionType =
+  | 'paper-runtime-cycle' // Paused paper runtime reference; execution adapter is not connected
   | 'execute-skill' // Execute a skill
   | 'send-message' // Send message to channel
   | 'api-call' // HTTP API call
@@ -44,6 +45,7 @@ export interface CronJob {
  * Action-specific data
  */
 export type CronActionData =
+  | {consentId:string}
   | ExecuteSkillAction
   | SendMessageAction
   | ApiCallAction

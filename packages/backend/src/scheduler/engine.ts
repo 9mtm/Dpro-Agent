@@ -88,7 +88,7 @@ export class CronEngine extends EventEmitter implements ICronEngine {
     }
 
     // RUN-ISO F2: with AGENT_PLAYER_BACKGROUND=off the job is known but never runs.
-    if (!backgroundEnabled()) {
+    if (job.actionType === 'paper-runtime-cycle' || !backgroundEnabled()) {
       this.jobs.set(job.id, job);
       return;
     }
@@ -182,6 +182,7 @@ export class CronEngine extends EventEmitter implements ICronEngine {
     const startTime = Date.now();
 
     try {
+      if(job.actionType==='paper-runtime-cycle')throw new Error('Paper schedule execution unavailable');
       const admitted = job.actionType === 'send-message' || job.actionType === 'api-call' ? await assertScheduledDispatch(job, trigger) : undefined;
       let output: any;
 

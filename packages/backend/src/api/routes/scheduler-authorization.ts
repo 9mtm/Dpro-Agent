@@ -4,7 +4,7 @@ import {ReviewerIdentityError,reviewerRequestIdentity} from '../../auth/verifica
 import {VerificationChallengeLimitError} from '../../auth/verification/challenges.js';
 import {scheduleRevocationOperationHash,type ScheduleRevocationOperation,scheduleAuthorizationOperationHash,type ScheduleAuthorizationOperation} from '../../auth/verification/operation-proof.js';
 import {ScheduleDefinitionError} from '../../scheduler/authorization-definition.js';
-import {ScheduleAuthorizationError,scheduledAuthorizationPreview,issueScheduledAuthorization,completeScheduledAuthorization,authorizeScheduledJob,assertScheduledDispatch,scheduledRevocationTarget,issueScheduledRevocation,completeScheduledRevocation,revokeScheduledAuthorization} from '../../scheduler/authorization.js';
+import {ScheduleAuthorizationError,scheduledAuthorizationPreview,issueScheduledAuthorization,completeScheduledAuthorization,authorizeScheduledJob,assertScheduledDispatch,inspectPausedPaperScheduleAuthorization,scheduledRevocationTarget,issueScheduledRevocation,completeScheduledRevocation,revokeScheduledAuthorization} from '../../scheduler/authorization.js';
 import {sql,one} from '../../repositories/sql-steps.js';
 import {dialect} from '../../repositories/sql-steps.js';
 import {rowToJob,type CronJobRow} from '../../scheduler/store.js';
@@ -26,11 +26,12 @@ export async function schedulerAuthorizationRoutes(app:FastifyInstance){
  app.addHook('onRequest',async(_request,reply)=>{reply.header('Cache-Control','no-store');});
  app.get('/api/scheduler/jobs/:id/authorization',{config:{access:'owner'}},async(request,reply)=>{
   try{
-   await reviewerRequestIdentity(request,true);const {id}=request.params as {id:string};
+   const identity=await reviewerRequestIdentity(request,true);const {id}=request.params as {id:string};
    if(!uuid(id)||Object.keys(request.query as object).length)return reply.code(400).send(invalid);
    const job=await sql().read(one<CronJobRow>('SELECT * FROM cron_jobs WHERE id=?',id));
    if(!job)return reply.code(404).send(unavailable);
    const d=await sql().read(dialect()),current=rowToJob(d,job);
+   if(current.actionType==='paper-runtime-cycle'){let authorization:'authorized'|'authorization_required'='authorization_required';try{await inspectPausedPaperScheduleAuthorization(current,identity.context.userId);authorization='authorized';}catch{}await reviewerRequestIdentity(request,true);return {jobId:id,status:'execution_unavailable',authorization,executionAvailable:false};}
    if(current.actionType!=='api-call'&&current.actionType!=='send-message')return {jobId:id,status:'not_required'};
    let status:'authorized'|'authorization_required'='authorization_required';
    try{await assertScheduledDispatch(current,'manual');status='authorized';}catch(error){if(!(error instanceof ScheduleAuthorizationError)&&!(error instanceof ScheduleDefinitionError))throw error;}

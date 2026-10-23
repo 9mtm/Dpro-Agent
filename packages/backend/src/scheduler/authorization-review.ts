@@ -1,3 +1,4 @@
+import type {inspectPaperScheduleInTransaction} from './paper-authorization.js';
 import {captureScheduledDefinition,ScheduleDefinitionError} from './authorization-definition.js';
 import {redactImportText} from '../memory/import/redact.js';
 import {isSecretKey} from '../credentials/secret-mask.js';
@@ -6,7 +7,7 @@ const hidden=Object.freeze({hidden:true});
 const unsafe=/[\x00-\x08\x0b\x0c\x0e-\x1f\x7f\u202a-\u202e\u2066-\u2069]/;
 function fail():never{throw new ScheduleDefinitionError();}
 /** Conservative display projection, not an arbitrary-secret detector or a request authorization. */
-export function scheduledActionReview(input:unknown,operation:Pick<ScheduleAuthorizationOperation,'jobId'|'definitionHash'>){
+export function scheduledActionReview(input:unknown,operation:Pick<ScheduleAuthorizationOperation,'jobId'|'definitionHash'>,paper?:ReturnType<typeof inspectPaperScheduleInTransaction>){
  const captured=captureScheduledDefinition(input),definition=captured.definition;
  if(operation.definitionHash!==captured.definitionHash||operation.jobId!==definition.id)fail();
  const masked=new Set<string>();
@@ -45,6 +46,7 @@ export function scheduledActionReview(input:unknown,operation:Pick<ScheduleAutho
    action.headers=Object.freeze(headers);
   }else action[key]=visit(value,'action.'+key);
  }
+ if(definition.actionType==='paper-runtime-cycle'){if(!paper||paper.consentId!==actionData.consentId)fail();Object.assign(action,paper);}
  const review=Object.freeze({definitionHash:captured.definitionHash,name:text(definition.name,'name'),description:definition.description===null?null:text(definition.description,'description'),cronExpression:definition.cronExpression,timeZone:definition.timeZone,actionType:definition.actionType,action:Object.freeze(action),maskedFields:Object.freeze([...masked].sort())});
  if(Buffer.byteLength(JSON.stringify(review),'utf8')>65536)fail();return review;
 }

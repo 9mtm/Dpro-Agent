@@ -93,13 +93,21 @@ export async function insertJob(job: CronJob): Promise<void> {
 }
 
 /** Replace a job's definition (route PUT /api/scheduler/jobs/:id). */
-export async function updateJobDefinition(job: CronJob): Promise<void> {
-  await sql().tx(function*(){yield* lockName('scheduled-job:'+job.id);const changed=yield* run(`
+function* replaceJobDefinition(job:CronJob,legacy:boolean):Step<void>{yield* lockName('scheduled-job:'+job.id);
+  if(legacy){const current=yield* one<{action_type:string}>('SELECT action_type FROM cron_jobs WHERE id=?',job.id);if(current?.action_type==='paper-runtime-cycle'||job.actionType==='paper-runtime-cycle')throw Error('Reviewed paper definition required');}
+  const changed=yield* run(`
     UPDATE cron_jobs
     SET name = ?, description = ?, cron_expression = ?, action_type = ?, action_data = ?, enabled = ?, updated_at = ?
     WHERE id = ?`,
   job.name, job.description || null, job.cronExpression, job.actionType, JSON.stringify(job.actionData),
-  job.enabled ? 1 : 0, job.updatedAt.toISOString(), job.id);if(changed.changes===1)yield* advanceSecurityRevision(job.id);});
+  job.enabled ? 1 : 0, job.updatedAt.toISOString(), job.id);if(changed.changes===1)yield* advanceSecurityRevision(job.id);
+}
+
+export async function updateJobDefinition(job:CronJob):Promise<void>{await sql().tx(()=>replaceJobDefinition(job,false));}
+/** Legacy UI mutations cannot edit either side of a typed paper transition under the actual job lock. */
+export async function updateLegacyJobDefinition(job:CronJob):Promise<void>{await sql().tx(()=>replaceJobDefinition(job,true));}
+export async function setLegacyJobEnabled(id:string,enabled:boolean,updatedAt:Date):Promise<void>{
+ await sql().tx(function*(){yield* lockName('scheduled-job:'+id);const current=yield* one<{action_type:string}>('SELECT action_type FROM cron_jobs WHERE id=?',id);if(enabled&&current?.action_type==='paper-runtime-cycle')throw Error('Paper schedule execution unavailable');yield* run('UPDATE cron_jobs SET enabled=?,updated_at=? WHERE id=?',enabled?1:0,updatedAt.toISOString(),id);});
 }
 
 export async function setJobEnabled(id: string, enabled: boolean, updatedAt: Date): Promise<void> {

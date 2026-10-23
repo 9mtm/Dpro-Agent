@@ -1,3 +1,4 @@
+import {inspectPaperScheduleInTransaction} from './paper-authorization.js';
 import type Database from 'better-sqlite3';
 import {getDatabase} from '../db/index.js';
 import {dbDriver} from '../db/pg/config.js';
@@ -27,7 +28,8 @@ function* target(context:OperationContext,actor:Actor,id:string,expiresAt:number
  const policy=yield* one<{version:number}>(`SELECT version FROM approval_proof_policy WHERE id=1${forUpdate(d)}`);
  if(!policy||!Number.isSafeInteger(Number(policy.version))||Number(policy.version)<1)throw new ScheduleAuthorizationError('changed');
  const job=yield* one<CronJobRow>(`SELECT * FROM cron_jobs WHERE id=?${forUpdate(d)}`,id);if(!job)throw new ScheduleAuthorizationError('changed');
- const definition=captureScheduledDefinition(rowToJob(d,job));
+ const persisted=rowToJob(d,job),definition=captureScheduledDefinition(persisted);
+ if(persisted.actionType==='paper-runtime-cycle'){if(d!=='sqlite'||persisted.enabled)throw new ScheduleAuthorizationError('changed');inspectPaperScheduleInTransaction(getDatabase().getDb(),context.userId,persisted.actionData,now,expiresAt);}
  let version=yield* one<{revision:number}>(`SELECT revision FROM scheduled_job_security_versions WHERE job_id=?${forUpdate(d)}`,id);
  // An explicit owner preview may track a legacy row, but never authorizes or changes its action.
  if(!version){yield* run('INSERT INTO scheduled_job_security_versions(job_id,revision) VALUES(?,1)',id);version={revision:1};}
@@ -49,26 +51,34 @@ export async function scheduledAuthorizationPreview(context:OperationContext,act
   const operation=yield* target(trusted.context,trusted.actor,id,expiresAt,undefined,now);
   const d=yield* dialect(),row=yield* one<CronJobRow>('SELECT * FROM cron_jobs WHERE id=?',id);
   if(!row)throw new ScheduleAuthorizationError('changed');
-  return Object.freeze({operation,review:scheduledActionReview(rowToJob(d,row),operation)});
+  const job=rowToJob(d,row),paper=job.actionType==='paper-runtime-cycle'?inspectPaperScheduleInTransaction(getDatabase().getDb(),trusted.context.userId,job.actionData,now,operation.authorizationExpiresAt):undefined;
+  return Object.freeze({operation,review:scheduledActionReview(job,operation,paper)});
  });
 }
 export async function issueScheduledAuthorization(context:OperationContext,actor:Actor,input:ScheduleAuthorizationOperation,now=Date.now()){
- const trusted=capture(context,actor),operation=reviewed(input);await sql().tx(()=>target(trusted.context,trusted.actor,operation.jobId,operation.authorizationExpiresAt,operation,now));return issueOperationChallenge(trusted.context,operation,now);
+ const trusted=capture(context,actor),operation=reviewed(input);
+ const paper=await sql().tx(function*(){yield* target(trusted.context,trusted.actor,operation.jobId,operation.authorizationExpiresAt,operation,now);return (yield* one<{action_type:string}>('SELECT action_type FROM cron_jobs WHERE id=?',operation.jobId))?.action_type==='paper-runtime-cycle';});
+ const result=await issueOperationChallenge(trusted.context,operation,now);if(paper)await sql().tx(()=>target(trusted.context,trusted.actor,operation.jobId,operation.authorizationExpiresAt,operation,now));return result;
 }
 export async function completeScheduledAuthorization(token:unknown,context:OperationContext,actor:Actor,input:ScheduleAuthorizationOperation,code:unknown,now=Date.now()){
- const trusted=capture(context,actor),operation=reviewed(input);await sql().tx(()=>target(trusted.context,trusted.actor,operation.jobId,operation.authorizationExpiresAt,operation,now));return completeOperationChallenge(token,trusted.context,operation,code,now);
+ const trusted=capture(context,actor),operation=reviewed(input);
+ const paper=await sql().tx(function*(){yield* target(trusted.context,trusted.actor,operation.jobId,operation.authorizationExpiresAt,operation,now);return (yield* one<{action_type:string}>('SELECT action_type FROM cron_jobs WHERE id=?',operation.jobId))?.action_type==='paper-runtime-cycle';});
+ const result=await completeOperationChallenge(token,trusted.context,operation,code,now);if(paper)await sql().tx(()=>target(trusted.context,trusted.actor,operation.jobId,operation.authorizationExpiresAt,operation,now));return result;
 }
 /** Explicit authorization only. It never enables, dispatches or executes the job. */
 export async function authorizeScheduledJob(receipt:unknown,context:OperationContext,actor:Actor,input:ScheduleAuthorizationOperation,now=Date.now()){
  const trusted=capture(context,actor),operation=reviewed(input);
  return sql().tx(function*(){
   yield* target(trusted.context,trusted.actor,operation.jobId,operation.authorizationExpiresAt,operation,now);
+  const priorAction=yield* one<{action_type:string}>('SELECT action_type FROM cron_jobs WHERE id=?',operation.jobId),paperGrant=priorAction?.action_type==='paper-runtime-cycle';
   if(!(yield* consumeOperationReceiptStep(receipt,trusted.context,operation,now)))throw new ScheduleAuthorizationError('proof_refused');
   const version=operation.authorizationRevision+1,receiptHash=createHash('sha256').update(receipt as string).digest('hex');
   const values=[version,operation.jobRevision,operation.definitionHash,trusted.context.userId,trusted.context.tokenVersion,trusted.context.factorVersion,operation.policyVersion,now,operation.authorizationExpiresAt,receiptHash,trusted.context.sessionHash] as const;
   const changed=operation.authorizationRevision===0?yield* run('INSERT INTO scheduled_job_authorizations(version,job_revision,definition_hash,owner_id,token_version,factor_version,policy_version,authorized_at,expires_at,receipt_hash,session_hash,job_id) VALUES(?,?,?,?,?,?,?,?,?,?,?,?)',...values,operation.jobId):yield* run("UPDATE scheduled_job_authorizations SET status='authorized',version=?,job_revision=?,definition_hash=?,owner_id=?,token_version=?,factor_version=?,policy_version=?,authorized_at=?,expires_at=?,receipt_hash=?,session_hash=? WHERE job_id=? AND version=?",...values,operation.jobId,operation.authorizationRevision);
   if(changed.changes!==1)throw new ScheduleAuthorizationError('changed');
   yield* run('INSERT INTO scheduled_job_authorization_events(version,job_revision,definition_hash,owner_id,token_version,factor_version,policy_version,authorized_at,expires_at,receipt_hash,session_hash,job_id) VALUES(?,?,?,?,?,?,?,?,?,?,?,?)',...values,operation.jobId);
+  const d=yield* dialect(),current=yield* one<CronJobRow>('SELECT * FROM cron_jobs WHERE id=?',operation.jobId);
+  if(paperGrant){if(!current||current.action_type!=='paper-runtime-cycle')throw new ScheduleAuthorizationError('changed');const job=rowToJob(d,current),snapshot=captureScheduledDefinition(job);if(job.enabled||snapshot.definitionHash!==operation.definitionHash)throw new ScheduleAuthorizationError('changed');yield* scheduledDispatchStep({id:job.id},snapshot,'manual',now,false,true);}
   return Object.freeze({jobId:operation.jobId,jobRevision:operation.jobRevision,authorizationRevision:version,expiresAt:operation.authorizationExpiresAt});
  });
 }
@@ -81,7 +91,7 @@ export function assertScheduledDispatchStep(job:import('./types.js').CronJob,tri
  const identity=Object.freeze({id:snapshot.definition.id});
  return scheduledDispatchStep(identity,snapshot,trigger,now,requireEnabled);
 }
-function* scheduledDispatchStep(job:Readonly<{id:string}>,snapshot:ReturnType<typeof captureScheduledDefinition>,trigger:'manual'|'scheduled',now:number,requireEnabled:boolean):Step<ScheduledDispatchAdmission>{
+function* scheduledDispatchStep(job:Readonly<{id:string}>,snapshot:ReturnType<typeof captureScheduledDefinition>,trigger:'manual'|'scheduled',now:number,requireEnabled:boolean,paperInspection=false):Step<ScheduledDispatchAdmission>{
   if(!Number.isSafeInteger(now)||now<1||(trigger!=='manual'&&trigger!=='scheduled')||typeof requireEnabled!=='boolean')throw new ScheduleAuthorizationError('invalid');
   yield* lockName('scheduled-job:'+job.id);const d=yield* dialect();
   const consent=yield* one<{status:string;version:number;job_revision:number;definition_hash:string;owner_id:string;token_version:number;factor_version:number;policy_version:number;authorized_at:number;expires_at:number;receipt_hash:string;session_hash:string}>(`SELECT * FROM scheduled_job_authorizations WHERE job_id=?${forUpdate(d)}`,job.id);
@@ -104,7 +114,8 @@ function* scheduledDispatchStep(job:Readonly<{id:string}>,snapshot:ReturnType<ty
   if(!current||!revision||!Number.isSafeInteger(Number(consent.job_revision))||Number(consent.job_revision)<1||Number(revision.revision)!==Number(consent.job_revision))throw new ScheduleAuthorizationError('changed');
   if(Number(current.enabled)!==0&&Number(current.enabled)!==1)throw new ScheduleAuthorizationError('changed');
   const persisted=rowToJob(d,current);
-  if(((requireEnabled||trigger==='scheduled')&&!persisted.enabled)||snapshot.definitionHash!==consent.definition_hash||captureScheduledDefinition(persisted).definitionHash!==snapshot.definitionHash)throw new ScheduleAuthorizationError('changed');
+  if(((requireEnabled||trigger==='scheduled'||persisted.actionType==='paper-runtime-cycle'&&!paperInspection)&&!persisted.enabled)||snapshot.definitionHash!==consent.definition_hash||captureScheduledDefinition(persisted).definitionHash!==snapshot.definitionHash)throw new ScheduleAuthorizationError('changed');
+ if(persisted.actionType==='paper-runtime-cycle'){if(d!=='sqlite')throw new ScheduleAuthorizationError('forbidden');inspectPaperScheduleInTransaction(getDatabase().getDb(),consent.owner_id,persisted.actionData,now,Number(consent.expires_at));}
  return Object.freeze({definition:snapshot.definition,ownerId:consent.owner_id,jobRevision:Number(consent.job_revision),authorizationRevision:Number(consent.version),definitionHash:consent.definition_hash,expiresAt:Number(consent.expires_at)});
 }
 
@@ -182,4 +193,10 @@ export async function revokeScheduledAuthorization(receipt:unknown,context:Opera
   yield* run('INSERT INTO scheduled_job_authorization_revocations(job_id,version,prior_version,revoked_by,revoked_at,token_version,factor_version,policy_version,receipt_hash,session_hash) VALUES(?,?,?,?,?,?,?,?,?,?)',operation.jobId,version,operation.authorizationRevision,trusted.context.userId,now,trusted.context.tokenVersion,trusted.context.factorVersion,operation.policyVersion,createHash('sha256').update(receipt as string).digest('hex'),trusted.context.sessionHash);
   return Object.freeze({jobId:operation.jobId,authorizationRevision:version,status:'revoked' as const});
  });
+}
+
+/** Inspection-only paper consent state. Paused valid consent is distinct from unavailable execution; never dispatch metadata. */
+export async function inspectPausedPaperScheduleAuthorization(job:import('./types.js').CronJob,ownerId:string,now=Date.now()){
+ const snapshot=captureScheduledDefinition(job);if(snapshot.definition.actionType!=='paper-runtime-cycle')throw new ScheduleAuthorizationError('invalid');
+ return sql().tx(function*(){const inspected=yield* scheduledDispatchStep({id:snapshot.definition.id},snapshot,'manual',now,false,true);if(inspected.ownerId!==ownerId)throw new ScheduleAuthorizationError('forbidden');return Object.freeze({status:'authorized' as const,executionAvailable:false as const});});
 }

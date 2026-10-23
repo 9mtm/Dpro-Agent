@@ -1,10 +1,13 @@
+import {getDatabase} from '../db/index.js';
+import {dbDriver} from '../db/pg/config.js';
+import {assertPaperScheduleOwnerInTransaction,inspectPaperScheduleInTransaction} from './paper-authorization.js';
 import type {Actor} from '../repositories/actor.js';
 import {isSystemAccount} from '../auth/default-accounts.js';
 import {sql,one,run,lockName,dialect,type Step} from '../repositories/sql-steps.js';
 import {forUpdate} from '../db/pg/dialect.js';
 import {rowToJob,advanceSecurityRevision,type CronJobRow} from './store.js';
 import type {CronJob} from './types.js';
-import {captureScheduledDefinition,captureScheduledJson} from './authorization-definition.js';
+import {captureScheduledDefinition,captureScheduledJson,capturePaperRuntimeAction} from './authorization-definition.js';
 import {scheduledActionReview} from './authorization-review.js';
 export class ScheduledDefinitionError extends Error{constructor(readonly code:'invalid'|'forbidden'|'conflict'){super('Schedule definition '+code);}}
 const uuid=(value:unknown):value is string=>typeof value==='string'&&/^[a-f0-9]{8}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{12}$/.test(value);
@@ -29,14 +32,16 @@ export async function readScheduledDefinition(actor:Actor,tokenVersion:number,id
   yield* lockName('scheduled-job:'+id);yield* currentOwner(trusted,tokenVersion);const d=yield* dialect();
   const row=yield* one<CronJobRow>(`SELECT * FROM cron_jobs WHERE id=?${forUpdate(d)}`,id);if(!row)return null;
   const job=rowToJob(d,row),definition=captureScheduledDefinition(job);
+  const paper=job.actionType==='paper-runtime-cycle'?(d!=='sqlite'?(()=>{throw new ScheduledDefinitionError('forbidden');})():inspectPaperScheduleInTransaction(getDatabase().getDb(),trusted.userId,job.actionData,Date.now())):undefined;
   let version=yield* one<{revision:number}>(`SELECT revision FROM scheduled_job_security_versions WHERE job_id=?${forUpdate(d)}`,id);
   if(!version){yield* run('INSERT INTO scheduled_job_security_versions(job_id,revision) VALUES(?,1)',id);version={revision:1};}
   const revision=Number(version.revision);if(!Number.isInteger(revision)||revision<1||revision>2147483647)throw new ScheduledDefinitionError('conflict');
-  return Object.freeze({jobId:id,revision,enabled:job.enabled,review:scheduledActionReview(job,{jobId:id,definitionHash:definition.definitionHash})});
+  return Object.freeze({jobId:id,revision,enabled:job.enabled,review:scheduledActionReview(job,{jobId:id,definitionHash:definition.definitionHash},paper)});
  });
 }
 /** Exact revisioned save only. New or changed external actions are always paused and never authorized here. */
 export async function saveScheduledDefinition(actor:Actor,tokenVersion:number,id:string,expectedRevision:number,input:unknown,now=Date.now()){
+ let strictPaperAction=false;try{if(input&&typeof input==='object'){const descriptor=Object.getOwnPropertyDescriptor(input,'actionData');if(descriptor&&Object.hasOwn(descriptor,'value')){capturePaperRuntimeAction(descriptor.value);strictPaperAction=true;}}}catch{}
  const trusted=identity(actor,tokenVersion),update=changes(input);
  if(!uuid(id)||!Number.isInteger(expectedRevision)||expectedRevision<0||expectedRevision>=2147483647||!Number.isSafeInteger(now)||now<1||now>8640000000000000)throw new ScheduledDefinitionError('invalid');
  return sql().tx(function*(){
@@ -44,7 +49,8 @@ export async function saveScheduledDefinition(actor:Actor,tokenVersion:number,id
   const row=yield* one<CronJobRow>(`SELECT * FROM cron_jobs WHERE id=?${forUpdate(d)}`,id),version=yield* one<{revision:number}>(`SELECT revision FROM scheduled_job_security_versions WHERE job_id=?${forUpdate(d)}`,id);
   if(expectedRevision===0?(!!row||!!version):(!row||!version||Number(version.revision)!==expectedRevision))throw new ScheduledDefinitionError('conflict');
   const previous=row?rowToJob(d,row):undefined;
-  if(previous&&!['api-call','send-message'].includes(previous.actionType))throw new ScheduledDefinitionError('invalid');
+  if(previous&&!['api-call','send-message','paper-runtime-cycle'].includes(previous.actionType))throw new ScheduledDefinitionError('invalid');
+  if(previous?.actionType==='paper-runtime-cycle'){if(d!=='sqlite'||dbDriver()!=='sqlite')throw new ScheduledDefinitionError('forbidden');assertPaperScheduleOwnerInTransaction(getDatabase().getDb(),trusted.userId,previous.actionData,now);}
   if(!previous&&['name','cronExpression','actionType','actionData'].some(key=>!Object.hasOwn(update,key)))throw new ScheduledDefinitionError('invalid');
   let actionData=Object.hasOwn(update,'actionData')?update.actionData:previous?.actionData;
   if(previous&&Object.hasOwn(update,'actionData')&&(!Object.hasOwn(update,'actionType')||update.actionType===previous.actionType)){
@@ -53,12 +59,15 @@ export async function saveScheduledDefinition(actor:Actor,tokenVersion:number,id
   }
   const job={...previous,...update,id,actionData,enabled:false,createdAt:previous?.createdAt??new Date(now),updatedAt:new Date(now)} as CronJob;
   const captured=captureScheduledDefinition(job);
+  let paper;
+  if(job.actionType==='paper-runtime-cycle'){if(d!=='sqlite'||dbDriver()!=='sqlite'||Object.hasOwn(update,'actionData')&&!strictPaperAction)throw new ScheduledDefinitionError('invalid');paper=inspectPaperScheduleInTransaction(getDatabase().getDb(),trusted.userId,job.actionData,now);}
   // Refuse an unsafe/unbounded native review before persisting an authoring change.
-  scheduledActionReview(job,{jobId:id,definitionHash:captured.definitionHash});
+  scheduledActionReview(job,{jobId:id,definitionHash:captured.definitionHash},paper);
   if(row)yield* run('UPDATE cron_jobs SET name=?,description=?,cron_expression=?,action_type=?,action_data=?,enabled=0,updated_at=? WHERE id=?',job.name,job.description??null,job.cronExpression,job.actionType,JSON.stringify(job.actionData),job.updatedAt.toISOString(),id);
   else yield* run('INSERT INTO cron_jobs(id,name,description,cron_expression,action_type,action_data,enabled,created_at,updated_at) VALUES(?,?,?,?,?,?,0,?,?)',id,job.name,job.description??null,job.cronExpression,job.actionType,JSON.stringify(job.actionData),job.createdAt.toISOString(),job.updatedAt.toISOString());
   yield* advanceSecurityRevision(id);const revision=expectedRevision+1;
   yield* run('INSERT INTO scheduled_job_definition_events(job_id,revision,edited_by,edited_at,token_version,definition_hash) VALUES(?,?,?,?,?,?)',id,revision,trusted.userId,now,tokenVersion,captured.definitionHash);
+  if(job.actionType==='paper-runtime-cycle'||previous?.actionType==='paper-runtime-cycle'){yield* currentOwner(trusted,tokenVersion);const stored=yield* one<CronJobRow>('SELECT * FROM cron_jobs WHERE id=?',id),storedVersion=yield* one<{revision:number}>('SELECT revision FROM scheduled_job_security_versions WHERE job_id=?',id);if(!stored||Number(stored.enabled)!==0||Number(storedVersion?.revision)!==revision||captureScheduledDefinition(rowToJob(d,stored)).definitionHash!==captured.definitionHash)throw new ScheduledDefinitionError('conflict');if(job.actionType==='paper-runtime-cycle')inspectPaperScheduleInTransaction(getDatabase().getDb(),trusted.userId,stored.action_data?rowToJob(d,stored).actionData:job.actionData,now);}
   return Object.freeze({job,revision,definitionHash:captured.definitionHash});
  });
 }

@@ -22,8 +22,15 @@ function snapshot(value:unknown,depth:number,budget:{nodes:number}):unknown{
 export function captureScheduledJson(input:unknown){
  const value=snapshot(input,0,{nodes:0});if(Buffer.byteLength(JSON.stringify(value),'utf8')>32768)fail();return value;
 }
+/** Exact typed paper action, captured before JSON copying can discard hidden fields. */
+export function capturePaperRuntimeAction(value:unknown){
+ if(!object(value))fail();const keys=Reflect.ownKeys(value),d=Object.getOwnPropertyDescriptor(value,'consentId');
+ if(keys.length!==1||keys[0]!=='consentId'||!d||!Object.hasOwn(d,'value')||typeof d.value!=='string'||d.value.length!==36||!/^[a-f0-9]{8}-(?:[a-f0-9]{4}-){3}[a-f0-9]{12}$/.test(d.value))fail();
+ return Object.freeze({consentId:d.value as string});
+}
 function actionShape(type:string,value:unknown):void{
  if(!object(value))fail();
+ if(type==='paper-runtime-cycle'){capturePaperRuntimeAction(value);return;}
  const keys=type==='api-call'?['method','url','headers','body']:['channelId','to','content','options'];
  if(Object.keys(value).some(k=>!keys.includes(k)))fail();
  if(type==='api-call'){
@@ -45,10 +52,11 @@ const fields=new Set(['id','name','description','cronExpression','actionType','a
 export function captureScheduledDefinition(input:unknown,timeZone=Intl.DateTimeFormat().resolvedOptions().timeZone){
  if(!object(input)||Object.keys(input).some(k=>!fields.has(k)))fail();
  for(const key of Object.keys(input)){const d=Object.getOwnPropertyDescriptor(input,key);if(!d||!Object.hasOwn(d,'value'))fail();}
- if(typeof input.id!=='string'||!/^[a-f0-9]{8}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{12}$/.test(input.id)||typeof input.name!=='string'||input.name.trim()!==input.name||input.name.length<1||input.name.length>200||/[\x00-\x1f\x7f]/.test(input.name)||input.description!==undefined&&input.description!==null&&(typeof input.description!=='string'||input.description.length>2000)||typeof input.cronExpression!=='string'||input.cronExpression.trim()!==input.cronExpression||input.cronExpression.length>200||!cron.validate(input.cronExpression)||!['api-call','send-message'].includes(input.actionType as string)||!object(input.actionData)||typeof timeZone!=='string'||timeZone.length>100)fail();
+ if(typeof input.id!=='string'||!/^[a-f0-9]{8}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{12}$/.test(input.id)||typeof input.name!=='string'||input.name.trim()!==input.name||input.name.length<1||input.name.length>200||/[\x00-\x1f\x7f]/.test(input.name)||input.description!==undefined&&input.description!==null&&(typeof input.description!=='string'||input.description.length>2000)||typeof input.cronExpression!=='string'||input.cronExpression.trim()!==input.cronExpression||input.cronExpression.length>200||!cron.validate(input.cronExpression)||!['api-call','send-message','paper-runtime-cycle'].includes(input.actionType as string)||!object(input.actionData)||typeof timeZone!=='string'||timeZone.length>100)fail();
  try{new Intl.DateTimeFormat('en',{timeZone}).format(0);}catch{return fail();}
+ if(input.actionType==='paper-runtime-cycle')capturePaperRuntimeAction(input.actionData);
  const actionData=snapshot(input.actionData,0,{nodes:0});actionShape(input.actionType as string,actionData);
- const definition=Object.freeze({id:input.id,name:input.name,description:input.description??null,cronExpression:input.cronExpression,timeZone,actionType:input.actionType as 'api-call'|'send-message',actionData});
+ const definition=Object.freeze({id:input.id,name:input.name,description:input.description??null,cronExpression:input.cronExpression,timeZone,actionType:input.actionType as 'api-call'|'send-message'|'paper-runtime-cycle',actionData});
  const serialized=JSON.stringify(definition);if(Buffer.byteLength(serialized,'utf8')>32768)fail();
  return Object.freeze({definition,definitionHash:createHash('sha256').update('scheduled-action-definition-v1\0'+serialized).digest('hex')});
 }

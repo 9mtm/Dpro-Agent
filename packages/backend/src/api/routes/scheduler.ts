@@ -10,7 +10,7 @@ import { v4 as uuidv4 } from 'uuid';
 import cron from 'node-cron';
 import { getCronEngine } from '../../scheduler/engine.js';
 import { getJobQueue } from '../../scheduler/queue.js';
-import { deleteJob, insertJob, jobHistory, setJobEnabled, updateJobDefinition } from '../../scheduler/store.js';
+import { deleteJob, insertJob, jobHistory, setJobEnabled, updateLegacyJobDefinition, setLegacyJobEnabled } from '../../scheduler/store.js';
 import type { CronJob, CronActionType, CronActionData } from '../../scheduler/types.js';
 import { handleError } from '../error-handler.js';
 
@@ -102,6 +102,7 @@ export async function schedulerRoutes(fastify: FastifyInstance) {
   }>('/api/scheduler/jobs', async (request, reply) => {
     try {
       const { name, description, cronExpression, actionType, actionData, enabled } = request.body;
+      if(actionType==='paper-runtime-cycle')return reply.code(409).send({success:false,error:'Reviewed paper definition required',code:'paper_execution_unavailable'});
 
       // Validate cron expression
       if (!cron.validate(cronExpression)) {
@@ -167,6 +168,8 @@ export async function schedulerRoutes(fastify: FastifyInstance) {
         });
       }
 
+      if(job.actionType==='paper-runtime-cycle'||updates.actionType==='paper-runtime-cycle'||(await q.one<{action_type:string}>('SELECT action_type FROM cron_jobs WHERE id=?',id))?.action_type==='paper-runtime-cycle')return reply.code(409).send({success:false,error:'Reviewed paper definition required',code:'paper_execution_unavailable'});
+
       // Validate cron expression if provided
       if (updates.cronExpression && !cron.validate(updates.cronExpression)) {
         return reply.status(400).send({
@@ -179,7 +182,7 @@ export async function schedulerRoutes(fastify: FastifyInstance) {
       const updatedJob = { ...job, ...updates, updatedAt: new Date() };
 
       // Update in database
-      await updateJobDefinition(updatedJob);
+      await updateLegacyJobDefinition(updatedJob);
 
       // Reschedule
       cronEngine.unscheduleJob(id);
@@ -238,6 +241,7 @@ export async function schedulerRoutes(fastify: FastifyInstance) {
     try {
       const { id } = request.params;
 
+      if(cronEngine.getJob(id)?.actionType==='paper-runtime-cycle'||(await q.one<{action_type:string}>('SELECT action_type FROM cron_jobs WHERE id=?',id))?.action_type==='paper-runtime-cycle')return reply.code(409).send({success:false,error:'Paper schedule execution unavailable',code:'paper_execution_unavailable'});
       const result = await cronEngine.executeJob(id);
 
       return {
@@ -279,11 +283,10 @@ export async function schedulerRoutes(fastify: FastifyInstance) {
           });
         }
 
-        job.enabled = true;
-        job.updatedAt = new Date();
-
-        // Update database
-        await setJobEnabled(id, true, job.updatedAt);
+        if(job.actionType==='paper-runtime-cycle'||(await q.one<{action_type:string}>('SELECT action_type FROM cron_jobs WHERE id=?',id))?.action_type==='paper-runtime-cycle')return reply.code(409).send({success:false,error:'Paper schedule execution unavailable',code:'paper_execution_unavailable'});
+        const updatedAt=new Date();
+        await setLegacyJobEnabled(id,true,updatedAt);
+        job.enabled=true;job.updatedAt=updatedAt;
 
         // Schedule
         cronEngine.scheduleJob(job);
