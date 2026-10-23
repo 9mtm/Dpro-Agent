@@ -26,6 +26,7 @@ import { flushAuditWritesWithin, SHUTDOWN_AUDIT_FLUSH_MS } from '../services/aud
 import { startAutomaticProjectImports, stopAutomaticProjectImports } from '../memory/import/automatic-project-import.js';
 import { startDiscoveryWatch, stopDiscoveryWatch } from '../discovery/service.js';
 import { resumePendingImports, stopLocalImports } from '../memory/import/local-import.js';
+import {recoverSubscriptionProcesses,stopSubscriptionProcesses} from '../services/subscription-chat.js';
 import { getOrchestrator } from '../multi-agent/orchestrator.js';
 
 const PORT = config.port;
@@ -65,6 +66,7 @@ async function start() {
   try {
     console.log('[Server] 🚀 Initializing backend systems...\n');
 
+    try{await recoverSubscriptionProcesses();}catch{console.warn('[Subscription] Process recovery unavailable; unverified groups were not signalled.');}
     const summary = await initializeBackend(fastify);
 
     // RUN-ISO ISO-1: re-check the data tree after every store was opened.
@@ -126,6 +128,7 @@ async function shutdown(): Promise<void> {
   const deadline = setTimeout(() => process.exit(1), 20000);
   deadline.unref();
   try {
+    await stopSubscriptionProcesses();
     // Closing Fastify runs channel transport shutdown hooks before process exit.
     await stopAutomaticProjectImports();
     stopDiscoveryWatch();

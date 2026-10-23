@@ -1,9 +1,11 @@
+import {launchTrackedSubscription} from './subscription-launcher.js';
 import {findSession,readSession} from '../memory/import/local-agents.js';
 /** Explicit owner-selected CLI sessions; never an agent tool or a channel provider. */
 import fs from 'node:fs/promises';
 import path from 'node:path';
 import os from 'node:os';
-import {spawn} from 'node:child_process';
+import {dataPath} from '../config/data-root.js';
+import {SubscriptionProcesses} from './subscription-processes.js';
 import {minimalChildEnv,safeChildCwd} from '../tools/exec-policy.js';
 export const subscriptionModel=(value:unknown):value is string=>typeof value==='string'&&/^subscription:(claude|codex)(?::[a-f0-9]{32})?(?:\/[a-z0-9][a-z0-9.-]{0,40})?$/.test(value);
 /** The coding app's own model after the slash (subscription:claude/opus, subscription:codex/gpt-6.1-sol), or undefined for its default (CORE-PICKER-02). */
@@ -18,7 +20,23 @@ export async function subscriptionVariants(kind:'claude'|'codex',home=os.homedir
    .map((m:any)=>({id:m.slug,label:typeof m.display_name==='string'&&m.display_name.trim()?m.display_name.trim().slice(0,40):m.slug}));
  }catch{return [];}
 }
-export const subscriptionEnabled=()=>process.env.DPRO_SUBSCRIPTION_CHAT==='1'&&process.env.AGENT_PLAYER_ISOLATED!=='1';
+let processTracker:SubscriptionProcesses|undefined;
+let processesStopping=false;
+export function subscriptionProcesses():SubscriptionProcesses{
+ if(processesStopping)throw Error('cli_shutting_down');
+ if(!processTracker)processTracker=new SubscriptionProcesses(dataPath('subscription-processes'),{pythonPath:process.platform==='darwin'?'/usr/bin/python3':undefined});
+ return processTracker;
+}
+export async function recoverSubscriptionProcesses():Promise<void>{
+ try{await fs.access(dataPath('subscription-processes'));}catch{if(!subscriptionEnabled())return;}
+ const result=await subscriptionProcesses().sweepOrphans();
+ if(result.skipped)console.warn('[Subscription] Some saved process records could not be safely recovered.');
+}
+export async function stopSubscriptionProcesses():Promise<void>{
+ processesStopping=true;
+ if(processTracker){const result=await processTracker.shutdown();if(result.skipped)console.warn('[Subscription] Some process records need later recovery.');}
+}
+export const subscriptionEnabled=()=>process.env.DPRO_SUBSCRIPTION_CHAT==='1'&&process.env.AGENT_PLAYER_ISOLATED!=='1'&&!processesStopping;
 /** Where the CLIs are installed. An app opened from the Dock gets a short PATH, so the usual install folders are searched too (CORE-PICKER-01): Homebrew, npm under fnm/nvm/volta. */
 export async function subscriptionSearchDirs(home=os.homedir(),pathEnv=process.env.PATH??''):Promise<string[]>{
  const versions=async(dir:string,tail:string[])=>{try{return (await fs.readdir(dir)).sort((a,b)=>b.localeCompare(a,undefined,{numeric:true})).map(v=>path.join(dir,v,...tail));}catch{return [];}};
@@ -58,16 +76,23 @@ export async function runSubscription(model:string,folder:string,prompt:string,s
  const kind=model.startsWith('subscription:claude')?'claude':'codex',bin=await subscriptionBinary(kind);
  let nativeId:string|undefined;const opaque=model.split('/')[0].split(':')[2];
  if(opaque){const ref=await findSession(opaque);if(!ref||ref.source!==(kind==='claude'?'claude-code':'codex'))throw Error('session_missing');const session=await readSession(ref);if(!session.cwd||await fs.realpath(session.cwd)!==cwd)throw Error('session_folder_mismatch');nativeId=path.basename(ref.file).match(/([a-f0-9]{8}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{12})\.jsonl$/)?.[1];if(!nativeId)throw Error('session_missing');}if(!bin)throw Error('cli_missing');if(signal.aborted)throw Error('cancelled');
+ if(typeof prompt!=='string'||Buffer.byteLength(prompt,'utf8')>200000)throw Error('cli_input_invalid');
+ const args=subscriptionArgs(kind,nativeId,subscriptionVariant(model));
+ const env=minimalChildEnv({NO_COLOR:'1',TERM:'dumb'});env.PATH=[path.dirname(bin),env.PATH].filter(Boolean).join(path.delimiter);
+ const launched=await launchTrackedSubscription(subscriptionProcesses(),bin,args,{cwd,env}),child=launched.child;
  return new Promise((resolve,reject)=>{
-  const args=subscriptionArgs(kind,nativeId,subscriptionVariant(model));
-  // The CLI's own folder goes first on PATH: an npm-installed CLI starts with `env node`, and that node sits next to it.
-  const env=minimalChildEnv({NO_COLOR:'1',TERM:'dumb'});env.PATH=[path.dirname(bin),env.PATH].filter(Boolean).join(path.delimiter);
-  const child=spawn(bin,args,{cwd,env,stdio:['pipe','pipe','pipe'],detached:process.platform!=='win32',windowsHide:true});
-  let output='',bytes=0,failed=false,hardStop:ReturnType<typeof setTimeout>|undefined;const kill=(signal:NodeJS.Signals)=>{try{if(child.pid&&process.platform!=='win32')process.kill(-child.pid,signal);else child.kill(signal);}catch{}};const stop=()=>{if(failed)return;failed=true;kill('SIGTERM');hardStop=setTimeout(()=>kill('SIGKILL'),1500);hardStop.unref();};
+  let output='',bytes=0,failed=false;
+  const stop=()=>{if(failed)return;failed=true;if(child.connected)child.disconnect();else child.kill('SIGTERM');};
   const timer=setTimeout(stop,240000);signal.addEventListener('abort',stop,{once:true});
-  child.stdout.on('data',chunk=>{bytes+=chunk.length;if(bytes>2*1024*1024)stop();else output+=chunk.toString();});child.stderr.resume();child.stdin.on('error',()=>{});
-  child.on('error',()=>{clearTimeout(timer);clearTimeout(hardStop);signal.removeEventListener('abort',stop);reject(Error('cli_unavailable'));});
-  child.on('close',code=>{clearTimeout(timer);clearTimeout(hardStop);signal.removeEventListener('abort',stop);if(failed){reject(Error(signal.aborted?'cancelled':'cli_failed'));return;}if(code!==0){try{subscriptionAnswer(kind,output);}catch(error){if(error instanceof Error&&error.message==='subscription_org_blocked'){reject(error);return;}}reject(Error('cli_failed'));return;}try{const answer=subscriptionAnswer(kind,output).trim();if(!answer)throw Error();resolve(answer);}catch{reject(Error('cli_failed'));}});
-  child.stdin.end(prompt);
+  const cleanup=()=>{clearTimeout(timer);signal.removeEventListener('abort',stop);};
+  child.stdout!.on('data',chunk=>{bytes+=chunk.length;if(bytes>2*1024*1024)stop();else output+=chunk.toString();});child.stderr!.resume();
+  child.on('error',()=>{cleanup();reject(Error('cli_unavailable'));});
+  void launched.completion.then(code=>{
+   cleanup();if(failed){reject(Error(signal.aborted?'cancelled':'cli_failed'));return;}
+   if(code!==0){try{subscriptionAnswer(kind,output);}catch(error){if(error instanceof Error&&error.message==='subscription_org_blocked'){reject(error);return;}}reject(Error('cli_failed'));return;}
+   try{const answer=subscriptionAnswer(kind,output).trim();if(!answer)throw Error();resolve(answer);}catch{reject(Error('cli_failed'));}
+  });
+  if(signal.aborted||processesStopping){stop();return;}
+  try{launched.start(prompt);}catch{stop();cleanup();reject(Error('cli_unavailable'));}
  });
 }
