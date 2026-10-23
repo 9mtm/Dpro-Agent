@@ -20,9 +20,9 @@ function capture(value:unknown){
  if(typeof v.expectedRevision!=='number'||!Number.isSafeInteger(v.expectedRevision)||v.expectedRevision<1||typeof v.targetManifestDigest!=='string'||v.targetManifestDigest.length!==64||!/^[a-f0-9]{64}$/.test(v.targetManifestDigest))fail();
  return {expectedRevision:v.expectedRevision,targetManifestDigest:v.targetManifestDigest};
 }
-function inspect(db:Database.Database,actor:Actor,value:unknown,nowOverride:number|undefined,includeAffected:boolean){
+function inspect(db:Database.Database,actor:Actor,value:unknown,nowOverride:number|undefined,includeAffected:boolean,callerTransaction=false){
  try{
-  if(dbDriver()!=='sqlite'||getDatabase().getDb()!==db||db.inTransaction)fail();
+  if(dbDriver()!=='sqlite'||getDatabase().getDb()!==db||db.inTransaction!==callerTransaction)fail();
   const request=capture(value);
   if(!actor||actor.kind!=='user'||actor.role!=='owner'||actor.agentId!==undefined||actor.channel!==undefined||typeof actor.userId!=='string'||!actor.userId||actor.userId.length>128||/[\x00-\x20\x7f]/.test(actor.userId)||isSystemAccount(actor.userId))fail();
   const ownerId=actor.userId;
@@ -57,3 +57,6 @@ function inspect(db:Database.Database,actor:Actor,value:unknown,nowOverride:numb
 export function inspectPaperExecutionUpgradeCompatibility(db:Database.Database,actor:Actor,value:unknown,nowOverride?:number){return inspect(db,actor,value,nowOverride,false);}
 /** Read-only preservation fingerprint, never an apply token or execution grant. Expired pending work stays pending. */
 export function readPaperExecutionUpgradeAffectedSet(db:Database.Database,actor:Actor,value:unknown,nowOverride?:number){return inspect(db,actor,value,nowOverride,true);}
+
+/** Internal same-snapshot composition only. Caller owns the transaction; this grants nothing. */
+export function readPaperExecutionUpgradeAffectedSetInTransaction(db:Database.Database,actor:Actor,value:unknown,now:number){return inspect(db,actor,value,now,true,true);}
