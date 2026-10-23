@@ -119,3 +119,24 @@ test('canonical due derivation strictly bounds identity/hash/sequence and claims
 test('canonical claim refuses any arbitrary persisted key while original raw journal API retains its trusted behavior',()=>{
  const f=provision(),consentId=randomUUID(),raw=journal.claimPaperDispatchAttempt(db,f.ownerId,claim(f,'raw'),now);assert.equal(raw.ok,true);assert.equal(journal.finishPaperDispatchAttempt(db,f.ownerId,finish(f,raw,'failed','raw'),now).ok,true);const canonical=journal.derivePaperRuntimeDueAttemptKey(consentId,f.input.definitionId,f.result.definitionDigest,2);assert.equal(journal.claimCanonicalPaperDispatchAttempt(db,f.ownerId,claim(f,canonical),consentId,now+1000).ok,false);assert.equal(read(f,now+1000).attemptCount,1);assert.equal(journal.claimPaperDispatchAttempt(db,f.ownerId,claim(f,'raw-next'),now+1000).ok,true);
 });
+
+
+test('migration preservation prefix remains fixed across later valid attempts and refuses nonterminal or altered original history',async()=>{
+ const f=provision(),prefix=(count,at=now)=>db.transaction(()=>journal.readPaperDispatchPreservationPrefixInTransaction(db,f.ownerId,f.input.definitionId,count,at)).deferred();
+ assert.throws(()=>journal.readPaperDispatchPreservationPrefixInTransaction(db,f.ownerId,f.input.definitionId,0,now));
+ const empty=prefix(0);assert.equal(empty.count,0);assert.equal(empty.lastClaimAt,null);
+ const first=journal.claimPaperDispatchAttempt(db,f.ownerId,claim(f,'preserved-first'),now);assert.equal(first.ok,true);assert.throws(()=>prefix(1));
+ assert.equal(journal.finishPaperDispatchAttempt(db,f.ownerId,finish(f,first,'failed','preserved-first'),now+1).ok,true);
+ const original=prefix(1,now+1);assert.equal(original.count,1);assert.equal(original.lastClaimAt,now);assert.deepEqual(prefix(0,now+1),empty);
+ const second=journal.claimPaperDispatchAttempt(db,f.ownerId,claim(f,'valid-suffix'),now+1000);assert.equal(second.ok,true);assert.deepEqual(prefix(1,now+1000),original);assert.throws(()=>prefix(2,now+1000));
+ assert.equal(journal.finishPaperDispatchAttempt(db,f.ownerId,finish(f,second,'completed','valid-suffix'),now+1001).ok,true);assert.deepEqual(prefix(1,now+1001),original);assert.equal(prefix(2,now+1001).count,2);assert.throws(()=>prefix(3,now+1001));
+ const {createHash}=await import('node:crypto');
+ assert.throws(()=>db.transaction(()=>{
+  const a=db.prepare('SELECT * FROM paper_dispatch_attempts WHERE id=?').get(first.attemptId);a.status='completed';
+  const hash=createHash('sha256').update(JSON.stringify(['paper-dispatch-attempt-event-v1',a.id,a.definition_id,a.owner_id,a.attempt_key,a.sequence,a.lease_ms,a.request_json,a.request_hash,a.fence_token,a.claimed_at,a.lease_until,a.status,a.finished_at])).digest('hex');
+  db.prepare('UPDATE paper_dispatch_attempts SET status=?,event_hash=? WHERE id=?').run(a.status,hash,a.id);
+  const changed=journal.readPaperDispatchPreservationPrefixInTransaction(db,f.ownerId,f.input.definitionId,1,now+1001);assert.notEqual(changed.fingerprint,original.fingerprint);assert.equal(changed.count,original.count);assert.equal(changed.lastClaimAt,original.lastClaimAt);
+  throw Error('owned prefix fixture rollback');
+ }).immediate(),/owned prefix fixture rollback/);
+ assert.deepEqual(prefix(1,now+1001),original);
+});

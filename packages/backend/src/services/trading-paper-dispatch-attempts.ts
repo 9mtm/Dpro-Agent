@@ -199,3 +199,12 @@ export function fingerprintPaperDispatchHistoryInTransaction(db:Database.Databas
 export function assertPaperDispatchStorageInTransaction(db:Database.Database,ownerId:string){
  if(dbDriver()!=='sqlite'||getDatabase().getDb()!==db||!db.inTransaction)fail();schema(db);owner(db,ownerId);
 }
+
+/** Immutable terminal attempt prefix, validated against the entire current journal. No raw event/fence escapes. */
+export function readPaperDispatchPreservationPrefixInTransaction(db:Database.Database,ownerId:string,definitionId:string,count:number,now:number){
+ if(dbDriver()!=='sqlite'||getDatabase().getDb()!==db||!db.inTransaction||!uint(now,1)||!uint(count,0,1000))fail();
+ const j=load(db,ownerId,definitionId,now);if(count>j.attempts.length)fail();const prefix=j.attempts.slice(0,count);
+ if(prefix.some(a=>a.status!=='completed'&&a.status!=='failed'))fail();
+ const fingerprint=sha(JSON.stringify(['paper-dispatch-terminal-prefix-v1',j.row.id,j.row.owner_id,j.row.digest,j.row.canonical_json,j.row.created_at,prefix]));
+ return Object.freeze({count,lastClaimAt:prefix.at(-1)?.claimed_at??null,fingerprint});
+}

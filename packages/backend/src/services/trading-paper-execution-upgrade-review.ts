@@ -1,4 +1,5 @@
 /** Internal execution-upgrade review and proof only. No apply, consumption, installation writes or runtime connection. */
+import {assertNoPaperExecutionOverlay} from './trading-paper-execution-overlay-schema.js';
 import Database from 'better-sqlite3';
 import {createHash,randomUUID} from 'node:crypto';
 import {getDatabase} from '../db/index.js';
@@ -7,7 +8,8 @@ import {isSystemAccount} from '../auth/default-accounts.js';
 import type {Actor} from '../repositories/actor.js';
 import {sql} from '../repositories/sql-steps.js';
 import {issueOperationChallenge,completeOperationChallenge,type OperationContext,type PaperExecutionUpgradeOperation} from '../auth/verification/operation-proof.js';
-import {readTrustedPaperRuntimeConsentInTransaction} from './trading-paper-runtime-consent.js';
+import {readPaperDispatchPreservationPrefixInTransaction} from './trading-paper-dispatch-attempts.js';
+import {readPaperRuntimePreservationInTransaction,readTrustedPaperRuntimeConsentInTransaction} from './trading-paper-runtime-consent.js';
 import {readPaperExecutionUpgradeAffectedSetInTransaction} from './trading-paper-execution-upgrade.js';
 const sha=(value:string)=>createHash('sha256').update(value).digest('hex');
 const uint=(v:unknown,min=0):v is number=>typeof v==='number'&&Number.isSafeInteger(v)&&v>=min;
@@ -49,17 +51,19 @@ function active(db:Database.Database,c:OperationContext){
 function target(db:Database.Database,c:OperationContext,actor:Actor,request:ReturnType<typeof input>,now:number){
  const affected=readPaperExecutionUpgradeAffectedSetInTransaction(db,{kind:'user',role:'owner',userId:c.userId},request,now);
  if(!affected.ok||!('affectedSetDigest' in affected)||affected.blocked)fail();
- const retained=Object.freeze(affected.consents.map(saved=>{const consent=readTrustedPaperRuntimeConsentInTransaction(db,saved.consentId,now),d=consent.definition;return Object.freeze({consentId:saved.consentId,botId:d.botId,currency:consent.currency,amountUnit:d.strategy.side==='buy'?'account_minor_units':'whole_asset_units',strategy:Object.freeze({...d.strategy}),status:saved.status,attemptsConsumed:saved.attemptCount,maxAttempts:d.limits.maxAttempts,cadenceMs:d.limits.cadenceMs,expiresAt:d.limits.expiresAt});}));
+ const retained=Object.freeze(affected.consents.map(saved=>{const consent=readTrustedPaperRuntimeConsentInTransaction(db,saved.consentId,now),d=consent.definition;return Object.freeze({preservationPrefix:readPaperDispatchPreservationPrefixInTransaction(db,c.userId,saved.definitionId,saved.attemptCount,now),runtimePreservation:readPaperRuntimePreservationInTransaction(db,c.userId,saved.consentId,now),consentId:saved.consentId,botId:d.botId,currency:consent.currency,amountUnit:d.strategy.side==='buy'?'account_minor_units':'whole_asset_units',strategy:Object.freeze({...d.strategy}),status:saved.status,attemptsConsumed:saved.attemptCount,maxAttempts:d.limits.maxAttempts,cadenceMs:d.limits.cadenceMs,expiresAt:d.limits.expiresAt});}));
  return Object.freeze({version:1,ownerId:c.userId,request,retained,addedCapabilities:Object.freeze(['paper.runtime.execute']),affected,canApply:false,runtimeConnected:false,executionGranted:false});
 }
 type Review={id:string;owner_id:string;session_hash:string;token_version:number;factor_version:number;policy_version:number;definition_json:string;definition_hash:string;review_hash:string;created_at:number;expires_at:number;status:string};
 const reviewHash=(r:Review)=>sha(JSON.stringify(['paper-execution-upgrade-review-v1',r.id,r.owner_id,r.session_hash,r.token_version,r.factor_version,r.policy_version,r.definition_hash,r.created_at,r.expires_at]));
 // A bounded 1000-consent set is permitted; raw attempts, proof tokens, sessions and fences are never embedded.
 const maxDefinitionBytes=1048576;
-function row(db:Database.Database,c:OperationContext,actor:Actor,id:string,now:number){
- if(!uuid(id))fail();const version=active(db,c),r=db.prepare('SELECT * FROM main.paper_execution_upgrade_reviews WHERE id=? AND owner_id=?').get(id,c.userId) as Review|undefined;
- if(!r||r.status!=='staged'||r.session_hash!==c.sessionHash||r.token_version!==c.tokenVersion||r.factor_version!==c.factorVersion||r.policy_version!==version||!uint(r.created_at,1)||r.created_at>now||!uint(r.expires_at,1)||r.expires_at-r.created_at!==300000||r.expires_at<=now||typeof r.definition_json!=='string'||Buffer.byteLength(r.definition_json,'utf8')>maxDefinitionBytes||sha(r.definition_json)!==r.definition_hash||reviewHash(r)!==r.review_hash)fail();
+function row(db:Database.Database,c:OperationContext,actor:Actor,id:string,now:number,historical=false){
+ if(!uuid(id))fail();schema(db);if(!historical)assertNoPaperExecutionOverlay(db,c.userId);const version=historical?undefined:active(db,c),r=db.prepare('SELECT * FROM main.paper_execution_upgrade_reviews WHERE id=? AND owner_id=?').get(id,c.userId) as Review|undefined;
+ if(!r||r.status!=='staged'||r.session_hash!==c.sessionHash||r.token_version!==c.tokenVersion||r.factor_version!==c.factorVersion||(!historical&&r.policy_version!==version)||!uint(r.created_at,1)||r.created_at>now||!uint(r.expires_at,1)||r.expires_at-r.created_at!==300000||(!historical&&r.expires_at<=now)||typeof r.definition_json!=='string'||Buffer.byteLength(r.definition_json,'utf8')>maxDefinitionBytes||sha(r.definition_json)!==r.definition_hash||reviewHash(r)!==r.review_hash)fail();
  const d=JSON.parse(r.definition_json);if(!plain(d,['version','ownerId','request','retained','addedCapabilities','affected','canApply','runtimeConnected','executionGranted'])||d.version!==1||d.ownerId!==c.userId||JSON.stringify(d)!==r.definition_json)fail();
+ if(!uint(r.policy_version,1))fail();
+ if(historical)return {row:r,definition:d as unknown as ReturnType<typeof target>};
  const current=target(db,c,actor,input(d.request),now);if(JSON.stringify(current)!==r.definition_json)fail();return {row:r,definition:current};
 }
 function publicReview(r:ReturnType<typeof row>){return Object.freeze({ok:true as const,id:r.row.id,createdAt:r.row.created_at,expiresAt:r.row.expires_at,addedCapabilities:r.definition.addedCapabilities,retained:r.definition.retained,affected:r.definition.affected,canApply:false as const,runtimeConnected:false as const,executionGranted:false as const,startsWorker:false as const});}
@@ -68,7 +72,7 @@ const operation=(r:Review):PaperExecutionUpgradeOperation=>({kind:'paper_executi
 export function initializePaperExecutionUpgradeReviews(db:Database.Database){identity(db);db.transaction(()=>{schema(db,false);db.exec(reviewSQL);schema(db);}).immediate();}
 export async function stagePaperExecutionUpgradeReview(db:Database.Database,context:OperationContext,actor:Actor,value:unknown,now=Date.now()){
  try{identity(db);const c=capture(context,actor,now),request=input(value),id=randomUUID();return await sql().tx(function*(){
-  const version=active(db,c),definition=JSON.stringify(target(db,c,actor,request,now));if(Buffer.byteLength(definition,'utf8')>maxDefinitionBytes)fail();
+  assertNoPaperExecutionOverlay(db,c.userId);const version=active(db,c),definition=JSON.stringify(target(db,c,actor,request,now));if(Buffer.byteLength(definition,'utf8')>maxDefinitionBytes)fail();
   const count=db.prepare('SELECT count(*) n FROM main.paper_execution_upgrade_reviews WHERE owner_id=? AND expires_at>?').get(c.userId,now) as {n:number};if(count.n>=8)fail();
   const r:Review={id,owner_id:c.userId,session_hash:c.sessionHash,token_version:c.tokenVersion,factor_version:c.factorVersion,policy_version:version,definition_json:definition,definition_hash:sha(definition),review_hash:'',created_at:now,expires_at:now+300000,status:'staged'};r.review_hash=reviewHash(r);
   db.prepare('INSERT INTO main.paper_execution_upgrade_reviews VALUES(?,?,?,?,?,?,?,?,?,?,?,?)').run(r.id,r.owner_id,r.session_hash,r.token_version,r.factor_version,r.policy_version,r.definition_json,r.definition_hash,r.review_hash,r.created_at,r.expires_at,r.status);return publicReview(row(db,c,actor,id,now));
@@ -83,4 +87,11 @@ export async function issuePaperExecutionUpgradeProof(db:Database.Database,c:Ope
 }
 export async function completePaperExecutionUpgradeProof(db:Database.Database,c:OperationContext,a:Actor,id:string,challenge:unknown,code:unknown,now=Date.now()){
  try{const p=await proof(db,c,a,id,now),result=await completeOperationChallenge(challenge,p.context,p.operation,code,now);await proof(db,p.context,a,id,now);return result;}catch{return null;}
+}
+
+/** Trusted composition only: historical mode verifies immutable review bytes/binding, never current execution authority. */
+export function readPaperExecutionUpgradeReviewInTransaction(db:Database.Database,context:OperationContext,actor:Actor,id:string,now:number,historical=false){
+ if(dbDriver()!=='sqlite'||getDatabase().getDb()!==db||!db.inTransaction||typeof historical!=='boolean')fail();
+ const c=capture(context,actor,now),saved=row(db,c,actor,id,now,historical);
+ return {row:Object.freeze({...saved.row}),definition:saved.definition,context:c,operation:operation(saved.row)};
 }

@@ -99,7 +99,10 @@ function history(db:Database.Database,ownerId:string,id:string,now:number,expect
  const journal=readTrustedPaperDispatchDefinitionInTransaction(db,ownerId,d.definitionId,now);if(journal.createdAt!==e.created_at||journal.definitionDigest!==d.dispatchDigest||JSON.stringify(journal.definition)!==JSON.stringify(d.dispatch))fail();
  const revocation=db.prepare('SELECT * FROM main.paper_runtime_revocations WHERE consent_id=?').get(id) as Record<string,unknown>|undefined;
  if(consent.status==='revoked'?(!revocation||!uuid(revocation.id)||revocation.owner_id!==ownerId||!uint(revocation.created_at,1)||revocation.created_at<Number(e.created_at)||revocation.created_at>now||revokeHash(revocation)!==revocation.event_hash):revocation!==undefined)fail();
- return {saved,consent,revocation,journal,provenanceFingerprint:sha(JSON.stringify(['paper-runtime-preservation-v1',r,consent,e,proof,revocation??null]))};
+ const {status:originalStatus,...immutableConsent}=consent;
+ const immutableProvenanceFingerprint=sha(JSON.stringify(['paper-runtime-immutable-provenance-v1',r,immutableConsent,e,proof]));
+ const revocationFingerprint=revocation?sha(JSON.stringify(['paper-runtime-original-revocation-v1',revocation])):null;
+ return {saved,consent,revocation,journal,immutableProvenanceFingerprint,revocationFingerprint,provenanceFingerprint:sha(JSON.stringify(['paper-runtime-preservation-v1',r,consent,e,proof,revocation??null]))};
 }
 function publicReview(s:ReturnType<typeof savedReview>){const d=s.definition;return Object.freeze({ok:true as const,id:s.row.id,consentId:d.consentId,botId:d.dispatch.botId,accountId:d.dispatch.accountId,expiresAt:s.row.expires_at,runtimePrincipal:principal,currency:d.currency,amountUnit:d.dispatch.strategy.side==='buy'?'account_minor_units' as const:'whole_asset_units' as const,engineExecution:false as const,providerAccess:false as const,modelCosts:false as const,strategy:Object.freeze({...d.dispatch.strategy}),limits:Object.freeze({...d.dispatch.limits}),runtimeConnected:false as const,startsWorker:false as const,connectsBroker:false as const});}
 function publicConsent(h:ReturnType<typeof history>,replayed?:boolean){const d=h.saved.definition;return Object.freeze({ok:true as const,consentId:d.consentId,reviewId:h.saved.row.id,botId:d.dispatch.botId,definitionId:d.definitionId,definitionDigest:d.dispatchDigest,status:h.consent.status as 'granted'|'revoked',createdAt:h.consent.created_at as number,revokedAt:h.revocation?.created_at as number|undefined??null,runtimePrincipal:principal,currency:d.currency,amountUnit:d.dispatch.strategy.side==='buy'?'account_minor_units' as const:'whole_asset_units' as const,engineExecution:false as const,providerAccess:false as const,modelCosts:false as const,strategy:Object.freeze({...d.dispatch.strategy}),limits:Object.freeze({...d.dispatch.limits}),attemptCount:h.journal.attemptCount,runtimeConnected:false as const,...(replayed===undefined?{}:{replayed})});}
@@ -230,4 +233,10 @@ export function fingerprintPaperRuntimeHistoryInTransaction(db:Database.Database
  if(dbDriver()!=='sqlite'||getDatabase().getDb()!==db||!db.inTransaction||!uint(now,1))fail();
  schema(db);human(db,{kind:'user',role:'owner',userId:ownerId},now);const h=history(db,ownerId,consentId,now);
  return sha(JSON.stringify(['paper-runtime-full-preservation-v1',h.provenanceFingerprint,fingerprintPaperDispatchHistoryInTransaction(db,ownerId,h.saved.definition.definitionId,now)]));
+}
+
+/** Original proved consent provenance independent of later attempt suffixes and later legitimate revocation. */
+export function readPaperRuntimePreservationInTransaction(db:Database.Database,ownerId:string,consentId:string,now:number){
+ if(dbDriver()!=='sqlite'||getDatabase().getDb()!==db||!db.inTransaction||!uint(now,1))fail();schema(db);human(db,{kind:'user',role:'owner',userId:ownerId},now);
+ const h=history(db,ownerId,consentId,now);return Object.freeze({immutableProvenanceFingerprint:h.immutableProvenanceFingerprint,revocationFingerprint:h.revocationFingerprint});
 }
