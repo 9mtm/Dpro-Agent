@@ -112,12 +112,31 @@ export function readTrustedPaperDispatchDefinitionInTransaction(db:Database.Data
  const journal=load(db,ownerId,definitionId,now);
  return Object.freeze({...projection(journal,now),definition:journal.definition});
 }
+/** Shared canonical bookkeeping key only; identifiers and hashes never supply dispatch authority. */
+export function derivePaperRuntimeDueAttemptKey(consentId:string,definitionId:string,definitionDigest:string,sequence:number){
+ if(!uuid(consentId)||!uuid(definitionId)||!digest(definitionDigest)||!uint(sequence,1,1000))fail();
+ return 'due:'+sha(JSON.stringify(['paper-runtime-due-attempt-v1',consentId,definitionId,definitionDigest,sequence]));
+}
 /** Attempt claims consume finite budget even when they later fail. No work is dispatched here. */
 export function claimPaperDispatchAttempt(db:Database.Database,ownerId:string,input:unknown,nowOverride?:number){
+ return claimAttempt(db,ownerId,input,nowOverride);
+}
+/** Exact canonical history and requested sequence are reread under the same actual claim write lock. */
+export function claimCanonicalPaperDispatchAttempt(db:Database.Database,ownerId:string,input:unknown,consentId:string,nowOverride?:number){
+ if(!uuid(consentId))return deny();
+ return claimAttempt(db,ownerId,input,nowOverride,consentId);
+}
+function claimAttempt(db:Database.Database,ownerId:string,input:unknown,nowOverride?:number,canonicalConsentId?:string){
+
  try{
   identity(db);const request=claimInput(input);
   return db.transaction(()=>{
    const now=time(nowOverride),journal=load(db,ownerId,request.definitionId,now);if(journal.row.digest!==request.definitionDigest)fail();
+   if(canonicalConsentId){
+    for(const a of journal.attempts)if(a.attempt_key!==derivePaperRuntimeDueAttemptKey(canonicalConsentId,request.definitionId,request.definitionDigest,a.sequence))fail();
+    const existing=journal.attempts.find(a=>a.attempt_key===request.attemptKey);
+    if(request.attemptKey!==derivePaperRuntimeDueAttemptKey(canonicalConsentId,request.definitionId,request.definitionDigest,existing?.sequence??journal.row.attempt_count+1))fail();
+   }
    const reused=db.prepare('SELECT * FROM main.paper_dispatch_attempts WHERE owner_id=? AND attempt_key=?').get(ownerId,request.attemptKey) as Attempt|undefined;
    if(reused){
     if(reused.definition_id!==request.definitionId||reused.request_json!==claimJSON(ownerId,request))fail();

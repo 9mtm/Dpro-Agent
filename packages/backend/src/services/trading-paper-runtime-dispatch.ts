@@ -4,7 +4,7 @@ import {createHash} from 'node:crypto';
 import {getDatabase} from '../db/index.js';
 import {dbDriver} from '../db/pg/config.js';
 import {readTrustedPaperRuntimeConsentInTransaction,assertPaperRuntimeEligibilityInTransaction} from './trading-paper-runtime-consent.js';
-import {claimPaperDispatchAttempt,finishPaperDispatchAttemptInTransaction} from './trading-paper-dispatch-attempts.js';
+import {derivePaperRuntimeDueAttemptKey,claimCanonicalPaperDispatchAttempt,claimPaperDispatchAttempt,finishPaperDispatchAttemptInTransaction} from './trading-paper-dispatch-attempts.js';
 import {reservePaperOrder} from './trading-paper-ledger.js';
 import {reservePaperSell} from './trading-paper-sells.js';
 import {runPaperBotTickInTransaction,isPaperBotTickRefusal} from './trading-paper-bots.js';
@@ -58,28 +58,34 @@ function existing(db:Database.Database,s:Snapshot,a:Attempt,now:number){
  * Exact consent/key only. Claims persist before effects; crashes consume budget and leave pending/unknown.
  * The two write transactions intentionally recheck authority after the durable claim. Unknown work is never retried.
  */
-export function dispatchPaperRuntimeAttempt(db:Database.Database,value:unknown,nowOverride?:number){
+export function dispatchPaperRuntimeAttempt(db:Database.Database,value:unknown,nowOverride?:number){return dispatchAttempt(db,value,nowOverride,false);}
+/** Canonical due-cycle admission; hashes still supply no consent or execution authority. */
+export function dispatchCanonicalPaperRuntimeAttempt(db:Database.Database,value:unknown,nowOverride?:number){return dispatchAttempt(db,value,nowOverride,true);}
+function canonicalHistory(s:Snapshot){for(const a of s.journal.attempts)if(a.attemptKey!==derivePaperRuntimeDueAttemptKey(s.consentId,s.definitionId,s.definitionDigest,a.sequence))fail();}
+function dispatchAttempt(db:Database.Database,value:unknown,nowOverride:number|undefined,canonical:boolean){
  try{
   if(dbDriver()!=='sqlite'||getDatabase().getDb()!==db||db.inTransaction)fail();const r=request(value);
   const initial=db.transaction(()=>{
    const now=clock(nowOverride),s=readTrustedPaperRuntimeConsentInTransaction(db,r.consentId,now),a=s.journal.attempts.find(a=>a.attemptKey===r.attemptKey);
    if(s.runtimePrincipal!=='bundled.paper.deterministic.v1')fail();
+   if(canonical){canonicalHistory(s);if(r.attemptKey!==derivePaperRuntimeDueAttemptKey(s.consentId,s.definitionId,s.definitionDigest,a?.sequence??s.journal.attemptCount+1))fail();}
    if(a&&a.status!=='pending')return {snapshot:s,terminal:existing(db,s,a,now)};
    if(!a)assertPaperRuntimeEligibilityInTransaction(db,r.consentId,now);
    return {snapshot:s,terminal:null};
   }).deferred();
   if(initial.terminal)return initial.terminal;
-  const s=initial.snapshot,claim=claimPaperDispatchAttempt(db,s.ownerId,{definitionId:s.definitionId,definitionDigest:s.definitionDigest,attemptKey:r.attemptKey,leaseMs:60000},nowOverride);
+  const s=initial.snapshot,claimInput={definitionId:s.definitionId,definitionDigest:s.definitionDigest,attemptKey:r.attemptKey,leaseMs:60000};
+  const claim=canonical?claimCanonicalPaperDispatchAttempt(db,s.ownerId,claimInput,s.consentId,nowOverride):claimPaperDispatchAttempt(db,s.ownerId,claimInput,nowOverride);
   if(!claim.ok)return deny();
   if(claim.replayed){
    return db.transaction(()=>{
-    const now=clock(nowOverride),current=readTrustedPaperRuntimeConsentInTransaction(db,r.consentId,now),a=current.journal.attempts.find(a=>a.attemptId===claim.attemptId);if(!a)fail();return existing(db,current,a,now);
+    const now=clock(nowOverride),current=readTrustedPaperRuntimeConsentInTransaction(db,r.consentId,now),a=current.journal.attempts.find(a=>a.attemptId===claim.attemptId);if(!a)fail();if(canonical)canonicalHistory(current);return existing(db,current,a,now);
    }).deferred();
   }
   if(!('fenceToken' in claim)||typeof claim.fenceToken!=='string')fail();
   return db.transaction(()=>{
    const now=clock(nowOverride),current=readTrustedPaperRuntimeConsentInTransaction(db,r.consentId,now),a=current.journal.attempts.find(a=>a.attemptId===claim.attemptId);
-   if(!a||a.status!=='pending'||now>=a.leaseUntil)fail();
+   if(!a||a.status!=='pending'||now>=a.leaseUntil)fail();if(canonical)canonicalHistory(current);
    // Missing/colliding original effects are ambiguous; do not turn them into failed/no-effect acknowledgments.
    noEffects(db,current,a);
    try{
