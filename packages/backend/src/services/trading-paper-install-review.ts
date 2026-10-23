@@ -8,7 +8,7 @@ import type {Actor} from '../repositories/actor.js';
 import {sql} from '../repositories/sql-steps.js';
 import {issueOperationChallenge,completeOperationChallenge,consumeOperationReceiptStep,paperAppInstallOperationHash,type PaperAppInstallOperation,type OperationContext} from '../auth/verification/operation-proof.js';
 import {PAPER_BUNDLE_SCHEMA} from './trading-paper-bundle-schema.js';
-import {BUNDLED_PAPER_INSTALLATION,reviewPaperInstallationInTransaction,provisionTrustedPaperInstallationInTransaction} from './trading-paper-installation.js';
+import {BUNDLED_PAPER_INSTALLATION,readPaperInstallation,reviewPaperInstallationInTransaction,provisionTrustedPaperInstallationInTransaction} from './trading-paper-installation.js';
 const sha=(s:string)=>createHash('sha256').update(s).digest('hex');
 function fail():never{throw Error('paper installation review unavailable');}
 const deny=()=>({ok:false as const,reason:'unavailable' as const});
@@ -21,7 +21,7 @@ type ObjectRow={type:string;name:string;tbl_name:string;sql:string|null};
 const objects=(db:Database.Database,temp=false)=>db.prepare(`SELECT type,name,tbl_name,sql FROM ${temp?'sqlite_temp_master':'sqlite_master'} WHERE type IN ('table','index','view','trigger') ORDER BY type,name`).all() as ObjectRow[];
 const reference=new Database(':memory:');let expected:readonly ObjectRow[];try{reference.exec(reviewSQL);expected=Object.freeze(objects(reference).map(o=>Object.freeze({...o})));}finally{reference.close();}
 const names=new Set(expected.map(o=>o.name)),authNames=new Set(['users','verification_factors','verification_challenges','verification_receipts','approval_proof_policy']);
-function identity(db:Database.Database){if(dbDriver()!=='sqlite'||getDatabase().getDb()!==db||db.inTransaction)fail();}
+function identity(db:Database.Database,allowTransaction=false){if(dbDriver()!=='sqlite'||getDatabase().getDb()!==db||!allowTransaction&&db.inTransaction)fail();}
 function schema(db:Database.Database,complete=true){const related=(o:ObjectRow)=>names.has(o.name.toLowerCase())||names.has(o.tbl_name.toLowerCase());if(objects(db,true).some(o=>related(o)||authNames.has(o.name.toLowerCase())||authNames.has(o.tbl_name.toLowerCase())))fail();const found=objects(db).filter(related);for(const row of found){const wanted=expected.find(o=>o.name===row.name);if(!wanted||JSON.stringify(row)!==JSON.stringify(wanted))fail();}if(complete&&found.length!==expected.length)fail();}
 function capture(c:OperationContext,a:Actor,now:number):OperationContext{
  if(!c||!a||a.kind!=='user'||a.role!=='owner'||a.agentId!==undefined||a.channel!==undefined||a.userId!==c.userId||typeof c.userId!=='string'||!c.userId||c.userId.length>128||/[\x00-\x20\x7f]/.test(c.userId)||isSystemAccount(c.userId)||typeof c.sessionHash!=='string'||c.sessionHash.length!==64||!/^[a-f0-9]{64}$/.test(c.sessionHash)||!uint(c.tokenVersion,1)||!uint(c.factorVersion,1)||!uint(now,1)||now>Number.MAX_SAFE_INTEGER-300000)fail();return Object.freeze({userId:c.userId,sessionHash:c.sessionHash,tokenVersion:c.tokenVersion,factorVersion:c.factorVersion});
@@ -76,4 +76,33 @@ export async function applyPaperInstallReview(db:Database.Database,context:Opera
   const e={id:randomUUID(),review_id:r.id,owner_id:c.userId,session_hash:c.sessionHash,token_version:c.tokenVersion,factor_version:c.factorVersion,policy_version:version,definition_hash:r.definition_hash,review_hash:r.review_hash,receipt_hash:hash,operation_id:applied.operationId,result_json:JSON.stringify(applied.result),created_at:now};db.prepare('INSERT INTO main.paper_install_review_events VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?)').run(...eventFields.map(k=>e[k as keyof typeof e]),eventHash(e));
   if(db.prepare("UPDATE main.paper_install_reviews SET status='applied' WHERE id=? AND status='staged'").run(id).changes!==1)fail();if(active(db,c)!==version)fail();receiptAt(db,c,r,hash,now);const after=row(db,c,id,version,now,true);if(after.row.status!=='applied'||after.row.definition_json!==r.definition_json||after.row.review_hash!==r.review_hash)fail();const confirmed=provisionTrustedPaperInstallationInTransaction(db,c.userId,current.definition.request,now);if(!confirmed.replayed||confirmed.operationId!==applied.operationId||JSON.stringify(confirmed.result)!==JSON.stringify(applied.result))fail();return {ok:true as const,reviewId:id,operationId:applied.operationId,result:applied.result,replayed:false};
  },{immediate:true});}catch{return deny();}
+}
+
+/**
+ * Limited adapter access from current grants and historical committed owner consent. Read-only, including under caller lock.
+ * Normal login/token/factor rotation does not erase committed installation consent. Current owner and revocations still apply.
+ * Disabled archive reads are owner retention access, never an active app execution grant. Removed apps receive no app reads.
+ */
+export function readReviewedPaperInstallationAccess(db:Database.Database|null,userId:string,clock:()=>number=Date.now){
+ const project=(state:'demo_only'|'not_provisioned'|'incompatible'|'disabled'|'ready',readAccounts=false,readBots=false,manageBots=false)=>Object.freeze({state,readAccounts,readBots,manageBots,executeOrders:false as const});
+ if(!db)return project('demo_only');
+ try{identity(db,true);return db.transaction(()=>{
+  const now=clock();if(!uint(now,1)||typeof userId!=='string'||!userId||userId.length>128||/[\x00-\x20\x7f]/.test(userId)||isSystemAccount(userId))fail();
+  const live=db.prepare('SELECT role,status,email_verified FROM main.users WHERE id=?').get(userId) as Record<string,unknown>|undefined;if(live?.role!=='owner'||live.status!=='active'||live.email_verified!==1)fail();
+  schema(db,false);const present=db.prepare("SELECT 1 FROM main.sqlite_master WHERE name IN ('paper_installations','paper_install_grants','paper_install_operations','paper_schema_journal') COLLATE NOCASE LIMIT 1").get();if(!present)return project('not_provisioned');
+  schema(db);const installation=readPaperInstallation(db,userId,()=>now);if(!installation.ok)fail();if(installation.state==='not_provisioned')return project('not_provisioned');
+  const operations=db.prepare("SELECT * FROM main.paper_install_operations WHERE owner_id=? AND app_id='trading' LIMIT 4").all(userId) as Record<string,unknown>[];
+  const first=operations.find(o=>{if(typeof o.request_json!=='string'||Buffer.byteLength(o.request_json,'utf8')>4096)fail();return JSON.parse(o.request_json).action==='install';});if(!first||!uuid(first.id))fail();
+  const e=db.prepare('SELECT * FROM main.paper_install_review_events WHERE operation_id=?').get(first.id) as Record<string,unknown>|undefined;
+  if(!e||!uuid(e.id)||!uuid(e.review_id)||e.owner_id!==userId||!uint(e.created_at,1)||e.created_at>now||e.created_at!==first.created_at||e.result_json!==first.result_json||e.event_hash!==eventHash(e)||typeof e.receipt_hash!=='string'||e.receipt_hash.length!==64||!/^[a-f0-9]{64}$/.test(e.receipt_hash))fail();
+  const consent=capture({userId,sessionHash:e.session_hash as string,tokenVersion:e.token_version as number,factorVersion:e.factor_version as number},{kind:'user',role:'owner',userId},now);
+  if(!uint(e.policy_version,1))fail();const reviewed=row(db,consent,e.review_id,e.policy_version,now,true),r=reviewed.row;
+  if(r.status!=='applied'||e.session_hash!==r.session_hash||e.token_version!==r.token_version||e.factor_version!==r.factor_version||e.policy_version!==r.policy_version||e.definition_hash!==r.definition_hash||e.review_hash!==r.review_hash||e.created_at<r.created_at||e.created_at>=r.expires_at||reviewed.definition.request.action!=='install'||reviewed.definition.request.expectedRevision!==0||first.request_json!==JSON.stringify({ownerId:userId,...reviewed.definition.request}))fail();
+  receiptAt(db,consent,r,e.receipt_hash,e.created_at);
+  if(installation.state==='removed_retained')return project('not_provisioned');
+  const original=reviewed.definition.request.capabilities,read=original.includes('paper.account.read'),bots=original.includes('paper.bot.manage');
+  if(installation.state==='disabled')return project('disabled',read,bots,false);
+  if(installation.state!=='provisioned'||!read||!installation.capabilities?.includes('paper.account.read')||JSON.stringify(installation.capabilities)!==JSON.stringify(original))fail();
+  return project('ready',true,bots,bots);
+ }).deferred();}catch{return project('incompatible');}
 }

@@ -49,7 +49,7 @@ export async function tradingPaperBotRoutes(app:FastifyInstance,options:{ledger:
  app.get(base,{config:{access:'owner',rateLimit:managementLimit}},async(request,reply)=>{
   try{
    const owner=await human(request);if(Object.keys(request.query as object).length||request.body!==undefined)return reply.code(400).send(invalid);
-   const db=database();available(db,owner,false);const now=Date.now();
+   const db=database();return db.transaction(()=>{available(db,owner,false);const now=Date.now();
    // This validates bounded descriptors, not the entire tick journal or execution authority.
    const rows=db.prepare('SELECT b.*,a.currency,a.mode FROM paper_bots b JOIN paper_accounts a ON a.account_id=b.account_id WHERE b.owner_id=? AND a.owner_id=? ORDER BY b.bot_id LIMIT 101').all(owner,owner) as Array<Record<string,unknown>>;
    if(rows.some(row=>!['bot_id','account_id','policy_id'].every(key=>id(row[key]))||row.mode!=='paper'||typeof row.currency!=='string'||!/^[A-Z]{3}$/.test(row.currency)
@@ -58,6 +58,7 @@ export async function tradingPaperBotRoutes(app:FastifyInstance,options:{ledger:
      ||!['active','stopped','revoked'].includes(row.status as string)||Number(row.expires_at)<=Number(row.created_at)||Number(row.created_at)>now
      ||(row.successful_ticks===0?row.last_success_at!==null:!uint(row.last_success_at)||row.last_success_at<Number(row.created_at)||row.last_success_at>now)))throw Error('Unavailable');
    return {mode:'paper',running:false,bots:rows.slice(0,100).map(row=>({botId:row.bot_id,accountId:row.account_id,policyId:row.policy_id,policyRevision:row.policy_revision,appRevision:row.app_revision,currency:row.currency,expiresAt:row.expires_at,maxSuccessfulTicks:row.max_successful_ticks,cooldownMs:row.cooldown_ms,status:row.status==='active'&&Number(row.expires_at)<=now?'expired':row.status,successfulTicks:row.successful_ticks,lastSuccessAt:row.last_success_at,createdAt:row.created_at,running:false})),hasMore:rows.length>100};
+   }).deferred();
   }catch(error){return refuse(reply,error);}
  });
  app.post(base+'/reviews',{config:{access:'owner',rateLimit:grantingLimit},bodyLimit:2048},async(request,reply)=>{

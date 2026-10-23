@@ -1,0 +1,20 @@
+import test from 'node:test';
+import assert from 'node:assert/strict';
+import fs from 'node:fs/promises';
+import os from 'node:os';
+import path from 'node:path';
+import {randomBytes,randomUUID} from 'node:crypto';
+const root=await fs.mkdtemp(path.join(os.tmpdir(),'paper-install-access-'));
+Object.assign(process.env,{AGENT_PLAYER_DATA_DIR:root,DATABASE_PATH:path.join(root,'main.db'),JWT_SECRET:randomBytes(64).toString('hex'),ENCRYPTION_KEY:randomBytes(32).toString('hex')});delete process.env.AGENT_PLAYER_DB;
+const {getDatabase,closeDatabase}=await import('../src/db/database.ts');const main=getDatabase();await main.initialize();const db=main.getDb();
+const {readReviewedPaperInstallationAccess:access}=await import('../src/services/trading-paper-install-review.ts');
+const registry=await import('../src/services/trading-paper-installation.ts');
+const {enrollInstallOwner,reviewedInstall}=await import('./fixtures/reviewed-paper-install.mjs');
+const now=Date.now()-30000;
+async function owner(){const id='access-'+randomUUID();db.prepare("INSERT INTO users(id,email,username,password_hash,role,status,email_verified) VALUES(?,?,?,'fixture','owner','active',1)").run(id,id+'@example.invalid',id);return enrollInstallOwner(id,now-60000);}
+const read=f=>access(db,f.context.userId,()=>now+1000);
+test.after(async()=>{closeDatabase();await fs.rm(root,{recursive:true,force:true});});
+test('trusted registry alone cannot replace consumed human installation consent',async()=>{const f=await owner();const result=registry.provisionTrustedPaperInstallation(db,f.context.userId,{action:'install',expectedRevision:0,manifestDigest:registry.BUNDLED_PAPER_INSTALLATION.manifestDigest,capabilities:['paper.account.read','paper.bot.manage'],idempotencyKey:'trusted-only'},()=>now);assert.equal(result.ok,true);assert.equal(read(f).readAccounts,false);assert.equal(read(f).manageBots,false);});
+test('read-only reviewed consent cannot grant bot access even inside a caller transaction',async()=>{const f=await owner();await reviewedInstall(db,f,{now,capabilities:['paper.account.read']});assert.deepEqual(db.transaction(()=>read(f)).immediate(),{state:'ready',readAccounts:true,readBots:false,manageBots:false,executeOrders:false});});
+test('original consumed receipt and exact event remain mandatory on every access',async()=>{const f=await owner();const installed=await reviewedInstall(db,f,{now});assert.equal(read(f).manageBots,true);const event=db.prepare('SELECT * FROM paper_install_review_events WHERE review_id=?').get(installed.staged.id);const receipt=db.prepare('SELECT consumed_at FROM verification_receipts WHERE token_hash=?').get(event.receipt_hash);db.prepare('UPDATE verification_receipts SET consumed_at=NULL WHERE token_hash=?').run(event.receipt_hash);assert.equal(read(f).readAccounts,false);db.prepare('UPDATE verification_receipts SET consumed_at=? WHERE token_hash=?').run(receipt.consumed_at,event.receipt_hash);assert.equal(read(f).manageBots,true);db.prepare("UPDATE paper_install_review_events SET event_hash='broken' WHERE id=?").run(event.id);assert.equal(read(f).manageBots,false);db.prepare('UPDATE paper_install_review_events SET event_hash=? WHERE id=?').run(event.event_hash,event.id);assert.equal(read(f).manageBots,true);});
+test('historical consent survives policy rotation but current owner verification and TEMP auth shadows fail closed',async()=>{const f=await owner();await reviewedInstall(db,f,{now});db.prepare('UPDATE approval_proof_policy SET version=version+1 WHERE id=1').run();assert.equal(read(f).manageBots,true);db.prepare('UPDATE users SET email_verified=0 WHERE id=?').run(f.context.userId);assert.equal(read(f).readAccounts,false);db.prepare('UPDATE users SET email_verified=1 WHERE id=?').run(f.context.userId);db.exec('CREATE TEMP TABLE USERS(id TEXT)');try{assert.equal(read(f).manageBots,false);}finally{db.exec('DROP TABLE temp.USERS');}assert.equal(read(f).manageBots,true);});
