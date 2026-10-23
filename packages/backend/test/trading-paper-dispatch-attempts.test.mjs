@@ -104,3 +104,10 @@ test('trusted caller transaction helpers roll back definition writes and read hi
  db.pragma('query_only=ON');try{db.transaction(()=>{const saved=journal.readTrustedPaperDispatchDefinitionInTransaction(db,ownerId,input.definitionId,now+86400000);assert.equal(saved.attemptCount,1);assert.equal(saved.createdAt,now);assert.equal(saved.definition.limits.expiresAt,now+60000);assert.equal(JSON.stringify(saved).includes(first.fenceToken),false);}).deferred();}finally{db.pragma('query_only=OFF');}
  assert.deepEqual(read(f,now+86400000),before);
 });
+
+test('trusted finish composition rolls back with outer effects and requires caller transaction',()=>{
+ const f=provision(),first=journal.claimPaperDispatchAttempt(db,f.ownerId,claim(f),now),request=finish(f,first),before=read(f);
+ assert.throws(()=>journal.finishPaperDispatchAttemptInTransaction(db,f.ownerId,request,now));
+ assert.throws(()=>db.transaction(()=>{assert.equal(journal.finishPaperDispatchAttemptInTransaction(db,f.ownerId,request,now).status,'completed');throw Error('Owned outer effects failure');}).immediate(),/Owned outer effects failure/);
+ assert.deepEqual(read(f),before);assert.equal(journal.finishPaperDispatchAttempt(db,f.ownerId,request,now).status,'completed');
+});

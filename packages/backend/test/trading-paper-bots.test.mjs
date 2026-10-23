@@ -85,3 +85,14 @@ test('read-only bot history inspection validates original tick receipts without 
  try{assert.deepEqual(inspectPaperBotHistory(f.db,'owner','bot',now),{ok:true,successfulTicks:1,lastSuccessAt:now,status:'active'});f.db.transaction(()=>assert.equal(inspectPaperBotHistory(f.db,'owner','bot',now).ok,true)).deferred();assert.equal(inspectPaperBotHistory(f.db,'other','bot',now).ok,false);}finally{f.db.pragma('query_only=OFF');}
  assert.deepEqual(f.snapshot(),before);f.db.prepare("UPDATE paper_bot_ticks SET receipt_hash='bad'").run();assert.equal(inspectPaperBotHistory(f.db,'owner','bot',now).ok,false);
 });
+
+test('trusted tick composition rolls back outer failures and distinguishes refusal from SQL errors',async t=>{
+ const {runPaperBotTickInTransaction,isPaperBotTickRefusal}=await import('../src/services/trading-paper-bots.ts');
+ const f=botFixture(t),r=f.reserve(),input={botId:'bot',tickKey:'composed',side:'buy',reservationId:r.reservationId},before=f.snapshot();
+ assert.throws(()=>runPaperBotTickInTransaction(f.db,'owner',input,now),isPaperBotTickRefusal);
+ assert.throws(()=>f.db.transaction(()=>{assert.equal(runPaperBotTickInTransaction(f.db,'owner',input,now).ok,true);throw Error('Owned outer failure');}).immediate(),/Owned outer failure/);
+ assert.deepEqual(f.snapshot(),before);
+ assert.throws(()=>f.db.transaction(()=>runPaperBotTickInTransaction(f.db,'other',input,now)).immediate(),isPaperBotTickRefusal);
+ f.db.exec("CREATE TRIGGER refuse_composed_tick AFTER INSERT ON paper_bot_ticks BEGIN SELECT RAISE(ABORT,'owned SQL failure'); END");
+ assert.throws(()=>f.db.transaction(()=>runPaperBotTickInTransaction(f.db,'owner',input,now)).immediate(),error=>!isPaperBotTickRefusal(error));assert.deepEqual(f.snapshot(),before);
+});

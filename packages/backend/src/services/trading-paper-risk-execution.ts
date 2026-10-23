@@ -17,6 +17,8 @@ function request(value: unknown): value is Request {
   return (input.side === 'buy' || input.side === 'sell') && [input.accountId, input.reservationId, input.executionKey].every(id);
 }
 const rollback = Symbol('risk settlement rollback');
+/** Internal guard-refusal classification; SQL/storage exceptions remain distinct. */
+export const isPaperRiskSettlementRefusal = (error:unknown):boolean => error===rollback;
 /**
  * Acquires its own IMMEDIATE transaction; caller transactions are refused. Samples the clock once after locking.
  * A historical replay only acknowledges a matching persisted receipt. Every new effect passes current risk before

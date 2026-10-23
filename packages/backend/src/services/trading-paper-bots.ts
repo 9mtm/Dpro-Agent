@@ -3,13 +3,15 @@ import {PAPER_BOT_SCHEMA_SQL} from './trading-paper-schema-definition.js';
 import type Database from 'better-sqlite3';
 import {createHash, randomUUID} from 'node:crypto';
 import {readPaperRisk} from './trading-paper-risk.js';
-import {settlePaperRiskInTransaction} from './trading-paper-risk-execution.js';
+import {settlePaperRiskInTransaction,isPaperRiskSettlementRefusal} from './trading-paper-risk-execution.js';
 
 const id = (value: unknown): value is string => typeof value === 'string' && /^[A-Za-z0-9][A-Za-z0-9_.:-]{0,127}$/.test(value);
 const uint = (value: unknown, min = 0): value is number => typeof value === 'number' && Number.isSafeInteger(value) && value >= min;
 const sha = (value: string) => createHash('sha256').update(value).digest('hex');
 const deny = () => ({ok: false as const, reason: 'unavailable' as const});
 const rollback = Symbol('paper bot rollback');
+/** Internal refusal classification only; SQL/storage exceptions are not represented by this sentinel. */
+export const isPaperBotTickRefusal = (error:unknown):boolean => error===rollback||isPaperRiskSettlementRefusal(error);
 function plain(value: unknown, fields: string[]): value is Record<string, unknown> {
   if (!value || typeof value !== 'object' || ![Object.prototype, null].includes(Object.getPrototypeOf(value))) return false;
   const keys = Reflect.ownKeys(value);
@@ -99,7 +101,7 @@ function reservationMatches(db: Database.Database, bot: Bot, side: 'buy' | 'sell
 function history(db: Database.Database, owner: string, bot: Bot, now: number) {
   const summary = db.prepare('SELECT count(*) count,max(created_at) latest FROM paper_bot_ticks WHERE bot_id=?').get(bot.bot_id) as {count: number; latest: number | null};
   if (!uint(summary.count) || summary.count > 1000 || summary.count !== bot.successful_ticks || summary.latest !== bot.last_success_at) throw rollback;
-  const receipts = new Map<string, {tick: Tick; receipt: Record<string, unknown>}>();
+  const receipts = new Map<string, {tick: Tick; receipt: Record<string, unknown> & {ok:true;fillId:string;replayed:boolean}}>();
   let previousAt: number | null = null;
   for (const raw of db.prepare('SELECT * FROM paper_bot_ticks WHERE bot_id=? ORDER BY created_at,id LIMIT 1001').all(bot.bot_id)) {
     const tick = raw as Tick;
@@ -136,10 +138,18 @@ export function runPaperBotTick(db: Database.Database, owner: string, input: unk
   try {
     if (db.inTransaction || !id(owner) || !plain(input, ['botId', 'tickKey', 'side', 'reservationId'])
       || !['botId', 'tickKey', 'reservationId'].every(key => id(input[key])) || !['buy', 'sell'].includes(input.side as string)) return deny();
-    // Normalize before invoking the caller's clock; later reads cannot change the requested intent.
     const intent: TickInput = {botId: input.botId as string, tickKey: input.tickKey as string, side: input.side as 'buy' | 'sell', reservationId: input.reservationId as string};
-    return db.transaction(() => {
-      const now = clock();
+    return db.transaction(() => runPaperBotTickInTransaction(db,owner,intent,clock())).immediate();
+  } catch { return deny(); }
+}
+/**
+ * Trusted caller composition only. Caller owns IMMEDIATE and rolls back on every throw.
+ * This helper supplies no owner/runtime consent. inTransaction alone cannot prove lock mode or caller authority.
+ */
+export function runPaperBotTickInTransaction(db:Database.Database,owner:string,input:unknown,now:number){
+  if(!db.inTransaction||!id(owner)||!plain(input,['botId','tickKey','side','reservationId'])
+    ||!['botId','tickKey','reservationId'].every(key=>id(input[key]))||!['buy','sell'].includes(input.side as string))throw rollback;
+  const intent:TickInput={botId:input.botId as string,tickKey:input.tickKey as string,side:input.side as 'buy'|'sell',reservationId:input.reservationId as string};
       if (!uint(now)) throw rollback;
       const bot = db.prepare('SELECT * FROM paper_bots WHERE bot_id=?').get(intent.botId) as Bot | undefined;
       if (!bot || bot.owner_id !== owner || !validBot(bot, now)) throw rollback;
@@ -166,8 +176,6 @@ export function runPaperBotTick(db: Database.Database, owner: string, input: unk
         request, requestHash, receipt, sha(receipt), now);
       db.prepare('UPDATE paper_bots SET successful_ticks=successful_ticks+1,last_success_at=? WHERE bot_id=?').run(now, bot.bot_id);
       return {...result, botId: bot.bot_id, tickKey: intent.tickKey};
-    }).immediate();
-  } catch { return deny(); }
 }
 
 /** Read-only trusted journal inspection. This is not consent, installation or execution authority. */

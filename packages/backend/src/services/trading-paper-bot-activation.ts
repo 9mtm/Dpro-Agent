@@ -173,11 +173,11 @@ export async function applyPaperBotActivation(db:Database.Database,context:Opera
  * no runtime grant, dispatch permission or execution authority; caller identity remains separate.
  * A caller-owned transaction is supported so a future atomic review can retain one snapshot.
  */
-export function readReviewedPaperBotTarget(db:Database.Database,ownerId:string,botId:string,now=Date.now()){
+export function readReviewedPaperBotTarget(db:Database.Database,ownerId:string,botId:string,now=Date.now(),allowExhausted=false){
  try{
   const strictId=(value:unknown):value is string=>id(value)&&!/[\x00-\x20\x7f]/.test(value);
   const strictUuid=(value:unknown):value is string=>typeof value==='string'&&value.length===36&&uuid(value);
-  if(dbDriver()!=='sqlite'||getDatabase().getDb()!==db||!strictId(ownerId)||isSystemAccount(ownerId)||!strictUuid(botId)||!uint(now,1)||now>Number.MAX_SAFE_INTEGER-300000)fail();
+  if(typeof allowExhausted!=='boolean'||dbDriver()!=='sqlite'||getDatabase().getDb()!==db||!strictId(ownerId)||isSystemAccount(ownerId)||!strictUuid(botId)||!uint(now,1)||now>Number.MAX_SAFE_INTEGER-300000)fail();
   return db.transaction(()=>{
    if(!inspectPaperBundleSchema(db).ok)fail();
    const authNames=['users','verification_factors','verification_challenges','verification_receipts','approval_proof_policy'];
@@ -201,7 +201,7 @@ export function readReviewedPaperBotTarget(db:Database.Database,ownerId:string,b
    if(!receipt||receipt.user_id!==ownerId||receipt.session_hash!==r.session_hash||receipt.token_version!==r.token_version||receipt.factor_version!==r.factor_version||receipt.operation_hash!==paperBotActivationOperationHash(operation(r))||receipt.consumed_at!==event.created_at||!uint(receipt.expires_at,1)||receipt.expires_at<=Number(event.created_at))fail();
    const bot=db.prepare('SELECT * FROM main.paper_bots WHERE bot_id=?').get(botId) as Record<string,unknown>|undefined;
    if(!bot||bot.owner_id!==ownerId||bot.account_id!==input.accountId||bot.policy_id!==input.policyId||bot.policy_revision!==input.policyRevision||bot.app_revision!==input.appRevision||bot.expires_at!==input.expiresAt||bot.max_successful_ticks!==input.maxSuccessfulTicks||bot.cooldown_ms!==input.cooldownMs||bot.created_at!==event.created_at
-    ||bot.status!=='active'||input.expiresAt<=now||!uint(bot.successful_ticks)||Number(bot.successful_ticks)>=input.maxSuccessfulTicks||(bot.successful_ticks===0?bot.last_success_at!==null:!uint(bot.last_success_at)||Number(bot.last_success_at)<Number(bot.created_at)||Number(bot.last_success_at)>=input.expiresAt||Number(bot.last_success_at)>now))fail();
+    ||bot.status!=='active'||input.expiresAt<=now||!uint(bot.successful_ticks)||(allowExhausted?Number(bot.successful_ticks)>input.maxSuccessfulTicks:Number(bot.successful_ticks)>=input.maxSuccessfulTicks)||(bot.successful_ticks===0?bot.last_success_at!==null:!uint(bot.last_success_at)||Number(bot.last_success_at)<Number(bot.created_at)||Number(bot.last_success_at)>=input.expiresAt||Number(bot.last_success_at)>now))fail();
    const history=inspectPaperBotHistory(db,ownerId,botId,now);
    if(!history.ok||history.successfulTicks!==bot.successful_ticks||history.lastSuccessAt!==bot.last_success_at||history.status!=='active')fail();
    // Recompute all current account/policy/profile/risk checks; no stale owner-supplied snapshot.

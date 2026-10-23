@@ -138,19 +138,20 @@ export function claimPaperDispatchAttempt(db:Database.Database,ownerId:string,in
 }
 /** Completed is a trusted bookkeeping assertion, never evidence of a trade or side effect. */
 export function finishPaperDispatchAttempt(db:Database.Database,ownerId:string,input:unknown,nowOverride?:number){
- try{
-  identity(db);if(!plain(input,['definitionId','definitionDigest','attemptKey','fenceToken','outcome'])||!uuid(input.definitionId)||!digest(input.definitionDigest)||!id(input.attemptKey)||!fence(input.fenceToken)||!['completed','failed'].includes(input.outcome as string))fail();
-  const request={...input};
-  return db.transaction(()=>{
-   const now=time(nowOverride),journal=load(db,ownerId,request.definitionId as string,now);if(journal.row.digest!==request.definitionDigest)fail();
+ try{identity(db);return db.transaction(()=>finishPaperDispatchAttemptInTransaction(db,ownerId,input,time(nowOverride))).immediate();}catch{return deny();}
+}
+/** Trusted caller-owned IMMEDIATE composition. Exceptions must roll back the outer transaction; no execution authority. */
+export function finishPaperDispatchAttemptInTransaction(db:Database.Database,ownerId:string,input:unknown,now:number){
+ identity(db,true);if(!db.inTransaction)fail();time(now);
+ if(!plain(input,['definitionId','definitionDigest','attemptKey','fenceToken','outcome'])||!uuid(input.definitionId)||!digest(input.definitionDigest)||!id(input.attemptKey)||!fence(input.fenceToken)||!['completed','failed'].includes(input.outcome as string))fail();
+ const request={...input};
+   const journal=load(db,ownerId,request.definitionId as string,now);if(journal.row.digest!==request.definitionDigest)fail();
    const a=journal.attempts.find(row=>row.attempt_key===request.attemptKey);if(!a||a.fence_token!==request.fenceToken)fail();
    if(a.status!=='pending'){if(a.status===request.outcome)return acknowledgment(a,now,true);return deny(a.status==='unknown'?'unknown':'terminal');}
    if(now>=a.lease_until){transitionUnknown(db,a,now);load(db,ownerId,journal.row.id,now);return deny('unknown');}
    const updated={...a,status:request.outcome as 'completed'|'failed',finished_at:now};
    if(db.prepare("UPDATE main.paper_dispatch_attempts SET status=?,finished_at=?,event_hash=? WHERE id=? AND status='pending' AND fence_token=?").run(updated.status,now,eventHash(updated),a.id,a.fence_token).changes!==1)fail();
    const checked=load(db,ownerId,journal.row.id,now);return acknowledgment(checked.attempts.find(row=>row.id===a.id)!,now,false);
-  }).immediate();
- }catch{return deny();}
 }
 /** Expired/ambiguous work becomes terminal unknown; there is intentionally no retry/reset or renew API. */
 export function reconcileExpiredPaperDispatchAttempt(db:Database.Database,ownerId:string,input:unknown,nowOverride?:number){

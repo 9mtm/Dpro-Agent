@@ -62,8 +62,8 @@ function input(value:unknown){
 }
 type Request=ReturnType<typeof input>;
 type Definition={version:1;consentId:string;definitionId:string;runtimePrincipal:typeof principal;currency:string;activationReviewId:string;activationReviewHash:string;activationDefinitionHash:string;dispatch:PaperDispatchDefinition;dispatchDigest:string;runtimeConnected:false};
-function definition(db:Database.Database,ownerId:string,r:Request,consentId:string,definitionId:string,now:number):Definition{
- const target=readReviewedPaperBotTarget(db,ownerId,r.botId,now);if(!target.ok)fail();const d=target.definition;
+function definition(db:Database.Database,ownerId:string,r:Request,consentId:string,definitionId:string,now:number,allowExhausted=false):Definition{
+ const target=readReviewedPaperBotTarget(db,ownerId,r.botId,now,allowExhausted);if(!target.ok)fail();const d=target.definition;
  if(r.limits.expiresAt> d.expiresAt||r.limits.cadenceMs<Math.max(d.cooldownMs,d.limits.cooldownMs,1000)||!d.limits.symbols.includes(r.strategy.symbol)||d.execution.unitScale!==1||r.strategy.side==='buy'&&r.strategy.amount>d.limits.maxOrder)fail();
  const captured=capturePaperDispatchDefinition({version:1,mode:'paper',ownerId,botId:r.botId,accountId:d.accountId,policyId:d.policyId,policyRevision:d.policyRevision,appRevision:d.appRevision,installationId:target.installationId,installationRevision:target.installationRevision,manifestDigest:target.manifestDigest,policyHash:d.policyHash,profileHash:d.profileHash,quoteSource:'stored-paper-quote',strategy:r.strategy,limits:r.limits},now);if(!captured)fail();
  return {version:1,consentId,definitionId,runtimePrincipal:principal,currency:d.currency,activationReviewId:target.reviewId,activationReviewHash:target.activationReviewHash,activationDefinitionHash:target.activationDefinitionHash,dispatch:captured.definition as PaperDispatchDefinition,dispatchDigest:captured.digest,runtimeConnected:false};
@@ -165,4 +165,26 @@ export function revokePaperRuntimeConsent(db:Database.Database,actor:Actor,id:st
    return Object.freeze({ok:true as const,consentId:id,status:'revoked' as const,revokedAt:now,replayed:false,runtimeConnected:false as const});
   }).immediate();
  }catch{return deny();}
+}
+
+/** Trusted composition read only. Requires the caller's SQLite transaction; returns no dispatch authority or fence. */
+export function readTrustedPaperRuntimeConsentInTransaction(db:Database.Database,consentId:string,now:number){
+ if(dbDriver()!=='sqlite'||getDatabase().getDb()!==db||!db.inTransaction||!uuid(consentId)||!uint(now,1))fail();
+ schema(db);
+ const row=db.prepare('SELECT owner_id FROM main.paper_runtime_consents WHERE id=?').get(consentId) as {owner_id:string}|undefined;
+ if(!row)fail();
+ const actor:Actor={kind:'user',role:'owner',userId:row.owner_id};
+ human(db,actor,now);
+ const h=history(db,row.owner_id,consentId,now),d=h.saved.definition;
+ return Object.freeze({ownerId:row.owner_id,consentId,definitionId:d.definitionId,definitionDigest:d.dispatchDigest,currency:d.currency,runtimePrincipal:principal,status:h.consent.status as 'granted'|'revoked',createdAt:h.consent.created_at as number,definition:h.journal.definition,journal:h.journal,runtimeConnected:false as const});
+}
+/** Trusted current gate, not a public grant. Caller must own BEGIN IMMEDIATE at the actual effects boundary. */
+export function assertPaperRuntimeEligibilityInTransaction(db:Database.Database,consentId:string,now:number,allowExhausted=false){
+ if(typeof allowExhausted!=='boolean')fail();
+ const snapshot=readTrustedPaperRuntimeConsentInTransaction(db,consentId,now);
+ if(snapshot.status!=='granted')fail();
+ const h=history(db,snapshot.ownerId,consentId,now),d=h.saved.definition;
+ const current=definition(db,snapshot.ownerId,{botId:d.dispatch.botId,strategy:d.dispatch.strategy,limits:d.dispatch.limits},d.consentId,d.definitionId,now,allowExhausted);
+ if(JSON.stringify(current)!==h.saved.row.definition_json)fail();
+ return snapshot;
 }
