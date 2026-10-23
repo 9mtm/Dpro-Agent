@@ -1,3 +1,4 @@
+const {tradingRuntimeRoute,allowedTradingRuntime,tradingRuntimeResponse}=require('../src/trading-runtime-contract.js');
 const {tradingAccountSetupRoute,allowedTradingAccountSetup,tradingAccountSetupResponse}=require('../src/trading-account-setup-contract.js');
 const {tradingInstallRoute,allowedTradingInstall,tradingInstallResponse}=require('../src/trading-install-contract.js');
 const {tradingBotRoute,allowedTradingBot,tradingBotResponse}=require('../src/trading-bot-contract.js');
@@ -77,6 +78,7 @@ const agent = x => {
     : { id: x.id, version: x.version, nameUnavailable: true, ...profile(x) };
 };
 function allowed(method, target, body) {
+  if(tradingRuntimeRoute(target))return allowedTradingRuntime(method,target,body);
   if(tradingAccountSetupRoute(target))return allowedTradingAccountSetup(method,target,body);
   if(tradingInstallRoute(target))return allowedTradingInstall(method,target,body);
   if(tradingBotRoute(target))return allowedTradingBot(method,target,body);
@@ -140,6 +142,7 @@ function stage1Route(method, target) {
   return read && allowed('GET', target, undefined);
 }
 function project(target, status, body) {
+  if(tradingRuntimeRoute(target))return tradingRuntimeResponse(target,status,body);
   if(tradingAccountSetupRoute(target))return tradingAccountSetupResponse(target,status,body);
   if(tradingInstallRoute(target))return tradingInstallResponse(target,status,body);
   if(tradingBotRoute(target))return tradingBotResponse(target,status,body);

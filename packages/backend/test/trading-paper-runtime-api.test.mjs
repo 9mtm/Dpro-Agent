@@ -70,3 +70,38 @@ test('exhausted grant attempts do not block separate historical reads or emergen
  for(let i=0;i<4;i++)assert.equal((await call(f,'POST',base+'/reviews',{...input(f),ownerId:f.id})).statusCode,400);
  assert.equal((await call(f,'POST',base+'/reviews',input(f))).statusCode,429);assert.equal((await call(f,'GET',url)).statusCode,200);const revoke=await call(f,'POST',url+'/revoke',{});assert.equal(revoke.statusCode,200,revoke.body);
 });
+
+test('actual desktop session/controller preserves explicit runtime consent apply with real JWT and TOTP',async()=>{
+ const {SessionClient}=await import('../../core-ui/src/session.ts');const {TradingRuntimeController}=await import('../../core-ui/src/trading-runtime-controller.ts');
+ const f=await owner(),user={id:f.id,email:f.id+'@example.invalid',username:f.id,role:'owner'},calls=[];
+ const client=new SessionClient({live:async request=>{
+  if(request.path==='/api/auth/login')return {status:200,body:{token:f.token,deviceToken:'d'.repeat(43),user}};
+  if(request.path==='/api/auth/me')return {status:200,body:{user}};
+  calls.push(request.method+' '+request.path);const r=await app.inject({method:request.method,url:request.path,headers:{host:'127.0.0.1:42521',origin:'http://127.0.0.1:42522',...request.headers},...(request.body===undefined?{}:{payload:request.body})});return {status:r.statusCode,body:r.json()};
+ }});client.selectMode('live');await client.login(user.email,'Fixture login only');const controller=new TradingRuntimeController(client);
+ try{
+  const draft=input(f);await controller.stage(draft);assert.equal(controller.getSnapshot().phase,'review');assert.deepEqual(controller.getSnapshot().review.strategy,draft.strategy);
+  await controller.startVerification();assert.equal(controller.getSnapshot().phase,'code');await controller.verify(f.otp(Date.now()));assert.equal(controller.getSnapshot().phase,'verified');
+  assert.equal(db.prepare('SELECT count(*) n FROM paper_runtime_consents WHERE owner_id=?').get(f.id).n,0);assert.doesNotMatch(JSON.stringify(controller.getSnapshot()),/"receipt"\s*:|"challenge"\s*:|"code"\s*:/);
+  await controller.apply();assert.equal(controller.getSnapshot().phase,'applied');assert.equal(controller.getSnapshot().consent.status,'granted');assert.equal(controller.getSnapshot().consent.botId,f.botId);assert.equal(controller.getSnapshot().consent.runtimeConnected,false);
+  assert.equal(db.prepare('SELECT count(*) n FROM paper_runtime_consents WHERE owner_id=?').get(f.id).n,1);assert.equal(db.prepare('SELECT count(*) n FROM paper_bot_ticks WHERE bot_id=?').get(f.botId).n,0);
+  assert.deepEqual(calls.map(s=>s.replace(/\/reviews\/[a-f0-9-]{36}/,'/reviews/:id')),['POST '+base+'/reviews','POST '+base+'/reviews/:id/challenge','POST '+base+'/reviews/:id/complete','POST '+base+'/reviews/:id/apply']);
+ }finally{controller.close();client.cancel();}
+});
+
+test('actual committed-but-lost apply recovers exact consent after disposal; emergency revoke bypasses damaged journal and factor loss',async()=>{
+ const {SessionClient}=await import('../../core-ui/src/session.ts');const {TradingRuntimeController}=await import('../../core-ui/src/trading-runtime-controller.ts');
+ const f=await owner(),user={id:f.id,email:f.id+'@example.invalid',username:f.id,role:'owner'};let dropApply=true;
+ const client=new SessionClient({live:async request=>{
+  if(request.path==='/api/auth/login')return {status:200,body:{token:f.token,deviceToken:'d'.repeat(43),user}};
+  if(request.path==='/api/auth/me')return {status:200,body:{user}};
+  const r=await app.inject({method:request.method,url:request.path,headers:{host:'127.0.0.1:42521',origin:'http://127.0.0.1:42522',...request.headers},...(request.body===undefined?{}:{payload:request.body})});
+  if(dropApply&&request.path.endsWith('/apply')){dropApply=false;assert.equal(r.statusCode,200,r.body);throw Error('Owned transport lost committed response');}return {status:r.statusCode,body:r.json()};
+ }});client.selectMode('live');await client.login(user.email,'Fixture login only');let controller=new TradingRuntimeController(client);
+ try{
+  await controller.stage(input(f));const consentId=controller.getSnapshot().review.consentId;await controller.startVerification();await controller.verify(f.otp(Date.now()));await controller.apply();assert.equal(controller.getSnapshot().phase,'unknown');assert.equal(db.prepare('SELECT status FROM paper_runtime_consents WHERE id=?').get(consentId).status,'granted');
+  controller.close();controller=new TradingRuntimeController(client);await controller.loadConsent(consentId);assert.equal(controller.getSnapshot().phase,'unknown');assert.equal(controller.getSnapshot().recoveryRead,true);assert.equal(controller.acknowledgeUnknown(),true);
+  const definitionId=db.prepare('SELECT definition_id FROM paper_runtime_consents WHERE id=?').get(consentId).definition_id;db.prepare('DELETE FROM paper_dispatch_definitions WHERE id=?').run(definitionId);db.prepare('UPDATE verification_factors SET enabled=0 WHERE user_id=?').run(f.id);
+  await controller.revoke(consentId);assert.equal(controller.getSnapshot().consent.status,'revoked');assert.equal(db.prepare('SELECT status FROM paper_runtime_consents WHERE id=?').get(consentId).status,'revoked');assert.equal(db.prepare('SELECT count(*) n FROM paper_dispatch_definitions WHERE id=?').get(definitionId).n,0);assert.equal(db.prepare('SELECT count(*) n FROM paper_bot_ticks WHERE bot_id=?').get(f.botId).n,0);
+ }finally{controller.close();client.cancel();}
+});

@@ -1,3 +1,4 @@
+import {tradingRuntimeRoute,allowedTradingRuntime,tradingRuntimeResponse} from './trading-runtime-contract.js';
 import {tradingAccountSetupRoute,allowedTradingAccountSetup,tradingAccountSetupResponse} from './trading-account-setup-contract.js';
 import {tradingInstallRoute,allowedTradingInstall,tradingInstallResponse} from './trading-install-contract.js';
 import {tradingBotRoute,allowedTradingBot,tradingBotResponse} from './trading-bot-contract.js';
@@ -82,6 +83,7 @@ function user(value: unknown): User {
 }
 // Reject before URL normalization. No generic URL, header, key or mutation escape hatch.
 export function allowedRequest(method: string, path: string, body?: unknown): boolean {
+  if(tradingRuntimeRoute(path))return allowedTradingRuntime(method,path,body);
   if(tradingAccountSetupRoute(path))return allowedTradingAccountSetup(method,path,body);
   if(tradingInstallRoute(path))return allowedTradingInstall(method,path,body);
   if(tradingBotRoute(path))return allowedTradingBot(method,path,body);
@@ -150,6 +152,7 @@ function safeResponse(path: string, response: WireResponse): WireResponse {
   return delay === undefined ? projected : { ...projected, retryAfterSeconds: delay };
 }
 function projectResponse(path: string, response: WireResponse): WireResponse {
+  if(tradingRuntimeRoute(path))return {status:response.status,body:tradingRuntimeResponse(path,response.status,response.body)};
   if(tradingAccountSetupRoute(path))return {status:response.status,body:tradingAccountSetupResponse(path,response.status,response.body)};
   if(tradingInstallRoute(path))return {status:response.status,body:tradingInstallResponse(path,response.status,response.body)};
   if(tradingBotRoute(path))return {status:response.status,body:tradingBotResponse(path,response.status,response.body)};
@@ -470,6 +473,7 @@ export class SessionClient {
     if (request.path === '/api/setup/status' || request.path === OWNER_SETUP_PATH || request.path === '/api/chat' || request.path === '/api/auth/login' || request.path === '/api/auth/logout' || Object.keys(request).some(k => !['method', 'path', 'body'].includes(k))) throw new SessionFailure('blocked');
     if((verificationRoute(request.path)||reviewerRoute(request.path))&&this.#state.user?.role==='guest')throw new SessionFailure('blocked');
     if(skillInstallRoute(request.path)&&this.#state.user?.role!=='owner')throw new SessionFailure('blocked');
+    if(tradingRuntimeRoute(request.path)&&(this.#state.mode!=='live'||this.#state.user?.role!=='owner'))throw new SessionFailure('blocked');
     if(tradingAccountSetupRoute(request.path)&&(this.#state.mode!=='live'||this.#state.user?.role!=='owner'))throw new SessionFailure('blocked');
     if(tradingInstallRoute(request.path)&&(this.#state.mode!=='live'||this.#state.user?.role!=='owner'))throw new SessionFailure('blocked');
     if(tradingBotRoute(request.path)&&this.#state.user?.role!=='owner')throw new SessionFailure('blocked');
@@ -489,7 +493,7 @@ export class SessionClient {
     if (((request.method === 'POST' && request.path === '/api/agents') || grantsAgentId(request.path) || request.path === CATALOGUE_PATH || request.path === PLAN_PATH || request.path === DISTRIBUTION_PATH || request.path === BATCHES_PATH || batchPath(request.path) || permissionsAgentId(request.path) || request.path === BOARDS_PATH || request.path.startsWith(`${BOARDS_PATH}/`)) && this.#state.user?.role !== 'owner') throw new SessionFailure('blocked');
     const epoch = this.#state.epoch;
     const result = await this.#send(request.method, request.path, 'body' in request ? request.body : undefined, this.#token, epoch, signal);
-    if (epoch !== this.#state.epoch){if(tradingAccountSetupRoute(request.path)||tradingInstallRoute(request.path)||tradingBotRoute(request.path)||tradingPaperRoute(request.path)||skillInstallRoute(request.path)||verificationRoute(request.path)||reviewerRoute(request.path)||scheduleAuthorizationRoute(request.path)||scheduleDefinitionRoute(request.path))throw new SessionFailure('cancelled');return safeResponse(request.path,result);}
+    if (epoch !== this.#state.epoch){if(tradingRuntimeRoute(request.path)||tradingAccountSetupRoute(request.path)||tradingInstallRoute(request.path)||tradingBotRoute(request.path)||tradingPaperRoute(request.path)||skillInstallRoute(request.path)||verificationRoute(request.path)||reviewerRoute(request.path)||scheduleAuthorizationRoute(request.path)||scheduleDefinitionRoute(request.path))throw new SessionFailure('cancelled');return safeResponse(request.path,result);}
     if(verificationRoute(request.path)&&result.status===200&&request.method==='POST'&&(request.path.endsWith('/confirm')||request.path.endsWith('/disable'))){
       const projected=safeResponse(request.path,result);
       if(!record(projected.body)||projected.body.requiresSignIn!==true)throw new SessionFailure('unavailable');
