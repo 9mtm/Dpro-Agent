@@ -205,3 +205,22 @@ export function assertPaperRuntimeEligibilityInTransaction(db:Database.Database,
  if(JSON.stringify(current)!==h.saved.row.definition_json)fail();
  return snapshot;
 }
+/**
+ * Offline bounded storage audit only. Reuses original review/proof/journal validation without current execution
+ * eligibility. Missing/partial storage or orphan applied grants refuse; no initializer, repair or absence grant.
+ */
+export function inspectPaperRuntimeStorageInTransaction(db:Database.Database,ownerId:string,now:number){
+ if(dbDriver()!=='sqlite'||getDatabase().getDb()!==db||!db.inTransaction)fail();
+ human(db,{kind:'user',role:'owner',userId:ownerId},now);
+ const reviews=db.prepare('SELECT id FROM main.paper_runtime_reviews WHERE owner_id=? ORDER BY created_at,id LIMIT 1001').all(ownerId) as {id:string}[];
+ const consents=db.prepare('SELECT id FROM main.paper_runtime_consents WHERE owner_id=? ORDER BY created_at,id LIMIT 1001').all(ownerId) as {id:string}[];
+ if(reviews.length>1000||consents.length>1000)fail();
+ for(const r of reviews)savedReview(db,ownerId,r.id,now);
+ if(db.prepare("SELECT 1 FROM main.paper_runtime_reviews r WHERE r.owner_id=? AND r.status='applied' AND NOT EXISTS(SELECT 1 FROM main.paper_runtime_consents c WHERE c.owner_id=r.owner_id AND c.review_id=r.id) LIMIT 1").get(ownerId)
+  ||db.prepare('SELECT 1 FROM main.paper_runtime_events e WHERE e.owner_id=? AND NOT EXISTS(SELECT 1 FROM main.paper_runtime_consents c WHERE c.owner_id=e.owner_id AND c.id=e.consent_id AND c.review_id=e.review_id) LIMIT 1').get(ownerId)
+  ||db.prepare('SELECT 1 FROM main.paper_runtime_revocations r WHERE r.owner_id=? AND NOT EXISTS(SELECT 1 FROM main.paper_runtime_consents c WHERE c.owner_id=r.owner_id AND c.id=r.consent_id) LIMIT 1').get(ownerId))fail();
+ return Object.freeze(consents.map(c=>{
+  const h=history(db,ownerId,c.id,now),d=h.saved.definition;
+  return Object.freeze({consentId:d.consentId,botId:d.dispatch.botId,installationId:d.dispatch.installationId,manifestDigest:d.dispatch.manifestDigest,status:h.consent.status as 'granted'|'revoked',createdAt:h.consent.created_at as number});
+ }));
+}
