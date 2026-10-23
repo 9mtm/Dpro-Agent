@@ -1,3 +1,4 @@
+import {PAPER_BOT_ACTIVATION_SCHEMA_SQL} from './trading-paper-schema-definition.js';
 /** Internal reviewed owner activation. SQLite same-handle only; no HTTP, runtime, timer or strategy wiring. */
 import type Database from 'better-sqlite3';
 import {createHash, randomUUID} from 'node:crypto';
@@ -94,10 +95,7 @@ function publicReview(current: ReturnType<typeof readRow>) {
 function operation(row: Review): PaperBotActivationOperation {return {kind:'paper_bot_activation',reviewId:row.id,reviewHash:row.review_hash,reviewExpiresAt:row.expires_at,policyVersion:row.policy_version};}
 /** Explicit same-main-handle initialization only; no migrations and no lazy initialization. */
 export function initializePaperBotActivation(db: Database.Database) {
-  handle(db);db.transaction(()=>db.exec(`
-    CREATE TABLE IF NOT EXISTS paper_bot_activation_reviews(id TEXT PRIMARY KEY,bot_id TEXT NOT NULL UNIQUE,owner_id TEXT NOT NULL,session_hash TEXT NOT NULL,token_version INTEGER NOT NULL,factor_version INTEGER NOT NULL,policy_version INTEGER NOT NULL,definition_json TEXT NOT NULL,definition_hash TEXT NOT NULL,review_hash TEXT NOT NULL,created_at INTEGER NOT NULL,expires_at INTEGER NOT NULL,status TEXT NOT NULL);
-    CREATE TABLE IF NOT EXISTS paper_bot_activation_events(id TEXT PRIMARY KEY,review_id TEXT NOT NULL UNIQUE,bot_id TEXT NOT NULL UNIQUE,owner_id TEXT NOT NULL,session_hash TEXT NOT NULL,token_version INTEGER NOT NULL,factor_version INTEGER NOT NULL,policy_version INTEGER NOT NULL,definition_hash TEXT NOT NULL,review_hash TEXT NOT NULL,receipt_hash TEXT NOT NULL,created_at INTEGER NOT NULL,event_hash TEXT NOT NULL);
-  `)).immediate();
+  handle(db);db.transaction(()=>db.exec(PAPER_BOT_ACTIVATION_SCHEMA_SQL)).immediate();
 }
 export async function stagePaperBotActivation(db: Database.Database,context: OperationContext,actor: Actor,input: unknown,now=Date.now(),requireInstalledManagement=false) {
   try {handle(db);const owner=capture(context,actor,now),request=inputDefinition(input);

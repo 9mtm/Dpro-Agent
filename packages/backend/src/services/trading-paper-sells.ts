@@ -1,3 +1,4 @@
+import {PAPER_SELL_SCHEMA_SQL} from './trading-paper-schema-definition.js';
 /** Whole-unit inventory sale simulation. Explicit private SQLite initializer; no live/API wiring. */
 import type Database from 'better-sqlite3';
 import { createHash, randomUUID } from 'node:crypto';
@@ -72,8 +73,7 @@ function savedIntent(r: Reservation, now: number): Intent | null {
     }
 }
 export function initializePaperSells(db: Database.Database) {
-    db.transaction(() => db.exec(`CREATE TABLE IF NOT EXISTS paper_sell_reservations(id TEXT PRIMARY KEY,account_id TEXT NOT NULL,policy_id TEXT NOT NULL,symbol TEXT NOT NULL,quantity_units INTEGER NOT NULL,idempotency_key TEXT NOT NULL,intent_hash TEXT NOT NULL,intent_json TEXT NOT NULL,status TEXT NOT NULL CHECK(status IN ('pending','cancelled','filled')),created_at INTEGER NOT NULL,cancelled_at INTEGER,profile_json TEXT NOT NULL,profile_hash TEXT NOT NULL,quote_json TEXT NOT NULL,quote_hash TEXT NOT NULL,position_json TEXT NOT NULL,position_hash TEXT NOT NULL,UNIQUE(account_id,idempotency_key));
- CREATE TABLE IF NOT EXISTS paper_sell_fills(id TEXT PRIMARY KEY,account_id TEXT NOT NULL,reservation_id TEXT NOT NULL UNIQUE,execution_key TEXT NOT NULL,request_hash TEXT NOT NULL,quantity_units INTEGER NOT NULL,price_minor INTEGER NOT NULL,gross_minor INTEGER NOT NULL,fee_minor INTEGER NOT NULL,net_minor INTEGER NOT NULL,removed_cost_minor INTEGER NOT NULL,realized_pnl_minor INTEGER NOT NULL,market_loss_minor INTEGER NOT NULL,created_at INTEGER NOT NULL,UNIQUE(account_id,execution_key));`)).immediate();
+    db.transaction(() => db.exec(PAPER_SELL_SCHEMA_SQL)).immediate();
 }
 type Context = NonNullable<ReturnType<typeof context>>;
 function context(db: Database.Database, owner: string, intent: Intent) {

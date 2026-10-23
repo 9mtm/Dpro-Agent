@@ -1,3 +1,4 @@
+import {PAPER_BOT_SCHEMA_SQL} from './trading-paper-schema-definition.js';
 /** Durable bounded paper ticks only. No strategy, timer, provider or human-authorization implementation. */
 import type Database from 'better-sqlite3';
 import {createHash, randomUUID} from 'node:crypto';
@@ -37,19 +38,7 @@ function validBot(bot: Bot, now: number) {
 }
 /** Explicit caller-owned SQLite initialization; never called by tick execution or a GET. */
 export function initializePaperBots(db: Database.Database) {
-  db.transaction(() => db.exec(`
-    CREATE TABLE IF NOT EXISTS paper_bots(
-      bot_id TEXT PRIMARY KEY,owner_id TEXT NOT NULL,account_id TEXT NOT NULL,policy_id TEXT NOT NULL,
-      policy_revision INTEGER NOT NULL,app_revision INTEGER NOT NULL,expires_at INTEGER NOT NULL,
-      max_successful_ticks INTEGER NOT NULL,cooldown_ms INTEGER NOT NULL,status TEXT NOT NULL,
-      successful_ticks INTEGER NOT NULL,last_success_at INTEGER,created_at INTEGER NOT NULL);
-    CREATE TABLE IF NOT EXISTS paper_bot_ticks(
-      id TEXT PRIMARY KEY,bot_id TEXT NOT NULL,account_id TEXT NOT NULL,policy_id TEXT NOT NULL,
-      policy_revision INTEGER NOT NULL,app_revision INTEGER NOT NULL,tick_key TEXT NOT NULL,side TEXT NOT NULL,
-      reservation_id TEXT NOT NULL,execution_key TEXT NOT NULL,request_json TEXT NOT NULL,request_hash TEXT NOT NULL,
-      receipt_json TEXT NOT NULL,receipt_hash TEXT NOT NULL,created_at INTEGER NOT NULL,
-      UNIQUE(bot_id,tick_key),UNIQUE(account_id,execution_key));
-  `)).immediate();
+  db.transaction(() => db.exec(PAPER_BOT_SCHEMA_SQL)).immediate();
 }
 /** Trusted one-time reviewed configuration only. This does not implement owner approval or allow definition updates. */
 export function provisionPaperBot(db: Database.Database, input: unknown, clock: () => number = Date.now) {

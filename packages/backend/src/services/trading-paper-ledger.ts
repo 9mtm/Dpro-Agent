@@ -1,3 +1,4 @@
+import {applyPaperLedgerSchema} from './trading-paper-schema-definition.js';
 /** SQLite-only reservations and settlement-aware admission. No broker calls or runtime registration. */
 import type Database from 'better-sqlite3';
 import {createHash, randomUUID} from 'node:crypto';
@@ -58,18 +59,7 @@ function policyValid(p:unknown):p is PaperPolicy {
  return object(p)&&['id','ownerId','accountId'].every(k=>id(p[k]))&&['revision','appRevision','expiresAt','maxOrder','maxExposure','maxDailyLoss','maxOrders','maxQuoteAgeMs'].every(k=>uint(p[k],1))&&uint(p.cooldownMs)&&typeof p.enabled==='boolean'&&p.mode==='paper'&&typeof p.currency==='string'&&/^[A-Z]{3}$/.test(p.currency)&&Array.isArray(p.symbols)&&p.symbols.length>0&&p.symbols.length<=500&&p.symbols.every(id);
 }
 export function initializePaperLedger(db:Database.Database):void {
- db.transaction(()=>{
- db.exec(`CREATE TABLE IF NOT EXISTS paper_accounts(account_id TEXT PRIMARY KEY, owner_id TEXT NOT NULL, mode TEXT NOT NULL CHECK(mode='paper'), currency TEXT NOT NULL, cash INTEGER NOT NULL CHECK(cash>=0), exposure INTEGER NOT NULL CHECK(exposure>=0), app_enabled INTEGER NOT NULL, app_revision INTEGER NOT NULL, stopped INTEGER NOT NULL);
- CREATE TABLE IF NOT EXISTS paper_policies(policy_id TEXT PRIMARY KEY, account_id TEXT NOT NULL, revision INTEGER NOT NULL, policy_json TEXT NOT NULL);
- CREATE TABLE IF NOT EXISTS paper_quotes(account_id TEXT NOT NULL,symbol TEXT NOT NULL,quote_at INTEGER NOT NULL,PRIMARY KEY(account_id,symbol));
- CREATE TABLE IF NOT EXISTS paper_reservations(reservation_id TEXT PRIMARY KEY,account_id TEXT NOT NULL,policy_id TEXT NOT NULL,idempotency_key TEXT NOT NULL,intent_hash TEXT NOT NULL,notional INTEGER NOT NULL CHECK(notional>0),created_at INTEGER NOT NULL,UNIQUE(account_id,idempotency_key));`);
- db.exec('CREATE TABLE IF NOT EXISTS paper_reservation_intents(reservation_id TEXT PRIMARY KEY,canonical_json TEXT NOT NULL,profile_json TEXT,profile_hash TEXT,quote_json TEXT,quote_hash TEXT)');
- // Explicit caller-owned initialization upgrades the preceding reservation-only schema.
- const columns=(db.prepare('PRAGMA table_info(paper_reservations)').all() as {name:string}[]).map(c=>c.name);
- if(!columns.includes('status'))db.exec("ALTER TABLE paper_reservations ADD COLUMN status TEXT NOT NULL DEFAULT 'pending' CHECK(status IN ('pending','cancelled'))");
- if(!columns.includes('cancelled_at'))db.exec('ALTER TABLE paper_reservations ADD COLUMN cancelled_at INTEGER');
- db.exec('CREATE INDEX IF NOT EXISTS paper_reservations_account_history ON paper_reservations(account_id,created_at,reservation_id)');
- }).immediate();
+ db.transaction(()=>applyPaperLedgerSchema(db)).immediate();
 }
 /** Trusted provisioning only; never expose this helper as an order/configuration endpoint. */
 export function provisionPaperAccount(db:Database.Database,input:{policy:PaperPolicy;cash:number;exposure:number}):void {

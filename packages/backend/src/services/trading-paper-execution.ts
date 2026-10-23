@@ -1,3 +1,4 @@
+import {PAPER_EXECUTION_SCHEMA_SQL} from './trading-paper-schema-definition.js';
 /** Whole-unit buy simulation only. Explicit caller-owned SQLite initialization; no runtime or broker adapter. */
 import type Database from 'better-sqlite3';
 import {createHash,randomUUID} from 'node:crypto';
@@ -17,12 +18,7 @@ const profileRead='SELECT account_id,owner_id,revision,fee_bps,slippage_bps,unit
 const quoteRead='SELECT account_id,symbol,price_minor,quoted_at,revision,currency,unit_scale FROM paper_execution_quotes WHERE account_id=? AND symbol=?';
 function profileValid(p:Profile){return id(p.account_id)&&id(p.owner_id)&&uint(p.revision,1)&&uint(p.fee_bps)&&p.fee_bps<=10000&&uint(p.slippage_bps)&&p.slippage_bps<=10000&&p.unit_scale===1&&typeof p.currency==='string'&&/^[A-Z]{3}$/.test(p.currency);}
 function quoteValid(q:Quote){return id(q.account_id)&&id(q.symbol)&&uint(q.price_minor,1)&&uint(q.quoted_at)&&uint(q.revision,1)&&q.unit_scale===1&&typeof q.currency==='string'&&/^[A-Z]{3}$/.test(q.currency);}
-export function initializePaperExecution(db:Database.Database){db.transaction(()=>db.exec(`
- CREATE TABLE IF NOT EXISTS paper_execution_profiles(account_id TEXT PRIMARY KEY,owner_id TEXT NOT NULL,revision INTEGER NOT NULL,fee_bps INTEGER NOT NULL,slippage_bps INTEGER NOT NULL,unit_scale INTEGER NOT NULL,currency TEXT NOT NULL);
- CREATE TABLE IF NOT EXISTS paper_execution_quotes(account_id TEXT NOT NULL,symbol TEXT NOT NULL,price_minor INTEGER NOT NULL,quoted_at INTEGER NOT NULL,revision INTEGER NOT NULL,currency TEXT NOT NULL,unit_scale INTEGER NOT NULL,PRIMARY KEY(account_id,symbol));
- CREATE TABLE IF NOT EXISTS paper_fills(fill_id TEXT PRIMARY KEY,account_id TEXT NOT NULL,reservation_id TEXT NOT NULL UNIQUE,execution_key TEXT NOT NULL,request_hash TEXT NOT NULL,intent_hash TEXT NOT NULL,quantity_units INTEGER NOT NULL,price_minor INTEGER NOT NULL,fee_minor INTEGER NOT NULL,total_minor INTEGER NOT NULL,created_at INTEGER NOT NULL,UNIQUE(account_id,execution_key));
- CREATE TABLE IF NOT EXISTS paper_positions(account_id TEXT NOT NULL,symbol TEXT NOT NULL,quantity_units INTEGER NOT NULL,cost_minor INTEGER NOT NULL,PRIMARY KEY(account_id,symbol));
- `)).immediate();}
+export function initializePaperExecution(db:Database.Database){db.transaction(()=>db.exec(PAPER_EXECUTION_SCHEMA_SQL)).immediate();}
 /** Trusted reviewed configuration only, not a human authorization implementation. */
 export function configurePaperExecution(db:Database.Database,input:{ownerId:string;accountId:string;revision:number;feeBps:number;slippageBps:number;unitScale:number;currency:string}){
  if(!record(input))throw Error('invalid execution profile');
