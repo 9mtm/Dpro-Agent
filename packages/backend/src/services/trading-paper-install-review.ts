@@ -107,3 +107,17 @@ export function readReviewedPaperInstallationAccess(db:Database.Database|null,us
   return project('ready',true,bots,bots);
  }).deferred();}catch{return project('incompatible');}
 }
+
+/** Internal offline original-install fingerprint; requires same-handle snapshot and fully reviewed ready provenance. */
+export function fingerprintReviewedPaperInstallationInTransaction(db:Database.Database,userId:string,now:number){
+ identity(db,true);if(!db.inTransaction||!uint(now,1)||readReviewedPaperInstallationAccess(db,userId,()=>now).state!=='ready')fail();
+ // These exact rows have already been validated by the registry and reviewed-access validators in this snapshot.
+ const installation=db.prepare("SELECT * FROM main.paper_installations WHERE owner_id=? AND app_id='trading'").get(userId);
+ const operations=db.prepare("SELECT * FROM main.paper_install_operations WHERE owner_id=? AND app_id='trading' ORDER BY created_at,id LIMIT 4").all(userId) as Record<string,unknown>[];
+ const grants=db.prepare("SELECT * FROM main.paper_install_grants WHERE owner_id=? AND app_id='trading' ORDER BY capability").all(userId);
+ const first=operations.find(o=>JSON.parse(o.request_json as string).action==='install');if(!first)fail();
+ const event=db.prepare('SELECT * FROM main.paper_install_review_events WHERE operation_id=?').get(first.id) as Record<string,unknown>;
+ const review=db.prepare('SELECT * FROM main.paper_install_reviews WHERE id=?').get(event.review_id);
+ const proof=db.prepare('SELECT * FROM main.verification_receipts WHERE token_hash=?').get(event.receipt_hash);
+ return sha(JSON.stringify(['paper-reviewed-install-preservation-v1',installation,operations,grants,review,event,proof]));
+}

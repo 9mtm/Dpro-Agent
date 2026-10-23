@@ -187,3 +187,15 @@ export function reconcileExpiredPaperDispatchAttempt(db:Database.Database,ownerI
 export function readPaperDispatchAttempts(db:Database.Database,ownerId:string,definitionId:string,nowOverride?:number){
  try{identity(db);return db.transaction(()=>{const now=time(nowOverride);return projection(load(db,ownerId,definitionId,now),now);}).deferred();}catch{return deny();}
 }
+
+/** Internal offline fingerprint of fully validated journal content; no fence or raw event escapes. */
+export function fingerprintPaperDispatchHistoryInTransaction(db:Database.Database,ownerId:string,definitionId:string,now:number){
+ if(dbDriver()!=='sqlite'||getDatabase().getDb()!==db||!db.inTransaction||!uint(now,1))fail();
+ const j=load(db,ownerId,definitionId,now);
+ return sha(JSON.stringify(['paper-dispatch-preservation-v1',j.row,j.attempts]));
+}
+
+/** Internal offline schema prerequisite, including empty journals; never initializes storage. */
+export function assertPaperDispatchStorageInTransaction(db:Database.Database,ownerId:string){
+ if(dbDriver()!=='sqlite'||getDatabase().getDb()!==db||!db.inTransaction)fail();schema(db);owner(db,ownerId);
+}

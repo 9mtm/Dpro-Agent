@@ -9,7 +9,7 @@ import {sql} from '../repositories/sql-steps.js';
 import {issueOperationChallenge,completeOperationChallenge,consumeOperationReceiptStep,paperRuntimeConsentOperationHash,type PaperRuntimeConsentOperation,type OperationContext} from '../auth/verification/operation-proof.js';
 import {readReviewedPaperBotTarget} from './trading-paper-bot-activation.js';
 import {capturePaperDispatchDefinition,type PaperDispatchDefinition} from './trading-paper-dispatch-contract.js';
-import {provisionTrustedPaperDispatchDefinitionInTransaction,readTrustedPaperDispatchDefinitionInTransaction} from './trading-paper-dispatch-attempts.js';
+import {fingerprintPaperDispatchHistoryInTransaction,provisionTrustedPaperDispatchDefinitionInTransaction,readTrustedPaperDispatchDefinitionInTransaction} from './trading-paper-dispatch-attempts.js';
 const principal='bundled.paper.deterministic.v1' as const;
 const sha=(v:string)=>createHash('sha256').update(v).digest('hex');
 function fail():never{throw Error('paper runtime consent unavailable');}
@@ -99,7 +99,7 @@ function history(db:Database.Database,ownerId:string,id:string,now:number,expect
  const journal=readTrustedPaperDispatchDefinitionInTransaction(db,ownerId,d.definitionId,now);if(journal.createdAt!==e.created_at||journal.definitionDigest!==d.dispatchDigest||JSON.stringify(journal.definition)!==JSON.stringify(d.dispatch))fail();
  const revocation=db.prepare('SELECT * FROM main.paper_runtime_revocations WHERE consent_id=?').get(id) as Record<string,unknown>|undefined;
  if(consent.status==='revoked'?(!revocation||!uuid(revocation.id)||revocation.owner_id!==ownerId||!uint(revocation.created_at,1)||revocation.created_at<Number(e.created_at)||revocation.created_at>now||revokeHash(revocation)!==revocation.event_hash):revocation!==undefined)fail();
- return {saved,consent,revocation,journal};
+ return {saved,consent,revocation,journal,provenanceFingerprint:sha(JSON.stringify(['paper-runtime-preservation-v1',r,consent,e,proof,revocation??null]))};
 }
 function publicReview(s:ReturnType<typeof savedReview>){const d=s.definition;return Object.freeze({ok:true as const,id:s.row.id,consentId:d.consentId,botId:d.dispatch.botId,accountId:d.dispatch.accountId,expiresAt:s.row.expires_at,runtimePrincipal:principal,currency:d.currency,amountUnit:d.dispatch.strategy.side==='buy'?'account_minor_units' as const:'whole_asset_units' as const,engineExecution:false as const,providerAccess:false as const,modelCosts:false as const,strategy:Object.freeze({...d.dispatch.strategy}),limits:Object.freeze({...d.dispatch.limits}),runtimeConnected:false as const,startsWorker:false as const,connectsBroker:false as const});}
 function publicConsent(h:ReturnType<typeof history>,replayed?:boolean){const d=h.saved.definition;return Object.freeze({ok:true as const,consentId:d.consentId,reviewId:h.saved.row.id,botId:d.dispatch.botId,definitionId:d.definitionId,definitionDigest:d.dispatchDigest,status:h.consent.status as 'granted'|'revoked',createdAt:h.consent.created_at as number,revokedAt:h.revocation?.created_at as number|undefined??null,runtimePrincipal:principal,currency:d.currency,amountUnit:d.dispatch.strategy.side==='buy'?'account_minor_units' as const:'whole_asset_units' as const,engineExecution:false as const,providerAccess:false as const,modelCosts:false as const,strategy:Object.freeze({...d.dispatch.strategy}),limits:Object.freeze({...d.dispatch.limits}),attemptCount:h.journal.attemptCount,runtimeConnected:false as const,...(replayed===undefined?{}:{replayed})});}
@@ -223,4 +223,11 @@ export function inspectPaperRuntimeStorageInTransaction(db:Database.Database,own
   const h=history(db,ownerId,c.id,now),d=h.saved.definition;
   return Object.freeze({consentId:d.consentId,botId:d.dispatch.botId,installationId:d.dispatch.installationId,manifestDigest:d.dispatch.manifestDigest,status:h.consent.status as 'granted'|'revoked',createdAt:h.consent.created_at as number});
  }));
+}
+
+/** Internal offline preservation digest. Full original consent proof/history and journal are validated first. */
+export function fingerprintPaperRuntimeHistoryInTransaction(db:Database.Database,ownerId:string,consentId:string,now:number){
+ if(dbDriver()!=='sqlite'||getDatabase().getDb()!==db||!db.inTransaction||!uint(now,1))fail();
+ schema(db);human(db,{kind:'user',role:'owner',userId:ownerId},now);const h=history(db,ownerId,consentId,now);
+ return sha(JSON.stringify(['paper-runtime-full-preservation-v1',h.provenanceFingerprint,fingerprintPaperDispatchHistoryInTransaction(db,ownerId,h.saved.definition.definitionId,now)]));
 }
