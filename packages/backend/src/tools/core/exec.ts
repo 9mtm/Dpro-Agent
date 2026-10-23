@@ -1,259 +1,47 @@
-/**
- * Exec Tool
- *
- * Execute shell commands in the workspace
- *
- * SECURITY: Uses whitelist approach to prevent arbitrary command execution (H-12)
- */
-
-import { exec } from 'node:child_process';
-import { promisify } from 'node:util';
-import type { Tool, ToolResult } from '../types.js';
-import {
-  execToolRefusal,
-  isExecToolsEnabled,
-  minimalChildEnv,
-  safeChildCwd,
-} from '../exec-policy.js';
-
-const execAsync = promisify(exec);
-
-// Timeout for commands (30 seconds)
-const DEFAULT_TIMEOUT = 30000;
-
-/**
- * Allowed command prefixes (whitelist approach)
- * SECURITY: Only these commands can be executed (H-12)
- */
-const ALLOWED_COMMANDS = [
-  // Version control
-  'git ',
-  // Package managers
-  'npm ',
-  'pnpm ',
-  'yarn ',
-  // Programming languages
-  'node ',
-  'python ',
-  'python3 ',
-  // HTTP utilities
-  'curl ',
-  'wget ',
-  // GitHub CLI
-  'gh ',
-  // File operations (read-only)
-  'cat ',
-  'ls ',
-  'dir ',
-  'find ',
-  'grep ',
-  'head ',
-  'tail ',
-  // System info (read-only)
-  'echo ',
-  'pwd',
-  'whoami',
-  'date',
-  'which ',
-  'where ',
-  // Build tools
-  'make ',
-  'cmake ',
-  'gradle ',
-  'mvn ',
-  // Docker (if needed)
-  'docker ',
-  'docker-compose ',
-];
-
-/**
- * Dangerous shell operators that allow command chaining or redirection
- * SECURITY: Block these to prevent command injection (H-12)
- */
-const SHELL_OPERATORS = [
-  '&&',
-  '||',
-  ';',
-  '|',
-  '>',
-  '<',
-  '`',
-  '$(',
-  '\n',
-  '\r',
-];
-
-/**
- * Validate command against whitelist
- * SECURITY: Only explicitly allowed commands can run (H-12)
- */
-function isCommandAllowed(command: string): { allowed: boolean; reason?: string } {
-  const trimmed = command.trim();
-
-  // Check if command is in allowed list
-  const isAllowed = ALLOWED_COMMANDS.some(allowed => {
-    // For commands without space (like 'pwd'), exact match
-    if (!allowed.includes(' ')) {
-      return trimmed === allowed || trimmed.startsWith(allowed + ' ');
-    }
-    // For commands with space, prefix match
-    return trimmed.startsWith(allowed);
-  });
-
-  if (!isAllowed) {
-    return {
-      allowed: false,
-      reason: `Command not in whitelist. Allowed commands: ${ALLOWED_COMMANDS.map(c => c.trim()).join(', ')}`,
-    };
-  }
-
-  // Check for shell operators (command chaining/injection)
-  for (const operator of SHELL_OPERATORS) {
-    if (trimmed.includes(operator)) {
-      return {
-        allowed: false,
-        reason: `Command contains shell operator "${operator}" which is not allowed for security`,
-      };
-    }
-  }
-
-  return { allowed: true };
+/** Bounded host metadata commands only. No shell, interpreters or package execution. */
+import {execFile} from 'node:child_process';
+import {promisify} from 'node:util';
+import {realpathSync,statSync} from 'node:fs';
+import type {Tool,ToolResult} from '../types.js';
+import {execToolRefusal,isExecToolsEnabled,minimalChildEnv,safeChildCwd} from '../exec-policy.js';
+const executeFile=promisify(execFile);
+const MAX_TIMEOUT=30000;
+const fail=():ToolResult=>({content:[{type:'text',text:'Command refused by execution policy.'}],error:'Command not allowed by security policy'});
+/** Deliberately small floor: unsupported commands require a separately reviewed capability. */
+const BINARIES:Readonly<Record<string,string>>=Object.freeze({echo:'/bin/echo',pwd:'/bin/pwd',whoami:'/usr/bin/whoami',date:'/bin/date'});
+/** Reject control syntax even inside quotes; quotes only group literal arguments. */
+export function prepareExec(input:unknown):{file:string;args:string[];timeout:number}|null{
+ if(!input||typeof input!=='object'||Array.isArray(input))return null;
+ const desc=Object.getOwnPropertyDescriptors(input);
+ if(Reflect.ownKeys(desc).some(k=>typeof k!=='string'||!['command','timeout'].includes(k)||!Object.hasOwn(desc[k],'value')))return null;
+ const command=desc.command?.value,requested=desc.timeout?desc.timeout.value:MAX_TIMEOUT;
+ if(typeof command!=='string'||command.length<1||command.length>8192||typeof requested!=='number'||!Number.isSafeInteger(requested)||requested<1)return null;
+ if(/[&;|<>`$\\(){}!*?\[\]\x00-\x08\x0a-\x1f\x7f-\x9f]/.test(command))return null;
+ const words:string[]=[];let token='',quote='',started=false;
+ for(const c of command){if(quote){if(c===quote)quote='';else token+=c;started=true;}else if(c==='"'||c==="'"){quote=c;started=true;}else if(c===' '||c==='\t'){if(started){words.push(token);token='';started=false;}}else{token+=c;started=true;}if(words.length>64||token.length>2048)return null;}
+ if(quote)return null;if(started)words.push(token);
+ const [name,...args]=words;
+ if(!name||!Object.hasOwn(BINARIES,name)||args.length>64)return null;
+ if(name==='pwd'&&args.length||name==='whoami'&&args.length||name==='date'&&!(args.length===0||args.length===1&&args[0]==='-u'))return null;
+ // echo flags differ across platforms. Literal flag-like arguments are unsupported.
+ if(name==='echo'&&args.some(a=>a.startsWith('-')))return null;
+ return {file:BINARIES[name],args,timeout:Math.min(requested,MAX_TIMEOUT)};
 }
-
-export const execTool: Tool = {
-  name: 'exec',
-  description: 'Execute whitelisted shell commands in the workspace. Allowed: git, npm, pnpm, curl, gh, node, python, docker, and read-only file operations.',
-  input_schema: {
-    type: 'object',
-    properties: {
-      command: {
-        type: 'string',
-        description: 'The shell command to execute (e.g., "curl -s wttr.in/London?format=3"). Only whitelisted commands allowed.',
-      },
-      timeout: {
-        type: 'number',
-        description: 'Timeout in milliseconds (default: 30000)',
-      },
-    },
-    required: ['command'],
-    examples: [
-      {
-        command: 'curl -s wttr.in/London?format=3',
-        description: 'Get current weather for London in simple format',
-      },
-      {
-        command: 'git status',
-        description: 'Check git repository status and pending changes',
-      },
-      {
-        command: 'npm list --depth=0',
-        description: 'List installed npm packages (top-level only)',
-      },
-      {
-        command: 'gh pr list --state open',
-        description: 'List all open pull requests using GitHub CLI',
-      },
-      {
-        command: 'python --version',
-        description: 'Check installed Python version',
-      },
-      {
-        command: 'docker ps',
-        description: 'List running Docker containers',
-      },
-    ],
-  },
-
-  async execute(params, context): Promise<ToolResult> {
-    const { command, timeout = DEFAULT_TIMEOUT } = params;
-
-    // SECURITY: exec-class tools are off unless AGENT_EXEC_TOOLS=true (S0-Q.5)
-    if (!isExecToolsEnabled()) return execToolRefusal('exec');
-
-    // SECURITY: Validate command against whitelist (H-12)
-    const validation = isCommandAllowed(command);
-    if (!validation.allowed) {
-      console.warn(`[ExecTool] ⛔ Blocked command: ${command}`);
-      console.warn(`[ExecTool]   Reason: ${validation.reason}`);
-
-      return {
-        content: [
-          {
-            type: 'text',
-            text: `❌ Blocked: ${validation.reason}`,
-          },
-        ],
-        error: 'Command not allowed by security policy',
-      };
-    }
-
-    // SECURITY: never run inside the data directory (S0-Q.5)
-    let cwd: string;
-    try {
-      cwd = safeChildCwd(context?.workspaceDir);
-    } catch (error: any) {
-      return {
-        content: [{ type: 'text', text: `❌ Blocked: ${error.message}` }],
-        error: 'Working directory not allowed by security policy',
-      };
-    }
-
-    try {
-      console.log(`[ExecTool] 🚀 Executing: ${command}`);
-      console.log(`[ExecTool]   Working dir: ${cwd}`);
-      console.log(`[ExecTool]   Timeout: ${timeout}ms`);
-
-      const { stdout, stderr } = await execAsync(command, {
-        timeout,
-        maxBuffer: 1024 * 1024 * 10, // 10MB buffer
-        cwd, // SECURITY: Restrict to workspace directory
-        shell: process.platform === 'win32' ? 'powershell.exe' : '/bin/bash',
-        // SECURITY: minimal environment, no server secrets (S0-Q.5)
-        env: minimalChildEnv(),
-      });
-
-      const output = stdout || stderr || '(no output)';
-
-      console.log(`[ExecTool] ✅ Command completed`);
-      console.log(`[ExecTool]   Output length: ${output.length} chars`);
-
-      return {
-        content: [
-          {
-            type: 'text',
-            text: output.trim(),
-          },
-        ],
-        details: {
-          command,
-          exitCode: 0,
-          duration: timeout,
-          cwd,
-        },
-      };
-    } catch (error: any) {
-      console.error(`[ExecTool] ❌ Command failed:`, error.message);
-
-      // Command failed or timed out
-      const errorMessage = error.killed
-        ? `Command timed out after ${timeout}ms`
-        : error.stderr || error.message;
-
-      return {
-        content: [
-          {
-            type: 'text',
-            text: `❌ Command failed: ${errorMessage}`,
-          },
-        ],
-        error: errorMessage,
-        details: {
-          command,
-          exitCode: error.code || 1,
-          timedOut: error.killed,
-          cwd,
-        },
-      };
-    }
-  },
+export const execTool:Tool={
+ name:'exec',description:'Run bounded local metadata commands: echo, pwd, whoami or date. Requires execution policy and approval; shell syntax and programmable commands are refused.',
+ input_schema:{type:'object',properties:{command:{type:'string',description:'Literal metadata command with optional quoted arguments.'},timeout:{type:'number',description:'Positive integer milliseconds, capped at 30000.'}},required:['command']},
+ async execute(params,context):Promise<ToolResult>{
+  if(!isExecToolsEnabled())return execToolRefusal('exec');
+  const plan=prepareExec(params);if(!plan||process.platform==='win32')return fail();
+  let cwd:string;
+  try{cwd=realpathSync(safeChildCwd(context?.workspaceDir));safeChildCwd(cwd);if(!statSync(cwd).isDirectory())return fail();}catch{return fail();}
+  const started=Date.now();
+  try{
+   const {stdout,stderr}=await executeFile(plan.file,plan.args,{cwd,env:minimalChildEnv({PATH:'/usr/bin:/bin'}),shell:false,timeout:plan.timeout,maxBuffer:65536,encoding:'utf8',windowsHide:true});
+   return {content:[{type:'text',text:(stdout||stderr||'(no output)').trim()}],details:{exitCode:0,duration:Date.now()-started}};
+  }catch{
+   // Child errors can contain command arguments, output and paths. Do not echo or log them.
+   return {content:[{type:'text',text:'Metadata command failed or exceeded its execution limit.'}],error:'Command execution failed'};
+  }
+ },
 };

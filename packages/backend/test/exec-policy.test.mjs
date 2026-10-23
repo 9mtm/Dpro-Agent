@@ -86,7 +86,9 @@ test('exec tools are offered and run only with AGENT_EXEC_TOOLS=true', async () 
     const reg = registry();
     const names = reg.getToolsForAPI().map((t) => t.name);
     for (const name of EXEC_TOOLS) assert.ok(names.includes(name), `${name} missing when enabled`);
-    const result = await reg.execute('exec', { command: 'echo exec-ok' });
+    // Runner-level check; registry approval is covered by exec-approval-floor.test.mjs.
+    const {execTool}=await import('../src/tools/core/exec.ts');
+    const result = await execTool.execute({ command: 'echo exec-ok' },{workspaceDir:dir});
     assert.equal(result.error, undefined);
     assert.equal(result.content[0].text, 'exec-ok');
   });
@@ -101,15 +103,16 @@ test('minimalChildEnv keeps basics and drops every secret', () => {
   }
 });
 
-test('a spawned exec child does not see server secrets', async () => {
+test('minimal child environment passed to a harmless child does not contain server secrets', async () => {
   await withFlag('true', async () => {
     // Prints the child's full environment as JSON.
-    const result = await registry().execute('exec', { command: 'node -p "JSON.stringify(process.env)"' });
-    assert.equal(result.error, undefined, result.content[0].text);
-    const childEnv = JSON.parse(result.content[0].text);
+    const {execFile}=await import('node:child_process');
+    const {promisify}=await import('node:util');
+    const result=await promisify(execFile)(process.execPath,['-p','JSON.stringify(process.env)'],{env:policy.minimalChildEnv(),cwd:dir});
+    const childEnv = JSON.parse(result.stdout);
     for (const [key, value] of Object.entries(FAKE)) {
       assert.equal(childEnv[key], undefined, `${key} leaked to child`);
-      assert.ok(!result.content[0].text.includes(value), `${key} value leaked to child`);
+      assert.ok(!result.stdout.includes(value), `${key} value leaked to child`);
     }
     assert.equal(childEnv.DATABASE_PATH, undefined);
     assert.ok(childEnv.PATH, 'PATH kept');

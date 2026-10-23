@@ -9,7 +9,7 @@ import { requiresReviewerApproval } from '../auth/verification/reviewer-quorum.j
 import { currentChatRun } from '../services/chat-run-context.js';
 import { modeFor, permissionCategory } from './agent-permissions.js';
 import type { Tool, ToolResult, ToolExecutionContext } from './types.js';
-import { execToolRefusal, isToolAllowedByExecPolicy, isToolObjectAllowedByExecPolicy } from './exec-policy.js';
+import { execToolRefusal, isToolAllowedByExecPolicy, isToolObjectAllowedByExecPolicy, isToolExecClass } from './exec-policy.js';
 import { channelToolCallRefusal, isToolAllowedInChannel } from './channel-policy.js';
 import { defaultGrants, grantCallRefusal, isToolGranted, type AgentToolGrants } from './grants.js';
 import { approvalCategory, consumeApprovalTicket, isConfinedChannelReply, requestApproval } from './approvals.js';
@@ -157,7 +157,7 @@ export class ToolsRegistry {
     const ownCategory = approvalCategory(tool);
     const modeCategory = permissionCategory(tool);
     let category = ownCategory ?? (mode === 'ask' ? modeCategory : null);
-    if (mode === 'allow' && ownCategory && ownCategory === modeCategory) category = null;
+    if (mode === 'allow' && ownCategory && ownCategory === modeCategory && !isToolExecClass(tool)) category = null;
     // CHAT-SECRETS-01: a call that uses a key-store reference runs only for the
     // owning user, never in a channel turn, and always after the owner's approval.
     // Tools that keep text in Dpro's own stores (memory, board, tasks, plan) get the reference itself.

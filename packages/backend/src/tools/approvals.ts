@@ -2,6 +2,7 @@ import {requireReviewerQuorumStep,quorumRequestHash} from '../auth/verification/
 import {claimApprovalWithReceiptStep,claimApprovalWithoutReceiptStep} from '../auth/verification/approval-proof.js';
 import type {OperationContext} from '../auth/verification/operation-proof.js';
 import { redactImportText } from '../memory/import/redact.js';
+import {isToolExecClass} from './exec-policy.js';
 /**
  * One-time approvals for risky agent tool calls (S1.3).
  *
@@ -78,7 +79,8 @@ export const MAX_PENDING_PER_AGENT = 50;
 export const APPROVAL_TTL_HOURS = 24;
 
 /** Category when the tool needs approval, else null. A tool cannot opt out. */
-export function approvalCategory(tool: Pick<Tool, 'name'> & { requiresApproval?: boolean }): ApprovalCategory | null {
+export function approvalCategory(tool: Pick<Tool, 'name'> & { requiresApproval?: boolean;execClass?:boolean }): ApprovalCategory | null {
+  if(isToolExecClass(tool))return 'other';
   const known = APPROVAL_REQUIRED_TOOLS[tool.name];
   if (known) return known;
   if (/_send$/.test(tool.name)) return 'message';
