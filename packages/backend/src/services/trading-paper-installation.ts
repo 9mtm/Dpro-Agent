@@ -5,6 +5,9 @@ import {getDatabase} from '../db/index.js';
 import {dbDriver} from '../db/pg/config.js';
 import {isSystemAccount} from '../auth/default-accounts.js';
 import {PAPER_BUNDLE_SCHEMA,preparePaperBundleSchemaInTransaction,inspectPaperBundleSchema,inspectPaperBundlePreparation} from './trading-paper-bundle-schema.js';
+import {BUNDLED_PAPER_INSTALLATION} from './trading-paper-manifest.js';
+import {lookupSupportedPaperHistoryManifest} from './trading-paper-manifest-catalog.js';
+export {BUNDLED_PAPER_INSTALLATION} from './trading-paper-manifest.js';
 const sha=(s:string)=>createHash('sha256').update(s).digest('hex');
 const id=(v:unknown):v is string=>typeof v==='string'&&!/[\x00-\x20\x7f]/.test(v)&&/^[A-Za-z0-9][A-Za-z0-9_.:-]{0,127}$/.test(v);
 const uint=(v:unknown,min=0):v is number=>typeof v==='number'&&Number.isSafeInteger(v)&&v>=min;
@@ -12,10 +15,8 @@ const uuid=(v:unknown):v is string=>typeof v==='string'&&v.length===36&&/^[a-f0-
 function fail():never{throw Error('paper installation unavailable');}
 const deny=()=>({ok:false as const,reason:'unavailable' as const});
 function plain(v:unknown,keys:string[]):v is Record<string,unknown>{if(!v||typeof v!=='object'||![Object.prototype,null].includes(Object.getPrototypeOf(v)))return false;const own=Reflect.ownKeys(v);return own.length===keys.length&&own.every(k=>typeof k==='string'&&keys.includes(k)&&Object.hasOwn(Object.getOwnPropertyDescriptor(v,k)!,'value'));}
-const capabilities=Object.freeze(['paper.account.read','paper.bot.manage'] as const);
-const declaration=Object.freeze({appId:'trading',implementationId:PAPER_BUNDLE_SCHEMA.implementationId,version:'1.0.0',kind:'builtin',mode:'paper',schemaVersion:1,schemaDigest:PAPER_BUNDLE_SCHEMA.digest,capabilities});
-/** Declaration integrity only: this is not a signature or hash of executable artifact bytes. */
-export const BUNDLED_PAPER_INSTALLATION=Object.freeze({...declaration,manifestDigest:sha(JSON.stringify(declaration))});
+const declaration=BUNDLED_PAPER_INSTALLATION;
+const capabilities=declaration.capabilities;
 type Action='install'|'disable'|'remove_retained';
 type Request={action:Action;idempotencyKey:string;expectedRevision:number;manifestDigest:string;capabilities:string[]};
 type Result={installationId:string;revision:number;status:'provisioned'|'disabled'|'removed_retained'};
@@ -49,7 +50,7 @@ const canonical=(userId:string,r:Request)=>JSON.stringify({ownerId:userId,...r})
 const eventHash=(o:Omit<Operation,'event_hash'>)=>sha(JSON.stringify(['trusted-paper-install-v1',o.id,o.owner_id,o.app_id,o.idempotency_key,o.request_json,o.request_hash,o.result_json,o.created_at]));
 function operation(o:Operation){
  if(!uuid(o.id)||!id(o.owner_id)||o.app_id!=='trading'||!id(o.idempotency_key)||!uint(o.created_at)||typeof o.request_json!=='string'||typeof o.result_json!=='string'||Buffer.byteLength(o.request_json,'utf8')>4096||Buffer.byteLength(o.result_json,'utf8')>1024)fail();
- const raw=JSON.parse(o.request_json),{ownerId,...input}=raw,r=normalize(input);if(ownerId!==o.owner_id||r.idempotencyKey!==o.idempotency_key||canonical(o.owner_id,r)!==o.request_json||sha(o.request_json)!==o.request_hash||eventHash(o)!==o.event_hash)fail();
+ const raw=JSON.parse(o.request_json),{ownerId,...input}=raw,r=normalize(input);if(!lookupSupportedPaperHistoryManifest('1.0.0',r.manifestDigest))fail();if(ownerId!==o.owner_id||r.idempotencyKey!==o.idempotency_key||canonical(o.owner_id,r)!==o.request_json||sha(o.request_json)!==o.request_hash||eventHash(o)!==o.event_hash)fail();
  const result=JSON.parse(o.result_json) as Result;if(!plain(result,['installationId','revision','status'])||!uuid(result.installationId)||!uint(result.revision,1)||result.revision!==r.expectedRevision+1||result.status!==({install:'provisioned',disable:'disabled',remove_retained:'removed_retained'})[r.action]||JSON.stringify({installationId:result.installationId,revision:result.revision,status:result.status})!==o.result_json)fail();return {row:o,request:r,result};
 }
 function journal(db:Database.Database,now:number){
@@ -59,7 +60,7 @@ function journal(db:Database.Database,now:number){
 function read(db:Database.Database,userId:string,now:number){
  schema(db,true);if(!inspectPaperBundleSchema(db).ok)fail();const row=db.prepare("SELECT * FROM main.paper_installations WHERE owner_id=? AND app_id='trading'").get(userId) as Installation|undefined;
  const ops=db.prepare("SELECT * FROM main.paper_install_operations WHERE owner_id=? AND app_id='trading' ORDER BY created_at,id LIMIT 4").all(userId) as Operation[],grants=db.prepare("SELECT * FROM main.paper_install_grants WHERE owner_id=? AND app_id='trading' ORDER BY capability").all(userId) as Record<string,unknown>[];
- if(!row){if(ops.length||grants.length)fail();return null;}if(!uuid(row.installation_id)||row.implementation_id!==declaration.implementationId||row.version!==declaration.version||row.schema_digest!==declaration.schemaDigest||row.manifest_digest!==BUNDLED_PAPER_INSTALLATION.manifestDigest||!uint(row.revision,1)||row.revision>3||!uint(row.created_at)||!uint(row.updated_at)||row.created_at>row.updated_at||row.updated_at>now||ops.length!==row.revision)fail();
+ if(!row){if(ops.length||grants.length)fail();return null;}if(!uuid(row.installation_id)||row.implementation_id!==declaration.implementationId||!lookupSupportedPaperHistoryManifest(row.version,row.manifest_digest)||row.schema_digest!==declaration.schemaDigest||!uint(row.revision,1)||row.revision>3||!uint(row.created_at)||!uint(row.updated_at)||row.created_at>row.updated_at||row.updated_at>now||ops.length!==row.revision)fail();
  const history=ops.map(operation).sort((a,b)=>a.result.revision-b.result.revision);for(let i=0;i<history.length;i++){const h=history[i];if(h.row.owner_id!==userId||h.result.installationId!==row.installation_id||h.result.revision!==i+1||h.request.expectedRevision!==i||h.row.created_at>now||i===0&&h.request.action!=='install'||i>0&&(h.request.action==='install'||history[i-1].result.status==='removed_retained'||h.result.status===history[i-1].result.status||h.row.created_at<history[i-1].row.created_at))fail();}
  const first=history[0],last=history[history.length-1],revocation=history[1];if(last.row.id!==row.last_operation_id||last.result.status!==row.status||first.row.created_at!==row.created_at||last.row.created_at!==row.updated_at||grants.length!==first.request.capabilities.length)fail();
  grants.forEach((g,i)=>{if(g.capability!==first.request.capabilities[i]||g.grant_operation_id!==first.row.id||g.granted_at!==first.row.created_at||g.revoked_at!==(revocation?.row.created_at??null)||g.revocation_operation_id!==(revocation?.row.id??null))fail();});journal(db,now);return {row,history,grants};
