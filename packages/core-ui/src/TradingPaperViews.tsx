@@ -1,0 +1,34 @@
+import {useEffect,useState} from 'react';
+import type {SessionClient} from './session';
+import {TradingPaperController} from './trading-paper-controller';
+import {UiIcon} from './ui-icons';
+type Snapshot=ReturnType<TradingPaperController['getSnapshot']>;
+export function TradingPaperViews({client,active,place}:{client:SessionClient;active:boolean;place:'portfolio'|'orders'}){
+ const [binding,setBinding]=useState<{client:SessionClient;controller:TradingPaperController;state:Snapshot}|null>(null);
+ useEffect(()=>{
+  if(!active){setBinding(null);return;}
+  const controller=new TradingPaperController(client);let live=true;
+  const sync=()=>{if(live)setBinding({client,controller,state:controller.getSnapshot()});};
+  const unsubscribe=controller.subscribe(sync);sync();void controller.load();
+  return()=>{live=false;unsubscribe();controller.close();};
+ },[client,active]);
+ const current=active&&binding?.client===client?binding:null;
+ const state:Snapshot=current?.state??{phase:active?'loading':'closed',accountId:null,accounts:null,hasMore:false,availability:null,account:null};
+ return <TradingPaperReadView state={state} place={place} onRefresh={()=>void current?.controller.load()} onSelect={id=>void current?.controller.select(id)}/>;
+}
+/** All numeric amounts remain explicitly in minor units until precision metadata is provided. */
+export function TradingPaperReadView({state,place,onRefresh,onSelect}:{state:Snapshot;place:'portfolio'|'orders';onRefresh:()=>void;onSelect:(id:string)=>void}){
+ const [selected,setSelected]=useState<string|null>(null);
+ useEffect(()=>setSelected(null),[state.account,place]);
+ const account=state.account,rows=(account?.reservations??[]) as readonly Readonly<Record<string,unknown>>[];
+ const reservation=rows.find(r=>r.id===selected),amount=(value:unknown)=>`${String(value)} minor units · ${String(account?.currency??'')}`;
+ const timestamp=(value:unknown)=>{const date=new Date(Number(value));return Number.isFinite(date.getTime())?date.toISOString():'Date unavailable';};
+ const notice=state.availability?.state;
+ return <div className="trading-paper-views" aria-label={place==='portfolio'?'Paper portfolio':'Paper reservations'}>
+  <div className="trading-tools"><label>Paper account <select aria-label="Paper account" value={state.accountId??''} disabled={!state.accounts?.length||state.phase==='loading'||state.phase==='closed'} onChange={e=>{if(e.target.value)onSelect(e.target.value);}}><option value="">Choose account</option>{state.accounts?.map(a=><option key={a.accountId} value={a.accountId}>{a.accountId} · {a.currency}</option>)}</select></label><button type="button" title="Refresh accounts" aria-label="Refresh accounts" disabled={state.phase==='loading'||state.phase==='closed'} onClick={onRefresh}><UiIcon name="refresh" size={16}/></button><span>Paper simulation · Read only</span></div>
+  <div role="status" className="trading-paper-notice">{state.phase==='loading'?'Reading paper accounts…':state.phase==='closed'?'Session ended.':state.phase==='unavailable'?(notice==='demo_only'||notice==='not_provisioned'?'Paper accounts are not configured.':notice==='incompatible'?'Paper account storage is unavailable.':'Could not read paper accounts. Refresh to try again.'):!state.accounts?.length?'No paper accounts available.':!account?'Choose a paper account to read its saved history.':notice==='disabled'?'App disabled · saved history only.':'Saved paper account snapshot.'}</div>
+  {state.hasMore&&<p className="trading-paper-notice">First 100 accounts shown. Additional accounts are not displayed.</p>}
+  {account&&place==='portfolio'&&<section className="trading-panel"><h3>Paper balances · {state.accountId}</h3><div className="trading-table-wrap"><table><caption className="sr-only">Saved paper balances in minor units</caption><tbody>{[['Cash',account.cash],['Available cash',account.availableCash],['Reserved cash',account.pendingExposure],['Existing exposure',account.exposure],['Pending exposure',account.pendingExposure]].map(([label,value])=><tr key={String(label)}><th scope="row">{String(label)}</th><td>{amount(value)}</td></tr>)}</tbody></table></div><p>Positions, fills and profit are not available yet.</p>{account.stopped===true&&<p>Account stopped · saved history only.</p>}</section>}
+  {account&&place==='orders'&&<section className="trading-panel"><h3>Paper reservations · {state.accountId}</h3>{rows.length?<div className="trading-table-wrap"><table><caption className="sr-only">Saved reservations, not executed trades</caption><thead><tr><th scope="col">Reservation</th><th scope="col">Status</th><th scope="col">Reserved amount</th></tr></thead><tbody>{rows.map(r=><tr key={String(r.id)} data-selected={selected===r.id}><th scope="row"><button type="button" aria-pressed={selected===r.id} onClick={()=>setSelected(String(r.id))}>{String(r.id)}</button></th><td>{String(r.status)}</td><td>{amount(r.notional)}</td></tr>)}</tbody></table></div>:<p>No saved reservations.</p>}<p>Reservations hold budget. They are not executed trades.</p>{Number(account.reservationCount)>rows.length&&<p>Latest 200 reservations shown.</p>}{reservation&&<aside aria-label="Selected reservation"><h3>Selected reservation</h3><dl><dt>Reservation</dt><dd>{String(reservation.id)}</dd><dt>Policy</dt><dd>{String(reservation.policyId)}</dd><dt>Created</dt><dd>{timestamp(reservation.createdAt)}</dd><dt>Cancelled</dt><dd>{reservation.cancelledAt===null?'Not cancelled':timestamp(reservation.cancelledAt)}</dd></dl></aside>}</section>}
+ </div>;
+}
