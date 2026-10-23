@@ -16,9 +16,38 @@ export function tradingPaperResponse(path,status,body){
  if(numbers.some(k=>!uint(body[k]))||body.appRevision<1||typeof body.appEnabled!=='boolean'||typeof body.stopped!=='boolean'||body.availableCash>body.cash||body.cash-body.availableCash!==body.pendingExposure||!Number.isSafeInteger(body.exposure+body.pendingExposure)||body.totalExposure!==body.exposure+body.pendingExposure||body.pendingCount>body.reservationCount)return fail();
  if(!Array.isArray(body.policies)||body.policies.length>100||!Array.isArray(body.reservations)||body.reservations.length>200||body.reservations.length!==Math.min(200,body.reservationCount))return fail();
  const policies=body.policies.map(p=>{if(!record(p)||!id(p.id)||!uint(p.revision)||p.revision<1||typeof p.enabled!=='boolean'||!uint(p.expiresAt))return fail();return {id:p.id,revision:p.revision,enabled:p.enabled,expiresAt:p.expiresAt};});
- const reservations=body.reservations.map(r=>{if(!record(r)||!id(r.id)||!id(r.policyId)||!uint(r.notional)||r.notional<1||!uint(r.createdAt)||!['pending','cancelled'].includes(r.status)||(r.status==='pending'?r.cancelledAt!==null:!uint(r.cancelledAt)||r.cancelledAt<r.createdAt))return fail();return {id:r.id,policyId:r.policyId,notional:r.notional,createdAt:r.createdAt,status:r.status,cancelledAt:r.cancelledAt};});
+ const reservations=body.reservations.map(r=>{
+  if(!record(r)||!id(r.id)||!id(r.policyId)||!uint(r.notional)||r.notional<1||!uint(r.createdAt)||!['pending','cancelled','filled'].includes(r.status))return fail();
+  if(r.status==='cancelled'?!uint(r.cancelledAt)||r.cancelledAt<r.createdAt:r.cancelledAt!==null)return fail();
+  const value={id:r.id,policyId:r.policyId,notional:r.notional,createdAt:r.createdAt,status:r.status,cancelledAt:r.cancelledAt};
+  if(r.status==='filled'){if(!id(r.fillId)||!uint(r.filledAt)||r.filledAt<r.createdAt)return fail();return {...value,fillId:r.fillId,filledAt:r.filledAt};}
+  return value;
+ });
  if(new Set(policies.map(p=>p.id)).size!==policies.length||new Set(reservations.map(r=>r.id)).size!==reservations.length)return fail();
  const visiblePending=reservations.filter(r=>r.status==='pending'),visibleTotal=visiblePending.reduce((sum,r)=>sum+r.notional,0);
  if(!Number.isSafeInteger(visibleTotal)||visiblePending.length>body.pendingCount||visibleTotal>body.pendingExposure||(body.reservationCount===reservations.length&&(visiblePending.length!==body.pendingCount||visibleTotal!==body.pendingExposure)))return fail();
- return {ok:true,accountId:route.accountId,mode:'paper',currency:body.currency,...Object.fromEntries(numbers.map(k=>[k,body[k]])),appEnabled:body.appEnabled,stopped:body.stopped,policies,reservations};
+ let execution;
+ const filled=reservations.filter(r=>r.status==='filled');
+ if(body.execution!==undefined){
+  const e=body.execution;
+  if(!record(e)||e.version!==1||e.mode!=='paper'||!uint(e.fillCount)||e.fillCount<1||e.fillCount>body.reservationCount||!uint(e.feeTotal)||!uint(e.positionCount)||!uint(e.positionCost)||!uint(e.untrackedExposure)||e.positionCost>body.exposure||e.untrackedExposure!==body.exposure-e.positionCost||!Array.isArray(e.fills)||e.fills.length!==Math.min(200,e.fillCount)||!Array.isArray(e.positions)||e.positions.length!==Math.min(100,e.positionCount))return fail();
+  const fills=e.fills.map(f=>{
+   if(!record(f)||!id(f.id)||!id(f.reservationId)||!id(f.symbol)||f.side!=='buy'||![f.quantityUnits,f.priceMinor,f.totalMinor].every(v=>uint(v)&&v>0)||!uint(f.feeMinor)||!uint(f.createdAt))return fail();
+   const debit=BigInt(f.quantityUnits)*BigInt(f.priceMinor)+BigInt(f.feeMinor);if(debit>BigInt(Number.MAX_SAFE_INTEGER)||debit!==BigInt(f.totalMinor))return fail();
+   return {id:f.id,reservationId:f.reservationId,symbol:f.symbol,side:'buy',quantityUnits:f.quantityUnits,priceMinor:f.priceMinor,feeMinor:f.feeMinor,totalMinor:f.totalMinor,createdAt:f.createdAt};
+  });
+  const positions=e.positions.map(p=>{if(!record(p)||!id(p.symbol)||!uint(p.quantityUnits)||p.quantityUnits<1||!uint(p.costMinor)||p.costMinor<1)return fail();return {symbol:p.symbol,quantityUnits:p.quantityUnits,costMinor:p.costMinor};});
+  if(new Set(fills.map(f=>f.id)).size!==fills.length||new Set(fills.map(f=>f.reservationId)).size!==fills.length||new Set(positions.map(p=>p.symbol)).size!==positions.length||new Set(filled.map(r=>r.fillId)).size!==filled.length||filled.length>e.fillCount)return fail();
+  const gross=fills.reduce((sum,f)=>sum+BigInt(f.quantityUnits)*BigInt(f.priceMinor),0n),fees=fills.reduce((sum,f)=>sum+BigInt(f.feeMinor),0n),cost=positions.reduce((sum,p)=>sum+BigInt(p.costMinor),0n);
+  if(gross>BigInt(e.positionCost)||(fills.length===e.fillCount&&gross!==BigInt(e.positionCost))||fees>BigInt(e.feeTotal)||cost>BigInt(e.positionCost)||(fills.length===e.fillCount&&fees!==BigInt(e.feeTotal))||(positions.length===e.positionCount&&cost!==BigInt(e.positionCost)))return fail();
+  const bySymbol=new Map();for(const f of fills){const v=bySymbol.get(f.symbol)??{units:0n,cost:0n};v.units+=BigInt(f.quantityUnits);v.cost+=BigInt(f.quantityUnits)*BigInt(f.priceMinor);bySymbol.set(f.symbol,v);}
+  if(fills.length===e.fillCount&&bySymbol.size!==e.positionCount)return fail();
+  for(const p of positions){const v=bySymbol.get(p.symbol);if(v&&(v.units>BigInt(p.quantityUnits)||v.cost>BigInt(p.costMinor)))return fail();if(fills.length===e.fillCount&&(!v||v.units!==BigInt(p.quantityUnits)||v.cost!==BigInt(p.costMinor)))return fail();}
+  if(positions.length===e.positionCount&&[...bySymbol.keys()].some(symbol=>!positions.some(p=>p.symbol===symbol)))return fail();
+  if(body.reservationCount===reservations.length&&filled.length!==e.fillCount)return fail();
+  for(const f of fills){const r=reservations.find(r=>r.id===f.reservationId);if(r&&(r.status!=='filled'||r.fillId!==f.id||r.filledAt!==f.createdAt||f.totalMinor>r.notional||f.createdAt<r.createdAt))return fail();}
+  for(const r of filled){const f=fills.find(f=>f.id===r.fillId);if(f&&(f.reservationId!==r.id||f.createdAt!==r.filledAt))return fail();if(fills.length===e.fillCount&&!f)return fail();}
+  execution={version:1,mode:'paper',fillCount:e.fillCount,feeTotal:e.feeTotal,positionCount:e.positionCount,positionCost:e.positionCost,untrackedExposure:e.untrackedExposure,fills,positions};
+ }else if(filled.length)return fail();
+ return {ok:true,accountId:route.accountId,mode:'paper',currency:body.currency,...Object.fromEntries(numbers.map(k=>[k,body[k]])),appEnabled:body.appEnabled,stopped:body.stopped,policies,reservations,...(execution?{execution}:{})};
 }

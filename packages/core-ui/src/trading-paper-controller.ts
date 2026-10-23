@@ -49,6 +49,7 @@ export class TradingPaperController{
    if(detail.status!==200){this.#publish({phase:'unavailable',availability});return;}
    const account=tradingPaperResponse(path,detail.status,detail.body);
    for(const key of ['policies','reservations'] as const){const rows=account[key] as Record<string,unknown>[];rows.forEach(Object.freeze);Object.freeze(rows);}
+   if(account.execution){const execution=account.execution as Record<string,unknown>;for(const key of ['fills','positions']){const rows=execution[key] as Record<string,unknown>[];rows.forEach(Object.freeze);Object.freeze(rows);}Object.freeze(execution);}
    this.#publish({phase:'ready',accountId,availability,account:Object.freeze(account)});
   }catch{if(current())this.#publish({phase:'unavailable',account:null,accountId:null,availability:null});}
  }

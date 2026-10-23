@@ -148,20 +148,62 @@ export function cancelPaperReservation(db:Database.Database,ownerId:string,accou
  }).immediate();
 }
 
+type PublicFill={id:string;reservationId:string;symbol:string;side:'buy';quantityUnits:number;priceMinor:number;feeMinor:number;totalMinor:number;createdAt:number};
+function executionSnapshot(db:Database.Database,accountId:string,currency:string,exposure:number){
+ if(!hasPaperTable(db,'paper_fills'))return undefined;
+ if(!hasPaperTable(db,'paper_positions')||!hasPaperTable(db,'paper_reservation_intents'))return false;
+ const MAX=BigInt(Number.MAX_SAFE_INTEGER),safe=(v:bigint)=>v>=0n&&v<=MAX;
+ let fillCount=0n,feeTotal=0n,grossTotal=0n;
+ const join=`FROM paper_fills f LEFT JOIN paper_reservations r ON r.reservation_id=f.reservation_id LEFT JOIN paper_reservation_intents i ON i.reservation_id=f.reservation_id WHERE f.account_id=?`;
+ const selection=`SELECT f.*,r.account_id reservation_account,r.policy_id,r.idempotency_key reservation_key,r.status reservation_status,r.cancelled_at,r.created_at reserved_at,r.notional,r.intent_hash reservation_hash,i.canonical_json ${join}`;
+ function validate(raw:unknown):PublicFill|null{
+  if(!object(raw))return null;const f=raw;
+  if(!['fill_id','reservation_id','execution_key'].every(k=>id(f[k]))||f.account_id!==accountId||f.reservation_account!==accountId||f.reservation_status!=='pending'||f.cancelled_at!==null||!['quantity_units','price_minor','total_minor','notional'].every(k=>uint(f[k],1))||!uint(f.fee_minor)||!uint(f.created_at)||!uint(f.reserved_at)||f.created_at<f.reserved_at||typeof f.canonical_json!=='string'||f.canonical_json.length>8192)return null;
+  const intentHash=createHash('sha256').update(f.canonical_json).digest('hex');if(f.intent_hash!==intentHash||f.reservation_hash!==intentHash)return null;
+  let intent:unknown;try{intent=JSON.parse(f.canonical_json);}catch{return null;}
+  if(!proposal(intent)||intent.accountId!==accountId||intent.policyId!==f.policy_id||intent.currency!==currency||intent.side!=='buy'||intent.notional!==f.notional||intent.idempotencyKey!==f.reservation_key)return null;
+  const expected=createHash('sha256').update(JSON.stringify({accountId,reservationId:f.reservation_id,executionKey:f.execution_key})).digest('hex');
+  const gross=BigInt(f.quantity_units as number)*BigInt(f.price_minor as number),total=gross+BigInt(f.fee_minor);
+  if(f.request_hash!==expected||!safe(gross)||total!==BigInt(f.total_minor as number)||total>BigInt(f.notional as number))return null;
+  return {id:f.fill_id as string,reservationId:f.reservation_id as string,symbol:intent.symbol,side:'buy',quantityUnits:f.quantity_units as number,priceMinor:f.price_minor as number,feeMinor:f.fee_minor,totalMinor:f.total_minor as number,createdAt:f.created_at};
+ }
+ // Streaming validation scans all history without retaining unbounded raw rows in memory.
+ for(const raw of db.prepare(selection).iterate(accountId)){
+  const f=validate(raw);if(!f)return false;fillCount++;feeTotal+=BigInt(f.feeMinor);grossTotal+=BigInt(f.quantityUnits)*BigInt(f.priceMinor);
+  if(![fillCount,feeTotal,grossTotal].every(safe)||!db.prepare('SELECT 1 FROM paper_positions WHERE account_id=? AND symbol=?').get(accountId,f.symbol))return false;
+ }
+ const unique=db.prepare('SELECT count(*) n,count(DISTINCT fill_id) ids,count(DISTINCT reservation_id) reservations,count(DISTINCT execution_key) keys FROM paper_fills WHERE account_id=?').safeIntegers(true).get(accountId) as {n:bigint;ids:bigint;reservations:bigint;keys:bigint};
+ if([unique.n,unique.ids,unique.reservations,unique.keys].some(v=>v!==fillCount))return false;
+ let positionCount=0n,positionCost=0n;
+ const reconciledPositions=db.prepare(`WITH grouped AS (SELECT json_extract(i.canonical_json,'$.symbol') symbol,sum(f.quantity_units) units,sum(f.total_minor-f.fee_minor) cost FROM paper_fills f JOIN paper_reservation_intents i ON i.reservation_id=f.reservation_id WHERE f.account_id=? GROUP BY json_extract(i.canonical_json,'$.symbol')) SELECT p.symbol,p.quantity_units,p.cost_minor,g.units,g.cost FROM paper_positions p LEFT JOIN grouped g ON g.symbol=p.symbol WHERE p.account_id=?`).safeIntegers(true);
+ for(const raw of reconciledPositions.iterate(accountId,accountId)){
+  if(!object(raw)||!id(raw.symbol)||typeof raw.quantity_units!=='bigint'||typeof raw.cost_minor!=='bigint'||raw.quantity_units<1n||raw.cost_minor<1n||!safe(raw.quantity_units)||!safe(raw.cost_minor)||raw.units!==raw.quantity_units||raw.cost!==raw.cost_minor)return false;
+  positionCount++;positionCost+=raw.cost_minor;if(![positionCount,positionCost].every(safe))return false;
+ }
+ if(positionCost!==grossTotal||positionCost>BigInt(exposure))return false;
+ if(fillCount===0n)return positionCount===0n?undefined:false;
+ const fills:PublicFill[]=[];
+ for(const row of db.prepare(selection+' ORDER BY f.created_at DESC,f.fill_id DESC LIMIT 200').all(accountId)){const f=validate(row);if(!f)return false;fills.push(f);}
+ const positions=(db.prepare('SELECT symbol,quantity_units,cost_minor FROM paper_positions WHERE account_id=? ORDER BY symbol LIMIT 100').all(accountId) as {symbol:string;quantity_units:number;cost_minor:number}[]).map(p=>({symbol:p.symbol,quantityUnits:p.quantity_units,costMinor:p.cost_minor}));
+ return {version:1 as const,mode:'paper' as const,fillCount:Number(fillCount),feeTotal:Number(feeTotal),positionCount:Number(positionCount),positionCost:Number(positionCost),untrackedExposure:exposure-Number(positionCost),fills:fills.reverse(),positions};
+}
+
 /** Safe owner-scoped read model. HTTP authentication remains the caller's responsibility. */
 export function readPaperAccount(db:Database.Database,ownerId:string,accountId:string){
  if(![ownerId,accountId].every(id))return {ok:false as const,reason:'invalid'};
  return db.transaction(()=>{
   const a=db.prepare('SELECT owner_id,mode,currency,cash,exposure,app_enabled,app_revision,stopped FROM paper_accounts WHERE account_id=?').get(accountId) as {owner_id:string;mode:string;currency:string;cash:number;exposure:number;app_enabled:number;app_revision:number;stopped:number}|undefined;
   if(!a||a.owner_id!==ownerId||!validAccount(a))return {ok:false as const,reason:'unavailable'};
-  if(hasPaperTable(db,'paper_fills')&&db.prepare('SELECT 1 FROM paper_fills WHERE account_id=? LIMIT 1').get(accountId))return {ok:false as const,reason:'execution_read_unsupported'};
+  let execution;try{execution=executionSnapshot(db,accountId,a.currency,a.exposure);}catch{return {ok:false as const,reason:'unavailable'};}if(execution===false)return {ok:false as const,reason:'unavailable'};
   const summary=paperLedgerTotals(db,accountId);if(!summary)return {ok:false as const,reason:'unavailable'};
   const {reserved,pending:pendingCount}=summary;
-  const rows=db.prepare('SELECT reservation_id,policy_id,notional,created_at,status,cancelled_at FROM paper_reservations WHERE account_id=? ORDER BY created_at DESC,reservation_id DESC LIMIT 200').all(accountId) as {reservation_id:string;policy_id:string;notional:number;created_at:number;status:Status;cancelled_at:number|null}[];
+  const filledColumns=execution?',f.fill_id,f.created_at filled_at':'';const filledJoin=execution?' LEFT JOIN paper_fills f ON f.reservation_id=r.reservation_id AND f.account_id=r.account_id':'';
+  const rows=db.prepare(`SELECT r.reservation_id,r.policy_id,r.notional,r.created_at,r.status,r.cancelled_at ${filledColumns} FROM paper_reservations r ${filledJoin} WHERE r.account_id=? ORDER BY r.created_at DESC,r.reservation_id DESC LIMIT 200`).all(accountId) as {reservation_id:string;policy_id:string;notional:number;created_at:number;status:Status;cancelled_at:number|null;fill_id?:string;filled_at?:number}[];
   if(reserved>a.cash||!Number.isSafeInteger(a.exposure+reserved)||rows.some(r=>!id(r.reservation_id)||!id(r.policy_id)))return {ok:false as const,reason:'unavailable'};
-  const policies=db.prepare('SELECT policy_id,revision,policy_json FROM paper_policies WHERE account_id=? ORDER BY policy_id').all(accountId) as {policy_id:string;revision:number;policy_json:string}[];
+  const policies=db.prepare('SELECT policy_id,revision,policy_json FROM paper_policies WHERE account_id=? ORDER BY policy_id LIMIT 101').all(accountId) as {policy_id:string;revision:number;policy_json:string}[];
+  if(policies.length>100)return {ok:false as const,reason:'unavailable'};
   const safePolicies=[];
   for(const row of policies){let p:unknown;try{p=JSON.parse(row.policy_json);}catch{return {ok:false as const,reason:'unavailable'};}if(!policyValid(p)||p.id!==row.policy_id||p.accountId!==accountId||p.ownerId!==ownerId||p.revision!==row.revision)return {ok:false as const,reason:'unavailable'};safePolicies.push({id:row.policy_id,revision:row.revision,enabled:p.enabled,expiresAt:p.expiresAt});}
-  return {ok:true as const,accountId,mode:a.mode,currency:a.currency,cash:a.cash,availableCash:a.cash-reserved,exposure:a.exposure,pendingExposure:reserved,totalExposure:a.exposure+reserved,pendingCount,appEnabled:a.app_enabled===1,appRevision:a.app_revision,stopped:a.stopped!==0,policies:safePolicies,reservationCount:summary.count,reservations:rows.reverse().map(r=>({id:r.reservation_id,policyId:r.policy_id,notional:r.notional,createdAt:r.created_at,status:r.status,cancelledAt:r.cancelled_at}))};
+  return {ok:true as const,accountId,mode:a.mode,currency:a.currency,cash:a.cash,availableCash:a.cash-reserved,exposure:a.exposure,pendingExposure:reserved,totalExposure:a.exposure+reserved,pendingCount,appEnabled:a.app_enabled===1,appRevision:a.app_revision,stopped:a.stopped!==0,policies:safePolicies,reservationCount:summary.count,reservations:rows.reverse().map(r=>({id:r.reservation_id,policyId:r.policy_id,notional:r.notional,createdAt:r.created_at,status:r.fill_id?'filled' as const:r.status,cancelledAt:r.cancelled_at,...(r.fill_id?{fillId:r.fill_id,filledAt:r.filled_at}:{} )})),...(execution?{execution}:{})};
  }).deferred();
 }
