@@ -8,6 +8,9 @@
 import { dataPath } from '../config/data-root.js';
 import fs from 'fs/promises';
 import path from 'path';
+import {constants} from 'node:fs';
+import {createHash,randomUUID} from 'node:crypto';
+import {redactImportText} from '../memory/import/redact.js';
 
 const AGENTS_DIR = dataPath('agents');
 
@@ -56,7 +59,7 @@ export async function initializeAgentDir(agentId: string): Promise<void> {
   const knowledgeDir = path.join(agentDir, 'knowledge');
 
   // Create directories
-  await fs.mkdir(agentDir, { recursive: true });
+  await fs.mkdir(agentDir, { recursive: true, mode: 0o700 });
   await fs.mkdir(knowledgeDir, { recursive: true });
   await fs.mkdir(path.join(knowledgeDir, 'docs'), { recursive: true });
   await fs.mkdir(path.join(knowledgeDir, 'templates'), { recursive: true });
@@ -75,7 +78,7 @@ export async function initializeAgentDir(agentId: string): Promise<void> {
   try {
     await fs.access(memoryPath);
   } catch {
-    await fs.writeFile(memoryPath, getDefaultMemory(), 'utf-8');
+    await fs.writeFile(memoryPath, getDefaultMemory(), {encoding:'utf8',mode:0o600,flag:'wx'});
   }
 }
 
@@ -106,36 +109,65 @@ export async function writePersonality(agentId: string, content: string): Promis
 /**
  * Read MEMORY.md for an agent
  */
-export async function readMemory(agentId: string): Promise<string> {
-  const filePath = path.join(getAgentDir(agentId), 'MEMORY.md');
-
-  try {
-    return await fs.readFile(filePath, 'utf-8');
-  } catch (err) {
-    // File doesn't exist, initialize and return default
-    await initializeAgentDir(agentId);
-    return getDefaultMemory();
-  }
+const MEMORY_LIMIT=32768;
+export interface MemorySnapshot {content:string;hash:string|null;truncated:boolean;redacted:boolean}
+const digest=(content:Buffer|string)=>createHash('sha256').update(content).digest('hex');
+function memoryDir(agentId:string){if(typeof agentId!=='string'||!/^[A-Za-z0-9][A-Za-z0-9_.:-]{0,127}$/.test(agentId)||agentId.includes('..'))throw Error('memory_unavailable');return path.join(AGENTS_DIR,agentId);}
+async function checkDirectory(dir:string,create=false):Promise<boolean>{
+ try{const info=await fs.lstat(dir);if(!info.isDirectory()||info.isSymbolicLink()||info.uid!==process.getuid?.()||(info.mode&0o077)!==0)throw Error('memory_unavailable');return true;}catch(error){if((error as NodeJS.ErrnoException).code!=='ENOENT')throw Error('memory_unavailable');if(!create)return false;await fs.mkdir(dir,{mode:0o700});return checkDirectory(dir);}
 }
-
-/**
- * Write MEMORY.md for an agent
- */
-export async function writeMemory(agentId: string, content: string): Promise<void> {
-  await initializeAgentDir(agentId);
-  const filePath = path.join(getAgentDir(agentId), 'MEMORY.md');
-  await fs.writeFile(filePath, content, 'utf-8');
+async function checkedMemoryDir(agentId:string,create=false):Promise<string|null>{
+ const dir=memoryDir(agentId);
+ if(!await checkDirectory(AGENTS_DIR,create))return null;
+ if(!await checkDirectory(dir,create))return null;
+ return dir;
 }
-
-/**
- * Append to MEMORY.md (for AI to add learnings)
- */
-export async function appendMemory(agentId: string, content: string): Promise<void> {
-  const existing = await readMemory(agentId);
-  const timestamp = new Date().toISOString();
-  const newContent = `${existing}\n\n## ${timestamp}\n\n${content}`;
-  await writeMemory(agentId, newContent);
+async function loadMemory(agentId:string):Promise<MemorySnapshot>{
+ const dir=await checkedMemoryDir(agentId);if(!dir)return {content:getDefaultMemory(),hash:null,truncated:false,redacted:false};
+ let handle;
+ try{handle=await fs.open(path.join(dir,'MEMORY.md'),constants.O_RDONLY|constants.O_NOFOLLOW);}catch(error){if((error as NodeJS.ErrnoException).code==='ENOENT')return {content:getDefaultMemory(),hash:null,truncated:false,redacted:false};throw Error('memory_unavailable');}
+ try{
+  const info=await handle.stat();if(!info.isFile()||info.nlink!==1||info.uid!==process.getuid?.()||(info.mode&0o077)!==0)throw Error('memory_unavailable');
+  const bytes=Buffer.alloc(MEMORY_LIMIT+1);const {bytesRead}=await handle.read(bytes,0,bytes.length,0);let truncated=bytesRead>MEMORY_LIMIT||info.size>MEMORY_LIMIT;
+  // Redaction cannot safely classify a secret whose closing boundary lies beyond the read cap.
+  if(truncated)return {content:'[MEMORY CUT: oversized content withheld]',hash:null,truncated:true,redacted:false};
+  const raw=bytes.subarray(0,Math.min(bytesRead,MEMORY_LIMIT));const text=new TextDecoder('utf-8',{fatal:true}).decode(raw,{stream:truncated});
+  let clean=redactImportText(text).text;if(Buffer.byteLength(clean,'utf8')>MEMORY_LIMIT){clean=new TextDecoder('utf-8',{fatal:true}).decode(Buffer.from(clean,'utf8').subarray(0,MEMORY_LIMIT),{stream:true});truncated=true;}
+  const after=await handle.stat();if(info.ino!==after.ino||info.size!==after.size||info.mtimeMs!==after.mtimeMs)throw Error('memory_changed');
+  await checkedMemoryDir(agentId);
+  return {content:clean+(truncated?'\n\n[MEMORY CUT]':''),hash:truncated?null:digest(raw),truncated,redacted:clean!==text};
+ }finally{await handle.close();}
 }
+export async function readMemorySnapshot(agentId:string):Promise<MemorySnapshot>{try{return await loadMemory(agentId);}catch{throw Error('memory_unavailable');}}
+export async function readMemory(agentId:string):Promise<string>{return (await readMemorySnapshot(agentId)).content;}
+async function syncDir(dir:string){const handle=await fs.open(dir,'r');try{await handle.sync();}finally{await handle.close();}}
+/** Explicit expected-hash owner write; callers must enforce owner authentication and reviewed intent. */
+export async function writeMemoryCAS(agentId:string,content:string,expectedHash:string|null):Promise<MemorySnapshot>{
+ if(typeof content!=='string'||Buffer.byteLength(content,'utf8')>MEMORY_LIMIT||!(expectedHash===null||typeof expectedHash==='string'&&/^[a-f0-9]{64}$/.test(expectedHash)))throw Error('memory_write_invalid');
+ const clean=redactImportText(content).text;if(Buffer.byteLength(clean,'utf8')>MEMORY_LIMIT)throw Error('memory_write_invalid');
+ const dir=await checkedMemoryDir(agentId,true);if(!dir)throw Error('memory_unavailable');
+ let lock;try{lock=await fs.open(path.join(dir,'.memory-lock'),constants.O_CREAT|constants.O_EXCL|constants.O_WRONLY|constants.O_NOFOLLOW,0o600);}catch{throw Error('memory_conflict');}
+ const temp=path.join(dir,'.memory-'+randomUUID()+'.tmp');
+ try{
+  const before=await readMemorySnapshot(agentId);if(before.truncated||before.hash!==expectedHash)throw Error('memory_conflict');
+  const versions=path.join(dir,'.memory-versions');await checkDirectory(versions,true);
+  const events=path.join(versions,'events');await checkDirectory(events,true);
+  async function version(hash:string,value:string,previous:string|null){const target=path.join(versions,hash+'.json');let file;try{file=await fs.open(target,constants.O_CREAT|constants.O_EXCL|constants.O_WRONLY|constants.O_NOFOLLOW,0o600);}catch(error){if((error as NodeJS.ErrnoException).code==='EEXIST'){const existing=await fs.open(target,constants.O_RDONLY|constants.O_NOFOLLOW);try{const st=await existing.stat();if(!st.isFile()||st.nlink!==1||st.uid!==process.getuid?.()||(st.mode&0o077)!==0||st.size>262144)throw Error('memory_unavailable');const stored=JSON.parse(await existing.readFile('utf8'));if(stored.hash!==hash||stored.content!==value)throw Error('memory_unavailable');}finally{await existing.close();}return;}throw error;}try{await file.writeFile(JSON.stringify({hash,previousHash:previous,content:value}));await file.sync();}finally{await file.close();}}
+  if(before.hash)await version(before.hash,before.content,null);
+  await version(digest(clean),clean,before.hash);await syncDir(versions);
+  const file=await fs.open(temp,constants.O_CREAT|constants.O_EXCL|constants.O_WRONLY|constants.O_NOFOLLOW,0o600);try{await file.writeFile(clean,'utf8');await file.sync();}finally{await file.close();}
+  const current=await readMemorySnapshot(agentId);if(current.truncated||current.hash!==expectedHash)throw Error('memory_conflict');
+  await checkedMemoryDir(agentId);await fs.rename(temp,path.join(dir,'MEMORY.md'));await syncDir(dir);
+  // Content snapshots may describe attempts. Unique post-rename events preserve repeated transitions.
+  // Rename plus audit is not one atomic transaction: failure here has an uncertain write outcome.
+  const appliedAt=Date.now(),event=await fs.open(path.join(events,`${appliedAt}-${randomUUID()}.json`),constants.O_CREAT|constants.O_EXCL|constants.O_WRONLY|constants.O_NOFOLLOW,0o600);
+  try{await event.writeFile(JSON.stringify({kind:'applied_transition',previousHash:before.hash,nextHash:digest(clean),appliedAt}));await event.sync();}finally{await event.close();}
+  await syncDir(events);return await readMemorySnapshot(agentId);
+ }finally{await fs.unlink(temp).catch(()=>{});await lock.close();await fs.unlink(path.join(dir,'.memory-lock'));}
+}
+/** Blind writes are retired; no model may silently replace its own memory file. */
+export async function writeMemory(_agentId:string,_content:string):Promise<void>{throw Error('reviewed_memory_required');}
+export async function appendMemory(_agentId:string,_content:string):Promise<void>{throw Error('reviewed_memory_required');}
 
 /**
  * List knowledge files for an agent

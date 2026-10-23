@@ -1,3 +1,4 @@
+import {frameUntrustedMemory} from '../../services/untrusted-memory-context.js';
 import {narrowProjectMemory} from '../../tools/memory/project-access.js';
 import { FakeRaw } from '../../services/chat-runs.js';
 import { vaultChatFrames } from '../../services/chat-secrets.js';
@@ -525,7 +526,7 @@ export async function executeChatTurn(reply: FastifyReply, input: ChatTurnInput)
 
     // Add MEMORY.md content if exists
     if (memoryFileContent) {
-      resolvedSystemPrompt += `\n\n## Agent Memory\n${memoryFileContent}`;
+      resolvedSystemPrompt += frameUntrustedMemory(memoryFileContent,'agent');
     }
 
     // MEM-CACHE-01: the context pack (this persona text + the scope's pinned facts,
@@ -552,7 +553,7 @@ export async function executeChatTurn(reply: FastifyReply, input: ChatTurnInput)
 
     // Add session memory context if available
     if (memoryContext) {
-      resolvedSystemPrompt += `\n\n## Recent Context\nThe following information was recalled from previous interactions with this user:\n${memoryContext}`;
+      resolvedSystemPrompt += frameUntrustedMemory(memoryContext,'client');
     }
     // An agent's explicit provider wins; without one, follow the global settings provider.
     // LM Studio is local too (127.0.0.1 only), so the local-model-only stage keeps a picked LM Studio model.

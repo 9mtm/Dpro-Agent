@@ -1,3 +1,4 @@
+import {frameUntrustedMemory} from '../../services/untrusted-memory-context.js';
 /**
  * Public Chat Rooms API Routes
  * Multi-user chat rooms with AI agents, customizable avatars, and embeddable widgets
@@ -630,7 +631,7 @@ export async function registerPublicChatRoutes(fastify: FastifyInstance) {
     // Add memory if available
     let fullSystemPrompt = systemPrompt;
     if (memoryContent) {
-      fullSystemPrompt += `\n\n## Agent Memory\n${memoryContent}`;
+      fullSystemPrompt += frameUntrustedMemory(memoryContent,'agent');
     }
 
     // Stream AI response
