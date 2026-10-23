@@ -78,3 +78,10 @@ test('altering tick and last-success clocks together cannot forge original fill 
  const g=botFixture(t),a=g.reserve();assert.equal(g.tick(a,'first').ok,true);const b=g.reserve('second');assert.equal(g.tick(b,'second').ok,true);g.db.exec('UPDATE paper_bots SET cooldown_ms=1');assert.equal(g.tick(b,'second').ok,false);
  const h=botFixture(t),c=h.reserve();assert.equal(h.tick(c).ok,true);h.db.prepare('UPDATE paper_bots SET expires_at=?').run(now);assert.equal(h.tick(c).ok,false);
 });
+
+test('read-only bot history inspection validates original tick receipts without acquiring execution authority',async t=>{
+ const {inspectPaperBotHistory}=await import('../src/services/trading-paper-bots.ts');
+ const f=botFixture(t),r=f.reserve();assert.equal(f.tick(r).ok,true);const before=f.snapshot();f.db.pragma('query_only=ON');
+ try{assert.deepEqual(inspectPaperBotHistory(f.db,'owner','bot',now),{ok:true,successfulTicks:1,lastSuccessAt:now,status:'active'});f.db.transaction(()=>assert.equal(inspectPaperBotHistory(f.db,'owner','bot',now).ok,true)).deferred();assert.equal(inspectPaperBotHistory(f.db,'other','bot',now).ok,false);}finally{f.db.pragma('query_only=OFF');}
+ assert.deepEqual(f.snapshot(),before);f.db.prepare("UPDATE paper_bot_ticks SET receipt_hash='bad'").run();assert.equal(inspectPaperBotHistory(f.db,'owner','bot',now).ok,false);
+});

@@ -12,8 +12,12 @@ import {issueOperationChallenge, completeOperationChallenge, consumeOperationRec
 import {readPaperRisk} from './trading-paper-risk.js';
 import {readPaperAvailability} from './trading-paper-availability.js';
 import {readPaperBotAvailability} from './trading-paper-bot-availability.js';
+import {inspectPaperBundleSchema} from './trading-paper-bundle-schema.js';
+import {BUNDLED_PAPER_INSTALLATION,readPaperInstallation} from './trading-paper-installation.js';
+import {readReviewedPaperInstallationAccess} from './trading-paper-install-review.js';
+import {inspectPaperBotHistory} from './trading-paper-bots.js';
 
-const fail = () => { throw Error('Paper activation unavailable'); };
+function fail(): never { throw Error('Paper activation unavailable'); }
 const deny = () => ({ok: false as const, reason: 'unavailable' as const});
 const sha = (value: string) => createHash('sha256').update(value).digest('hex');
 const id = (value: unknown): value is string => typeof value === 'string' && /^[A-Za-z0-9][A-Za-z0-9_.:-]{0,127}$/.test(value);
@@ -161,4 +165,51 @@ export async function applyPaperBotActivation(db:Database.Database,context:Opera
       return {ok:true as const,botId:row.bot_id,reviewId:row.id,replayed:false};
     },{immediate:true});
   }catch{return deny();}
+}
+
+/**
+ * Read-only provenance and CURRENT target resolver for a future separate runtime decision.
+ * Historical activation consent survives normal session/token/factor rotation. This returns
+ * no runtime grant, dispatch permission or execution authority; caller identity remains separate.
+ * A caller-owned transaction is supported so a future atomic review can retain one snapshot.
+ */
+export function readReviewedPaperBotTarget(db:Database.Database,ownerId:string,botId:string,now=Date.now()){
+ try{
+  const strictId=(value:unknown):value is string=>id(value)&&!/[\x00-\x20\x7f]/.test(value);
+  const strictUuid=(value:unknown):value is string=>typeof value==='string'&&value.length===36&&uuid(value);
+  if(dbDriver()!=='sqlite'||getDatabase().getDb()!==db||!strictId(ownerId)||isSystemAccount(ownerId)||!strictUuid(botId)||!uint(now,1)||now>Number.MAX_SAFE_INTEGER-300000)fail();
+  return db.transaction(()=>{
+   if(!inspectPaperBundleSchema(db).ok)fail();
+   const authNames=['users','verification_factors','verification_challenges','verification_receipts','approval_proof_policy'];
+   const temp=db.prepare("SELECT name,tbl_name FROM sqlite_temp_master WHERE type IN ('table','index','view','trigger')").all() as {name:string;tbl_name:string}[];
+   if(temp.some(row=>authNames.includes(row.name.toLowerCase())||authNames.includes(row.tbl_name.toLowerCase())))fail();
+   for(const name of authNames)if(!db.prepare("SELECT 1 FROM main.sqlite_master WHERE type='table' AND name=? COLLATE NOCASE").get(name))fail();
+   const user=db.prepare('SELECT role,status,email_verified,token_version FROM main.users WHERE id=?').get(ownerId) as Record<string,unknown>|undefined;
+   const factor=db.prepare('SELECT enabled,version FROM main.verification_factors WHERE user_id=?').get(ownerId) as Record<string,unknown>|undefined;
+   if(user?.role!=='owner'||user.status!=='active'||user.email_verified!==1||!uint(user.token_version,1)||factor?.enabled!==1||!uint(factor.version,1))fail();
+   const installation=readPaperInstallation(db,ownerId,()=>now),access=readReviewedPaperInstallationAccess(db,ownerId,()=>now);
+   if(!installation.ok||installation.state!=='provisioned'||access.state!=='ready'||!access.readAccounts||!access.readBots||!access.manageBots)fail();
+   const event=db.prepare('SELECT * FROM main.paper_bot_activation_events WHERE bot_id=?').get(botId) as Record<string,unknown>|undefined;
+   if(!event||!strictUuid(event.id)||!strictUuid(event.review_id)||event.bot_id!==botId||event.owner_id!==ownerId||typeof event.session_hash!=='string'||event.session_hash.length!==64||!/^[a-f0-9]{64}$/.test(event.session_hash)
+    ||!uint(event.token_version,1)||!uint(event.factor_version,1)||!uint(event.policy_version,1)||typeof event.receipt_hash!=='string'||event.receipt_hash.length!==64||!/^[a-f0-9]{64}$/.test(event.receipt_hash)||event.event_hash!==eventHash(event))fail();
+   // Check original proof context without comparing it to today's session/factor versions.
+   const original=capture({userId:ownerId,sessionHash:event.session_hash,tokenVersion:event.token_version as number,factorVersion:event.factor_version as number},{kind:'user',role:'owner',userId:ownerId},now);
+   const current=readRow(db,original,event.review_id as string,event.policy_version as number,now,true),r=current.row,input=current.input;
+   if(r.status!=='applied'||r.bot_id!==botId||event.session_hash!==r.session_hash||event.token_version!==r.token_version||event.factor_version!==r.factor_version||event.policy_version!==r.policy_version||event.definition_hash!==r.definition_hash||event.review_hash!==r.review_hash
+    ||!uint(event.created_at,1)||event.created_at<r.created_at||event.created_at>=r.expires_at||event.created_at>=input.expiresAt||event.created_at>now)fail();
+   const receipt=db.prepare('SELECT * FROM main.verification_receipts WHERE token_hash=?').get(event.receipt_hash) as Record<string,unknown>|undefined;
+   if(!receipt||receipt.user_id!==ownerId||receipt.session_hash!==r.session_hash||receipt.token_version!==r.token_version||receipt.factor_version!==r.factor_version||receipt.operation_hash!==paperBotActivationOperationHash(operation(r))||receipt.consumed_at!==event.created_at||!uint(receipt.expires_at,1)||receipt.expires_at<=Number(event.created_at))fail();
+   const bot=db.prepare('SELECT * FROM main.paper_bots WHERE bot_id=?').get(botId) as Record<string,unknown>|undefined;
+   if(!bot||bot.owner_id!==ownerId||bot.account_id!==input.accountId||bot.policy_id!==input.policyId||bot.policy_revision!==input.policyRevision||bot.app_revision!==input.appRevision||bot.expires_at!==input.expiresAt||bot.max_successful_ticks!==input.maxSuccessfulTicks||bot.cooldown_ms!==input.cooldownMs||bot.created_at!==event.created_at
+    ||bot.status!=='active'||input.expiresAt<=now||!uint(bot.successful_ticks)||Number(bot.successful_ticks)>=input.maxSuccessfulTicks||(bot.successful_ticks===0?bot.last_success_at!==null:!uint(bot.last_success_at)||Number(bot.last_success_at)<Number(bot.created_at)||Number(bot.last_success_at)>=input.expiresAt||Number(bot.last_success_at)>now))fail();
+   const history=inspectPaperBotHistory(db,ownerId,botId,now);
+   if(!history.ok||history.successfulTicks!==bot.successful_ticks||history.lastSuccessAt!==bot.last_success_at||history.status!=='active')fail();
+   // Recompute all current account/policy/profile/risk checks; no stale owner-supplied snapshot.
+   const refreshed=target(db,ownerId,input,botId,now);if(refreshed.json!==r.definition_json)fail();
+   const d=refreshed.definition;
+   const definition=Object.freeze({...d,execution:Object.freeze({...d.execution}),limits:Object.freeze({...d.limits,symbols:Object.freeze([...d.limits.symbols])})});
+   return Object.freeze({ok:true as const,botId,reviewId:r.id,activationCreatedAt:event.created_at as number,activationDefinitionHash:r.definition_hash,activationReviewHash:r.review_hash,definition,
+    installationId:installation.installationId,installationRevision:installation.revision,manifestDigest:BUNDLED_PAPER_INSTALLATION.manifestDigest,successfulTicks:bot.successful_ticks as number,lastSuccessAt:bot.last_success_at as number|null,assessedAt:now,executeOrders:false as const,runtimeConnected:false as const});
+  }).deferred();
+ }catch{return deny();}
 }

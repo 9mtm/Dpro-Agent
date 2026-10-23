@@ -169,3 +169,18 @@ export function runPaperBotTick(db: Database.Database, owner: string, input: unk
     }).immediate();
   } catch { return deny(); }
 }
+
+/** Read-only trusted journal inspection. This is not consent, installation or execution authority. */
+export function inspectPaperBotHistory(db: Database.Database, owner: string, botId: string, now: number) {
+  try {
+    if (!id(owner) || !id(botId) || !uint(now,1)) return deny();
+    return db.transaction(() => {
+      const bot = db.prepare('SELECT * FROM paper_bots WHERE bot_id=?').get(botId) as Bot | undefined;
+      if (!bot || bot.owner_id !== owner || !validBot(bot,now)) throw rollback;
+      const account = db.prepare('SELECT owner_id FROM paper_accounts WHERE account_id=?').get(bot.account_id) as {owner_id:string}|undefined;
+      if (account?.owner_id !== owner) throw rollback;
+      history(db,owner,bot,now);
+      return Object.freeze({ok:true as const,successfulTicks:bot.successful_ticks,lastSuccessAt:bot.last_success_at,status:bot.status});
+    }).deferred();
+  } catch { return deny(); }
+}
