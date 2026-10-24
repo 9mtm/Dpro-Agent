@@ -253,10 +253,14 @@ See [CHANGELOG.md](CHANGELOG.md) for version history and recent updates.
 
 ## 👤 Built By
 
-**Mohamed Alarade** - Creator & Lead Developer
+**Mohamed Alarade** ([@9mtm](https://github.com/9mtm)) - Creator & Lead Developer
 
 ---
 
 ## ⚖️ License
 
 MIT - See [LICENSE](LICENSE) for details. Third-party notices: [THIRD_PARTY_LICENSES.md](THIRD_PARTY_LICENSES.md).
+
+---
+
+**Follow 9mtm:** [GitHub](https://github.com/9mtm) · [LinkedIn](https://www.linkedin.com/in/9mtm)
