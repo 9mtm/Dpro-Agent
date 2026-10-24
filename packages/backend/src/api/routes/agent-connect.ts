@@ -39,8 +39,10 @@ export async function agentConnectRoutes(app: FastifyInstance) {
   });
   app.put<{ Params: { id: string } }>('/api/agent-connect/:id/activation', { config, bodyLimit: 1024 }, async (request, reply) => {
     try {
-      const owner = requireOwner(actorOf(request)), id = request.params.id;
-      if (!catalog.has(id)) return reply.code(404).send({ code: 'not_found' });
+      const owner = requireOwner(actorOf(request)), item = catalog.get(request.params.id);
+      if (!item) return reply.code(404).send({ code: 'not_found' });
+      // Use the catalog's own id, never the request text, as the key from here on.
+      const id = item.id as string;
       if (q.dialect !== 'sqlite') return reply.code(409).send({ code: 'unsupported_store' });
       const body = request.body;
       if (!record(body) || Object.keys(body).length !== 1 || typeof body.enabled !== 'boolean') throw new TypeError();
@@ -65,8 +67,9 @@ export async function agentConnectRoutes(app: FastifyInstance) {
   });
   app.put<{ Params: { id: string } }>('/api/agent-connect/:id/config', { config, bodyLimit: 65536 }, async (request, reply) => {
     try {
-      const owner = requireOwner(actorOf(request)), id = request.params.id, item = catalog.get(id);
+      const owner = requireOwner(actorOf(request)), item = catalog.get(request.params.id);
       if (!item) return reply.code(404).send({ code: 'not_found' });
+      const id = item.id as string;
       if (q.dialect !== 'sqlite') return reply.code(409).send({ code: 'unsupported_store' });
       const b = request.body;
       if (!record(b) || Object.keys(b).some(k => !['allowedUsers', 'allowedChannels', 'environment', 'settings'].includes(k)) || !accessList(b.allowedUsers) || !accessList(b.allowedChannels) || !isValidEnvironment(id, b.environment) || !isValidSettings(id, b.settings)) throw new TypeError();

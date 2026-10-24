@@ -115,7 +115,11 @@ export function briefMarkdown(b: ProjectBrief): string {
     '### Approved project memory',
     ...(b.memories.length ? b.memories.map((f) => `- ${f.content}`) : ['- (none approved yet)']),
   ];
-  if (b.handoff) lines.push('', `### ${handoffText(b.handoff).replace(/\n/, '\n\n')}`);
+  if (b.handoff) {
+    // The first line is the heading; put one blank line between it and the body.
+    const text = handoffText(b.handoff), cut = text.indexOf('\n');
+    lines.push('', `### ${cut < 0 ? text : `${text.slice(0, cut)}\n\n${text.slice(cut + 1)}`}`);
+  }
   return lines.join('\n');
 }
 
